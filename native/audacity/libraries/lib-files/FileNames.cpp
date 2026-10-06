@@ -738,7 +738,11 @@ bool FileNames::IsOnFATFileSystem(const FilePath &path)
 }
 #elif defined(__linux__)
 #include <sys/statfs.h>
+#ifdef __ANDROID__
+#include <linux/magic.h>
+#else
 #include "/usr/include/linux/magic.h"
+#endif
 bool FileNames::IsOnFATFileSystem(const FilePath &path)
 {
    struct statfs fs;

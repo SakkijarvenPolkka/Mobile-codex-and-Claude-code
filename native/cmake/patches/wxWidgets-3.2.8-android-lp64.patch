@@ -1,0 +1,40 @@
+wxWidgets 3.2.8: make the Android config header correct for 64-bit ABIs.
+
+include/wx/android/config_android.h hard-codes 32-bit type sizes (SIZEOF_LONG,
+SIZEOF_SIZE_T, SIZEOF_VOID_P = 4 and wxSIZE_T_IS_UINT). On LP64 Android ABIs
+(arm64-v8a, x86_64) that makes wxString::operator[] overloads ambiguous and
+breaks size_t/long overloads. Use the LP64 values when __LP64__ is defined.
+Applied by native/cmake/Dependencies.cmake (FetchContent PATCH_COMMAND).
+
+diff --git a/include/wx/android/config_android.h b/include/wx/android/config_android.h
+index eebbb1a..ed6f415 100644
+--- a/include/wx/android/config_android.h
++++ b/include/wx/android/config_android.h
+@@ -40,15 +40,25 @@
+ #define HAVE_WPRINTF 1
+ 
+ #define SIZEOF_INT 4
+-#define SIZEOF_LONG 4
+ #define SIZEOF_LONG_LONG 8
++#define SIZEOF_WCHAR_T 4
++#if defined(__LP64__)
++#define SIZEOF_LONG 8
++#define SIZEOF_SIZE_T 8
++#define SIZEOF_VOID_P 8
++#else
++#define SIZEOF_LONG 4
+ #define SIZEOF_SIZE_T 4
+ #define SIZEOF_VOID_P 4
+-#define SIZEOF_WCHAR_T 4
++#endif
+ 
+ #define wxHAVE_PTHREAD_CLEANUP 1
+ #define wxNO_WOSTREAM
++#if defined(__LP64__)
++#define wxSIZE_T_IS_ULONG 1
++#else
+ #define wxSIZE_T_IS_UINT 1
++#endif
+ #define wxWCHAR_T_IS_REAL_TYPE 1
+ 
+ #define wxTYPE_SA_HANDLER int

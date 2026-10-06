@@ -1,0 +1,42 @@
+wxWidgets 3.2.8: do not apply the Android GUI-port feature restrictions to
+GUI-less (wxBase only) builds.
+
+include/wx/android/chkconf.h force-disables wxUSE_INTL, wxUSE_CONFIG,
+wxUSE_STDPATHS, wxUSE_DYNLIB_CLASS, wxUSE_REGEX, wxUSE_CMDLINE_PARSER, ...
+for every non-Qt Android build.  Those are base-library features the
+Audacity libraries use (wxTranslations/wxLocale, wxFileConfig,
+wxStandardPaths, wxDynamicLibrary, ...).  The restrictions only make sense
+for the (unfinished) native Android GUI port, so apply them only when
+wxUSE_GUI is set; base-only builds then take their feature set from
+setup.h like any other Unix build.  Features that do not build on Android
+are switched off through the regular CMake wxUSE_* options instead
+(native/cmake/Dependencies.cmake).
+
+This also keeps wxBase and its users consistent: Audacity code is compiled
+with __WXGTK__ (as on desktop Linux), which makes wx/chkconf.h include
+wx/gtk/chkconf.h instead of wx/android/chkconf.h, so both sides must get
+their wxUSE_* values from setup.h alone.
+Applied by native/cmake/Dependencies.cmake (FetchContent PATCH_COMMAND).
+
+diff --git a/include/wx/android/chkconf.h b/include/wx/android/chkconf.h
+index 5ad1922..901cc25 100644
+--- a/include/wx/android/chkconf.h
++++ b/include/wx/android/chkconf.h
+@@ -14,8 +14,15 @@
+ 
+ // For Qt under Android, use default configuration procedure as most features
+ // should be supported (see documentation for more information)
+-
+-#ifndef __WXQT__
++//
++// The same holds for GUI-less (wxBase only) builds: the restrictions below
++// are about the never-finished native Android GUI port.  A base-only build
++// takes its feature set from setup.h (i.e. from the CMake wxUSE_* options),
++// exactly as on other Unix systems.  This also keeps the library and code
++// that includes these headers with a toolkit macro defined (e.g. __WXGTK__,
++// which selects a different chkconf.h) in agreement about wxUSE_* values.
++
++#if !defined(__WXQT__) && wxUSE_GUI
+ 
+ // ----------------------------------------------------------------------------
+ // Disable features which don't work (yet) or don't make sense under Android.

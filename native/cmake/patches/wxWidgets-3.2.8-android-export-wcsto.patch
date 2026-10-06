@@ -1,0 +1,27 @@
+wxWidgets 3.2.8: export the Android wcstol/wcstoul/wcstod replacements.
+
+On Android, include/wx/wxcrtbase.h maps wxCRT_Strto{l,ul,d}W (used by inline
+functions such as wxString::ToLong) to android_wcsto{l,ul,d}, which are
+defined in src/common/wxcrt.cpp but declared without WXDLLIMPEXP_BASE.  wx
+builds with -fvisibility=hidden, so in a shared wxBase they are hidden and
+every user of those inline functions fails to link (undefined symbol
+android_wcstoul).  Declare them WXDLLIMPEXP_BASE like the other CRT wrappers.
+Applied by native/cmake/Dependencies.cmake (FetchContent PATCH_COMMAND).
+
+diff --git a/include/wx/wxcrtbase.h b/include/wx/wxcrtbase.h
+index 7887324..f2822a9 100644
+--- a/include/wx/wxcrtbase.h
++++ b/include/wx/wxcrtbase.h
+@@ -160,9 +160,9 @@
+ 
+ #ifdef __ANDROID__ // these functions are broken on android
+ 
+-extern double android_wcstod(const wchar_t *nptr, wchar_t **endptr);
+-extern long android_wcstol(const wchar_t *nptr, wchar_t **endptr, int base);
+-extern unsigned long android_wcstoul(const wchar_t *nptr, wchar_t **endptr, int base);
++extern WXDLLIMPEXP_BASE double android_wcstod(const wchar_t *nptr, wchar_t **endptr);
++extern WXDLLIMPEXP_BASE long android_wcstol(const wchar_t *nptr, wchar_t **endptr, int base);
++extern WXDLLIMPEXP_BASE unsigned long android_wcstoul(const wchar_t *nptr, wchar_t **endptr, int base);
+ 
+ #define wxCRT_StrtodW    android_wcstod
+ #define wxCRT_StrtolW    android_wcstol
