@@ -1,0 +1,21 @@
+# Gradle / Android
+.gradle/
+build/
+/local.properties
+.idea/
+*.iml
+.cxx/
+.externalNativeBuild/
+captures/
+*.apk
+*.aab
+*.keystore
+!debug.keystore
+
+# Native build trees
+/native/build*/
+/native/out/
+/native/_deps/
+
+# OS
+.DS_Store
