@@ -18,4 +18,6 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "AudacityAndroid"
+include(":engine")
+include(":editor")
 include(":app")
