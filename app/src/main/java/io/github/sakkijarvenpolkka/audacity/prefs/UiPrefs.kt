@@ -11,6 +11,7 @@ package io.github.sakkijarvenpolkka.audacity.prefs
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import io.github.sakkijarvenpolkka.audacity.editor.ThemeChoice
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,13 +48,13 @@ class UiPrefs(context: Context?) {
     fun update(transform: (UiPrefsState) -> UiPrefsState) {
         val new = transform(_state.value)
         _state.value = new
-        sp?.edit()
-            ?.putString(K_THEME, new.theme.name)
-            ?.putBoolean(K_CLIP, new.showClipping)
-            ?.putBoolean(K_RMS, new.showRms)
-            ?.putString(K_EXPORT_FORMAT, new.lastExportFormat)
-            ?.putBoolean(K_SKIP_SILENCE, new.exportSkipSilence)
-            ?.apply()
+        sp?.edit {
+            putString(K_THEME, new.theme.name)
+            putBoolean(K_CLIP, new.showClipping)
+            putBoolean(K_RMS, new.showRms)
+            putString(K_EXPORT_FORMAT, new.lastExportFormat)
+            putBoolean(K_SKIP_SILENCE, new.exportSkipSilence)
+        }
     }
 
     private companion object {

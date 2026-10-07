@@ -67,6 +67,9 @@ import kotlinx.serialization.json.JsonElement
 
 private val EQ_SPECIALS = setOf("equalization", "graphicEq")
 
+/** EQ parameters edited by the curve editor itself (display prefs and the frequency scale). */
+private val EQ_UI_KEYS = setOf("dBMin", "dBMax", "DrawMode", "DrawGrid", "InterpolateLin")
+
 @Composable
 fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
     val engine = vm.engine
@@ -193,7 +196,11 @@ fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
                         Text(stringResource(R.string.fx_eq_flatten))
                     }
                 }
-                SwitchRow(stringResource(R.string.fx_eq_linear), c.linearFreq, { curve = c.copy(linearFreq = it) })
+                SwitchRow(stringResource(R.string.fx_eq_linear), c.linearFreq, { lin ->
+                    curve = c.copy(linearFreq = lin)
+                    // Keep the scalar parameter (EqualizationParameters "InterpolateLin") in step with the curve.
+                    if (de.params.any { it.key == "InterpolateLin" }) edits["InterpolateLin"] = ParamCodec.encodeBool(lin)
+                })
                 Text(stringResource(R.string.fx_eq_help), style = MaterialTheme.typography.bodySmall)
             }
         }
@@ -208,7 +215,7 @@ fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
             )
         }
         for (p in de.params) {
-            if (de.special in EQ_SPECIALS && (p.key == "dBMin" || p.key == "dBMax" || p.key == "DrawMode" || p.key == "DrawGrid")) continue
+            if (de.special in EQ_SPECIALS && p.key in EQ_UI_KEYS) continue
             ParamEditor(p, ParamCodec.current(p, edits)) { v -> edits[p.key] = v }
         }
         if (de.params.isEmpty() && !de.supportsDuration && de.special == null) {

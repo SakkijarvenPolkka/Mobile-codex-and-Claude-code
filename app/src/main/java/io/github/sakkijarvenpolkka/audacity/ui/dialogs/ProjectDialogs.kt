@@ -191,8 +191,8 @@ fun HistoryDialog(d: AppDialog, vm: AppViewModel) {
 /** Tracks ▸ Resample... */
 @Composable
 fun ResampleDialog(d: AppDialog, vm: AppViewModel) {
-    val snapshot = vm.engine.snapshot.value
-    var rate by rememberSaveable { mutableStateOf(snapshot.project.rate.roundToInt().toString()) }
+    val projectRate = remember { vm.engine.snapshot.value.project.rate.roundToInt() }
+    var rate by rememberSaveable { mutableStateOf(projectRate.toString()) }
     val parsed = rate.trim().toIntOrNull()?.takeIf { it in 1..1_000_000 }
     AppDialogFrame(
         title = stringResource(R.string.resample_title),

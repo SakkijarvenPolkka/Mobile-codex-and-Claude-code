@@ -7,6 +7,7 @@
 package io.github.sakkijarvenpolkka.audacity
 
 import android.app.Application
+import androidx.annotation.VisibleForTesting
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.Engines
 import io.github.sakkijarvenpolkka.audacity.prefs.UiPrefs
@@ -21,7 +22,13 @@ class AudacityApp : Application() {
     /** Application-wide scope (engine start, staging clean-up). */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    val engine: AudacityEngine by lazy { Engines.create(this) }
+    private val defaultEngine: AudacityEngine by lazy { Engines.create(this) }
+
+    /** Replaces the engine (tests); null = the process-wide engine of [Engines.create]. */
+    @VisibleForTesting
+    var engineOverride: AudacityEngine? = null
+
+    val engine: AudacityEngine get() = engineOverride ?: defaultEngine
     val prefs: UiPrefs by lazy { UiPrefs(this) }
 
     override fun onCreate() {
@@ -35,7 +42,7 @@ class AudacityApp : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+        if (level >= TRIM_MEMORY_UI_HIDDEN) {
             appScope.launch { runCatching { engine.trimDisplayCaches(8L shl 20) } }
         }
     }

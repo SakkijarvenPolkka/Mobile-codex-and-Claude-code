@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.core.net.toUri
 import io.github.sakkijarvenpolkka.audacity.editor.AudacityTheme
 import io.github.sakkijarvenpolkka.audacity.ui.AppRoot
 
@@ -101,7 +102,7 @@ class MainActivity : ComponentActivity() {
                             vm.pendingRecordNewTrack = r.newTrack
                             permission.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                        is HostRequest.OpenUrl -> startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(r.url)))
+                        is HostRequest.OpenUrl -> startActivity(Intent(Intent.ACTION_VIEW, r.url.toUri()))
                         HostRequest.AppLanguageSettings -> if (Build.VERSION.SDK_INT >= 33) {
                             startActivity(Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.fromParts("package", packageName, null)))
                         }

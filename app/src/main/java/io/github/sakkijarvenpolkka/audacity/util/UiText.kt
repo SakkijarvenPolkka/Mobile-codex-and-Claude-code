@@ -9,10 +9,10 @@ package io.github.sakkijarvenpolkka.audacity.util
 import android.content.res.Resources
 import androidx.annotation.StringRes
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 
 sealed interface UiText {
-    data class Res(@StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
+    data class Res(@param:StringRes val id: Int, val args: List<Any> = emptyList()) : UiText
     data class Raw(val text: String) : UiText
 
     fun resolve(res: Resources): String = when (this) {
@@ -28,4 +28,4 @@ sealed interface UiText {
 }
 
 @Composable
-fun UiText.text(): String = resolve(LocalContext.current.resources)
+fun UiText.text(): String = resolve(LocalResources.current)

@@ -124,7 +124,7 @@ fun <T> Dropdown(
 
 /** A row with a label and a switch. */
 @Composable
-fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, enabled: Boolean = true, modifier: Modifier = Modifier) {
+fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     Row(
         modifier
             .fillMaxWidth()

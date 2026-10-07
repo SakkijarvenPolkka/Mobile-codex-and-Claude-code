@@ -159,7 +159,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         refreshRecent()
         if (recoverable > 0) {
             val list = runCatching { engine.recoverableProjects() }.getOrDefault(emptyList())
-            if (list.isNotEmpty()) open(AppDialog.Recovery(list)) else ensureProject()
+            if (list.isNotEmpty()) open(AppDialog.Recovery(list)) else quietly { ensureProject() }
         }
         if (pendingOpen.isNotEmpty()) {
             val uris = pendingOpen
@@ -217,6 +217,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
 
     fun reportError(e: Throwable) {
         when {
+            e is CancellationException -> Unit   // a dialog/effect went away while waiting
             e is EngineException && e.code == ErrorCodes.CANCELLED -> message(UiText.Res(R.string.msg_cancelled))
             e is EngineException && e.code == ErrorCodes.AUDIO_BUSY -> message(UiText.Res(R.string.why_audio_busy))
             e is EngineException && e.code == ErrorCodes.STALE -> message(UiText.Res(R.string.msg_stale))

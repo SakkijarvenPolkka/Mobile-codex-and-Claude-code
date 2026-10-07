@@ -8,6 +8,8 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.audacity.editor.AudacityTheme
+import io.github.sakkijarvenpolkka.audacity.engine.FakeAudacityEngine
+import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeConfig
 import io.github.sakkijarvenpolkka.audacity.ui.DialogHost
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -32,7 +34,10 @@ class DialogsUiTest {
 
     @Before
     fun setUp() {
-        vm = AppViewModel(ApplicationProvider.getApplicationContext<AudacityApp>())
+        val app = ApplicationProvider.getApplicationContext<AudacityApp>()
+        // Instant long operations: no simulated progress delays on the (paused) main looper.
+        app.engineOverride = FakeAudacityEngine(FakeConfig(demoProject = true, longOperationMillis = 0, autoTick = false))
+        vm = AppViewModel(app)
         runBlocking { vm.engine.start() }
         compose.setContent { AudacityTheme { DialogHost(vm) } }
     }

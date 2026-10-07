@@ -262,7 +262,7 @@ private fun SpectrumChart(r: SpectrumResult, log: Boolean, cursorX: Float, onCur
 
 @Composable
 fun ContrastDialog(d: AppDialog, vm: AppViewModel) {
-    val sel = vm.engine.snapshot.value.selection
+    val sel = remember { vm.engine.snapshot.value.selection }
     var fg0 by rememberSaveable { mutableStateOf(TimeCodec.format(sel.t0)) }
     var fg1 by rememberSaveable { mutableStateOf(TimeCodec.format(sel.t1)) }
     var bg0 by rememberSaveable { mutableStateOf(TimeCodec.format(0.0)) }

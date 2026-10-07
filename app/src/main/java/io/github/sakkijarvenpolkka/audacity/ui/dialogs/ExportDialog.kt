@@ -186,7 +186,7 @@ fun ExportOptionRows(options: ExportOptions, onSet: (ExportOption, ExportValue) 
                     Modifier.fillMaxWidth().testTag("export:option:${row.option.id}"), enabled = row.enabled,
                 )
                 is ExportModel.RangeRow -> RangeOption(row, onSet)
-                is ExportModel.BoolRow -> SwitchRow(row.title, row.value, { onSet(row.option, ExportModel.boolValue(row.option, it)) }, row.enabled)
+                is ExportModel.BoolRow -> SwitchRow(row.title, row.value, { onSet(row.option, ExportModel.boolValue(row.option, it)) }, enabled = row.enabled)
                 is ExportModel.NumberRow -> TextOption(
                     row.title, if (row.isInt) row.value.roundToInt().toString() else TimeCodec.number(row.value, 4), row.enabled, true,
                 ) { s -> s.replace(',', '.').toDoubleOrNull()?.let { onSet(row.option, ExportModel.numberValue(row.option, it)) } }

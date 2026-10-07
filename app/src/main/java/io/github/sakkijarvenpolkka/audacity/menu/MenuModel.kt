@@ -122,7 +122,7 @@ data object Separator : MenuNode
 class DynamicItems(val id: String, val build: (MenuState) -> List<MenuNode>) : MenuNode
 
 /** A top-level menu (File … Help). */
-class TopMenu(val id: String, @StringRes val labelRes: Int, val children: List<MenuNode>) {
+class TopMenu(val id: String, @param:StringRes val labelRes: Int, val children: List<MenuNode>) {
     val label: UiText get() = UiText.Res(labelRes)
 }
 
