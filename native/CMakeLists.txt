@@ -332,5 +332,11 @@ if(AUDACITY_ANDROID_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CM
    enable_testing()
    add_subdirectory(tests)
 endif()
+# PortAudio host-API tests on the simulated "Null" AAudio device (host only;
+# owned by the PortAudio port, see native/portaudio-android/README.md)
+if(AUDACITY_ANDROID_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/portaudio/CMakeLists.txt")
+   enable_testing()
+   add_subdirectory(tests/portaudio)
+endif()
 
 audacity_port_finalize()

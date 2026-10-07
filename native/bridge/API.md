@@ -77,7 +77,15 @@ temp files and staging for import/export in `cacheDir/tmp`, `cacheDir/import`,
 `cacheDir/export`.
 
 Kotlin extracts `assets/audacity/{nyquist,plug-ins}` to `filesDir/audacity/`
-before calling `start` (re-extract when the app version changes).
+before calling `start` (re-extract when the app version changes; replace only
+`nyquist/` and `plug-ins/`, never the whole `filesDir/audacity`, which also
+holds the preferences). `nyquistDir`/`pluginsDir` are optional (defaults
+`filesDir/audacity/nyquist` and `.../plug-ins`); the engine searches
+`<parent>/nyquist/nyquist.lsp` and `<parent>/plug-ins/*.ny`, so the last path
+components must be `nyquist` and `plug-ins`. The engine creates the
+directories above. Native implementation note: the directories are derived
+through `HOME`, `XDG_*_HOME`, `TMPDIR`, `SQLITE_TMPDIR` set by the engine and
+cached per process, so a restart in the same process must use the same paths.
 
 The engine reports `recordPermission` changes through the
 `audio.permission` command (§6.6).
@@ -98,7 +106,12 @@ Response (always a JSON object):
 
 * `generation` is the project-model generation after the command (0 when no
   project is open). It increases after every mutation, undo, redo, rollback and
-  whenever recording/import changes tracks.
+  whenever recording/import changes tracks, and when a project is opened or
+  created (it never restarts, so references from a closed project are stale).
+  It is **not** bumped by selection/view-only (**S**) commands, so they do not
+  invalidate clip references.
+* Before `engine.ready` (and after `Stop()`) every command answers
+  `NOT_READY`. Arguments that are not a JSON object answer `INVALID_ARGS`.
 * A command that changed the model also causes a `snapshot` event (§4.2)
   **before** its response is returned. Kotlin must not rely on the response
   for model state; use the snapshot flow.
@@ -125,8 +138,9 @@ Error codes:
 
 * Times are seconds (double), absolute project time.
 * Track ids are the Audacity `TrackId` values (int64, stable across undo/redo
-  thanks to the UndoTracks patch). Ids `< 0` are synthetic ids of pending
-  tracks during recording.
+  thanks to the UndoTracks patch; valid within one engine session). Real ids
+  are `>= 0`; `-1` is the library's "unassigned" value and never appears;
+  synthetic ids of pending tracks during recording are `<= -2`.
 * Clip references are `{"trackId": .., "clipIndex": .., "generation": ..}`
   where `clipIndex` indexes the clips of that track ordered by start time
   (`WaveTrack::SortedIntervalArray()`), exactly as in the snapshot of that
@@ -156,21 +170,21 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 
 | command | args | result | flags |
 |---|---|---|---|
-| `project.new` | `{closeCurrent?: bool=true}` | `{}` | – Opens an empty project (closing the current one; unsaved changes are discarded — Kotlin asks the user first using `project.info.dirty`). |
-| `project.open` | `{path}` (.aup3 in app storage) | `{}` | L |
+| `project.new` | `{closeCurrent?: bool=true}` | `{}` | – Opens an empty project (closing the current one; unsaved changes are discarded — Kotlin asks the user first using `project.info.dirty`). `closeCurrent:false` while a project is open → `UNSUPPORTED` (one project at a time). |
+| `project.open` | `{path}` (.aup3 in app storage) | `{}` | L. The current project is closed only when opening succeeded. `NOT_FOUND` for a missing file, `INVALID_ARGS` for a file that is not an SQLite database (use `import.files`) and for safety backups (`*.aup3.bak`, `*~.aup3`), `FAILED` when the project is already open or cannot be read. |
 | `project.save` | – | `{path}` | L, fails `NEEDS_PATH` when the project was never saved |
 | `project.saveAs` | `{path}` | `{path}` | L. Path must end with `.aup3`. |
 | `project.saveCopy` | `{path}` | `{path}` | L. Writes a compact copy (used to share a project via SAF). |
 | `project.close` | – | `{}` | Closes without saving. |
 | `project.info` | – | `ProjectInfo` (§5.2) | I |
 | `project.snapshot` | – | `Snapshot` (§4.2) — also re-emits the `snapshot` event | I |
-| `project.setRate` | `{rate}` | `{}` | S (project rate is not an undoable state in 3.7.9) |
+| `project.setRate` | `{rate}` | `{}` | S (project rate is not an undoable state in 3.7.9; it updates the current undo state so autosave keeps it) |
 | `project.recoverable` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` | – Autosaved projects left by a previous process. |
-| `project.recover` | `{path}` | `{}` | L Opens the recovered project (it stays temporary/dirty). |
+| `project.recover` | `{path}` | `{}` | L Opens the recovered project (it stays temporary/dirty: `dirty` is true for a recovered unsaved project until it is saved). |
 | `project.discardRecoverable` | `{paths:[..]}` | `{}` | – |
 | `project.tags.get` | – | `{tags:[{name,value}]}` | I |
 | `project.tags.set` | `{tags:[{name,value}]}` | `{}` | M |
-| `project.list` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` in `filesDir/Projects` | I |
+| `project.list` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` in `filesDir/Projects` (safety backups `*~.aup3` hidden; `sizeBytes` includes the `-wal` file) | I |
 | `project.delete` | `{path}` | `{}` | – (not the open one) |
 
 #### history (spine)
@@ -188,6 +202,14 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | command | args | result | flags |
 |---|---|---|---|
 | `view.set` | `{zoom?: pps, hpos?: seconds}` | `{}` | S, I. Persists ViewInfo zoom/scroll (saved in the project). Kotlin owns gesture math. |
+
+#### debug (spine; development and tests, not for production UI)
+
+| command | args | result | flags |
+|---|---|---|---|
+| `debug.makeTestTrack` | `{seconds?=1, frequency?=440, channels?=1, rate?=project rate, amplitude?=0.5}` | `{id}` | M. Appends a sine-tone WaveTrack ("Test Tone N"), one undo state. |
+| `debug.ask` | `{message?, title?, cancel?:bool, choices?:[..]}` | `{result:"yes"\|"no"\|"cancel"\|"none"}` or `{choice}` | I. Asks through BasicUI (blocking `dialog`). |
+| `debug.progress` | `{seconds?=1}` | `{stopped:bool}` | I, L. Runs a BasicUI progress; `CANCELLED` when cancelled. |
 
 #### select / playRegion (edit module)
 
@@ -316,7 +338,12 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 
 After `engine.ready` the engine has an empty project open (or none, if Kotlin
 should first offer recovery: the ready payload has `"recoverable": n`; when
-`n > 0` no project is opened automatically).
+`n > 0` no project is opened automatically). A `snapshot` event follows
+`engine.ready`. `selfChecks` names: `sampleBlockFactory`, `importers`,
+`exporters`, `effects`, `nyquistRuntime`, `tempDir`, `configDir`,
+`projectAttachments` (and `initialProject` when the empty project could not be
+created); each has `ok` and an optional `message`. They are diagnostics: the
+engine is usable even when `effects`/`nyquistRuntime` fail.
 
 ### 4.2 `snapshot`
 
@@ -459,7 +486,7 @@ lines (wxLog), for a debug screen. Rate limited.
   "preRollSec": 5.0, "crossfadeMs": 10.0,
   "realtimeDither": "none", "hqDither": "shaped",   // /Quality/...
   "effectsGroupBy": "default",        // /Effects/GroupBy
-  "soloMode": "Simple",               // /GUI/Solo: "Simple" | "Multi" | "None"
+  "soloMode": "Simple",               // /GUI/Solo: "Simple" | "Multi" (3.7.9 default Multi; the engine writes Simple on first run)
   "editClipsCanMove": true,           // /GUI/EditClipCanMove
   "selectAllOnNone": false            // /GUI/SelectAllOnNone
 }
@@ -637,6 +664,9 @@ Kotlin. Returns as §7.2 (`-5` = spectrogram unsupported).
   events and cancel requests arrive through atomics.
 * Display functions run on the engine thread in a separate low-priority queue
   that is drained only by the outermost engine loop (never inside a nested
-  `Yield`/modal wait).
+  `Yield`/modal wait). A display call waits at most 250 ms for the engine to
+  *start* serving it (e.g. while a long export runs); otherwise it returns
+  `-3` (`NOT_READY`) / `null` and Kotlin retries later. Once started it runs
+  to completion.
 * `readTransport` / `readMeters` never take locks and never touch library
   objects.

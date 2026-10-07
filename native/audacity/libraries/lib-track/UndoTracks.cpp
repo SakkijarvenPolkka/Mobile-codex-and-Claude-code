@@ -22,14 +22,17 @@ struct TrackListRestorer final : UndoStateExtension {
          if (pTrack->GetId() == TrackId{})
             // Don't copy a pending added track
             continue;
-         mpTracks->Add(pTrack->Duplicate());
+         // Android port: keep the TrackId (assignIds = false) so ids are
+         // stable across undo/redo/rollback, as Audacity 4 does
+         mpTracks->Add(pTrack->Duplicate(), false);
       }
    }
    void RestoreUndoRedoState(AudacityProject &project) override {
       auto &dstTracks = TrackList::Get(project);
       dstTracks.Clear();
       for (auto pTrack : *mpTracks)
-         dstTracks.Add(pTrack->Duplicate());
+         // Android port: restore with the saved TrackId (see above)
+         dstTracks.Add(pTrack->Duplicate(), false);
    }
    bool CanUndoOrRedo(const AudacityProject &project) override {
       return !PendingTracks::Get(project).HasPendingTracks();

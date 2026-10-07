@@ -11,6 +11,7 @@ desktop.
 | File | Change | Reason |
 |---|---|---|
 | `libraries/lib-files/FileNames.cpp` | `#ifdef __ANDROID__` include `<linux/magic.h>` instead of `"/usr/include/linux/magic.h"` | the absolute path pulls the *build host's* kernel header into the Android build (and does not exist on macOS/Windows hosts); the NDK sysroot has the same header |
+| `libraries/lib-track/UndoTracks.cpp` | `TrackListRestorer` adds the duplicated tracks with `TrackList::Add(track, false)` (no new TrackId) when taking and when restoring an undo snapshot (2 lines, not `__ANDROID__`-guarded: the bridge also runs on the Linux host) | stable TrackIds across undo/redo/rollback: the bridge protocol (`native/bridge/API.md` §3.2) addresses tracks by TrackId; upstream 3.7.9 gives every track a new id on each undo/redo/rollback. Same fix as Audacity 4 (`au3-track/UndoTracks.cpp`, `DoAssignId::No`); `Track::Duplicate` keeps `mId`, and the global id counter stays monotonic, so no collisions |
 
 All other vendored files are byte-identical to upstream.
 

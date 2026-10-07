@@ -6,3 +6,8 @@
 #    ctest --test-dir native/build-host --output-on-failure
 
 add_subdirectory(smoke)
+
+# Bridge tests (native/tests/bridge): drive libaudacity-bridge through Bridge.h
+if(TARGET audacity-bridge AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bridge/CMakeLists.txt")
+   add_subdirectory(bridge)
+endif()
