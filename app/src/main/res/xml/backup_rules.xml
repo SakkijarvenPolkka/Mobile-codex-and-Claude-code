@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Auto Backup (API <= 30): keep preferences, never projects (25 MB quota) or extracted assets.
+     SPDX-License-Identifier: GPL-2.0-or-later -->
+<full-backup-content>
+    <exclude domain="file" path="Projects/" />
+    <exclude domain="file" path="audacity/nyquist/" />
+    <exclude domain="file" path="audacity/plug-ins/" />
+</full-backup-content>

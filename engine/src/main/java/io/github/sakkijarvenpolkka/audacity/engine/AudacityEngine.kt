@@ -42,12 +42,20 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.SpectrumResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Tag
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportSample
+import io.github.sakkijarvenpolkka.audacity.engine.model.DisplayStatus
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 
-/** Thrown when the engine answers with `{"ok": false, ...}`. */
-class EngineException(val code: String, message: String) : Exception(message)
+/** Thrown when the engine answers with `{"ok": false, ...}`. [code] is one of
+ *  [io.github.sakkijarvenpolkka.audacity.engine.model.ErrorCodes]. */
+class EngineException(val code: String, message: String) : Exception(message) {
+    override fun toString(): String = "EngineException($code): $message"
+}
 
 /** Lifecycle of the native engine. */
 sealed interface EngineStatus {
@@ -83,15 +91,33 @@ interface AudacityEngine {
     val snapshot: StateFlow<Snapshot>
     /** Active progress operations keyed by id (begin/update; removed on end). */
     val progress: StateFlow<Map<Int, ProgressEvent>>
-    /** Dialog requests (blocking ones must be answered with [replyDialog]). */
+    /** Dialog requests (blocking ones must be answered with [replyDialog]).
+     *  Hot flow without replay: use [pendingDialogs] to (re)render dialogs. */
     val dialogs: SharedFlow<DialogEvent>
     val transportEvents: SharedFlow<TransportEvent>
     val logs: SharedFlow<LogEvent>
+
+    /** True for [FakeAudacityEngine] (previews, tests, builds without the
+     *  native core). The fake reports [EngineStatus.Ready]. */
+    val isFake: Boolean get() = false
+
+    /** Last `transport` event (API.md §4.5); "stopped" initially. */
+    val transportState: StateFlow<TransportEvent> get() = DefaultFlows.STOPPED
+
+    /** Dialogs shown by the engine and not answered yet, oldest first. A
+     *  dialog stays here until [replyDialog] is called for its id, so it
+     *  survives Activity recreation (the engine thread waits for blocking
+     *  ones). */
+    val pendingDialogs: StateFlow<List<DialogEvent>> get() = DefaultFlows.NO_DIALOGS
 
     // ----- lifecycle -----------------------------------------------------
     /** Extracts assets if needed and calls NativeBridge.start (idempotent). */
     suspend fun start()
 
+    /** Answers a dialog: `button` indexes `buttons` (or `choices` for
+     *  `kind:"choice"`), -1 = dismissed/cancelled. Call it for non-blocking
+     *  dialogs too (they are only removed from [pendingDialogs]; the engine
+     *  does not expect a reply for them). */
     fun replyDialog(dialogId: Int, button: Int)
     fun cancelProgress(progressId: Int, stop: Boolean = false)
 
@@ -227,4 +253,44 @@ interface AudacityEngine {
     suspend fun envelopeColumns(trackId: Long, zoomLevel: Int, firstColumn: Long, count: Int): FloatArray?
     suspend fun waveSamples(trackId: Long, channel: Int, t0: Double, t1: Double): List<SampleRun>?
     suspend fun spectrogramColumns(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, rows: Int): ByteArray?
+
+    /**
+     * Allocation-free variant of [waveColumns]: fills [out] (size ≥ 3·count:
+     * min[count], max[count], rms[count]) and returns the raw status of
+     * API.md §7.2 (waveVersion ≥ 0, bit 62 = partial; or a negative
+     * [DisplayStatus] code such as SAMPLE_MODE or NOT_READY).
+     */
+    suspend fun waveColumnsInto(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, out: FloatArray): Long {
+        val tile = waveColumns(trackId, channel, zoomLevel, firstColumn, count) ?: return DisplayStatus.NOT_READY
+        tile.data.copyInto(out, 0, 0, minOf(out.size, tile.data.size))
+        return if (tile.partial) tile.waveVersion or DisplayStatus.PARTIAL_BIT else tile.waveVersion
+    }
+
+    /** Allocation-free variant of [envelopeColumns] (`out` size ≥ count); the
+     *  return value follows API.md §7.2. */
+    suspend fun envelopeColumnsInto(trackId: Long, zoomLevel: Int, firstColumn: Long, count: Int, out: FloatArray): Long {
+        val data = envelopeColumns(trackId, zoomLevel, firstColumn, count) ?: return DisplayStatus.NOT_READY
+        data.copyInto(out, 0, 0, minOf(out.size, data.size))
+        return 0L
+    }
+
+    /** display.trimCaches — e.g. from `onTrimMemory`. */
+    suspend fun trimDisplayCaches(budgetBytes: Long) {}
+
+    /**
+     * Runs any engine command by name (API.md §3.3) and returns its `result`
+     * object; for the debug screen and for commands without a typed wrapper
+     * (e.g. `debug.makeTestTrack`, `effects.lastApplied`).
+     * @throws EngineException like the typed calls.
+     */
+    suspend fun invokeCommand(command: String, args: JsonObject = JsonObject(emptyMap())): JsonElement =
+        throw EngineException("UNKNOWN_COMMAND", "$command is not supported by this engine")
+}
+
+/** Suspends until the engine left [EngineStatus.Starting]; returns that status. */
+suspend fun AudacityEngine.awaitStarted(): EngineStatus = status.first { it !is EngineStatus.Starting }
+
+internal object DefaultFlows {
+    val STOPPED: StateFlow<TransportEvent> = MutableStateFlow(TransportEvent("stopped")).asStateFlow()
+    val NO_DIALOGS: StateFlow<List<DialogEvent>> = MutableStateFlow(emptyList<DialogEvent>()).asStateFlow()
 }

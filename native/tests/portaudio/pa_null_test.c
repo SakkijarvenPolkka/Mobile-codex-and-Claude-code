@@ -1224,6 +1224,39 @@ static void TestGain(void)
     CheckNoMisuse();
 }
 
+/* framesPerBuffer != paFramesPerBufferUnspecified: pa_process adapts AAudio bursts (480)
+   to the user's fixed buffer size */
+static void TestFixedBuffer(void)
+{
+    static const int kChannels[3][2] = { { 0, 2 }, { 1, 0 }, { 1, 2 } };
+    int i;
+    CHECK_PA(Pa_Initialize());
+    for (i = 0; i < 3; ++i) {
+        PaStream *s = NULL;
+        Recorder r;
+        PaStreamParameters in = { Pa_GetDefaultInputDevice(), 0, paFloat32, 0.05, NULL };
+        PaStreamParameters out = { Pa_GetDefaultOutputDevice(), 0, paFloat32, 0.05, NULL };
+        RecorderInit(&r, kChannels[i][0], kChannels[i][1]);
+        in.channelCount = r.inChannels;
+        out.channelCount = r.outChannels;
+        CHECK_PA(Pa_OpenStream(&s, r.inChannels ? &in : NULL, r.outChannels ? &out : NULL, 48000.0, 256, paNoFlag,
+                               Callback, &r));
+        if (!s)
+            continue;
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(600);
+        CHECK_PA(Pa_AbortStream(s));
+        CHECK(atomic_load(&r.callbacks) > 20);
+        CHECK(r.minFrames == 256 && r.maxFrames == 256);
+        CHECK(atomic_load(&r.bad) == 0);
+        if (r.inChannels)
+            CHECK_NEAR(InputRms(&r, 0), 0.5 / sqrt(2.0), 0.02);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    CHECK_PA(Pa_Terminate());
+    CheckNoMisuse();
+}
+
 static void TestTerminateOpen(void)
 {
     PaStream *s = NULL;
@@ -1270,6 +1303,7 @@ static const TestCase kTests[] = {
     { "warmup_timeout", TestWarmupTimeout },
     { "drift", TestDrift },
     { "gain", TestGain },
+    { "fixed_buffer", TestFixedBuffer },
     { "terminate_open", TestTerminateOpen },
 };
 

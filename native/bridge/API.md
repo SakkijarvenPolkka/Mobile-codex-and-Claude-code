@@ -53,6 +53,24 @@ names with emoji).
 `interface EngineListener { fun onEvent(type: String, payload: ByteArray) }`
 (`type` is plain ASCII, `payload` UTF-8 JSON).
 
+Kotlin implementation notes (`engine/`, binding for the JNI glue):
+
+* `EngineListener` is a Kotlin `fun interface` in package
+  `io.github.sakkijarvenpolkka.audacity.engine`; JNI calls
+  `onEvent(Ljava/lang/String;[B)V` on the object passed to `start`.
+* The `external` functions are plain members of `object NativeBridge` (no
+  `@JvmStatic`): the JNI functions
+  `Java_io_github_sakkijarvenpolkka_audacity_engine_NativeBridge_<name>` receive
+  the object instance as second argument (`jobject thiz`), not a `jclass`.
+* `System.loadLibrary("audacity-bridge")` is attempted once, guarded
+  (`NativeBridge.isLoaded`); without the library the app falls back to the
+  in-memory `FakeAudacityEngine`.
+* `NativeAudacityEngine` runs `invoke` on one "audacity-invoke" thread and the
+  display functions on a separate "audacity-display" thread; events are
+  decoded on an "audacity-events" thread, and a typed call returns only after
+  the events that arrived before its response were applied (so the `snapshot`
+  of a command is already visible in `AudacityEngine.snapshot`).
+
 ### 2.1 Start configuration
 
 ```json

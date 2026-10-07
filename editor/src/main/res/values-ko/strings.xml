@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Audacity Android port — editor strings (Korean). SPDX-License-Identifier: GPL-2.0-or-later -->
+<resources>
+    <string name="aued_transport_toolbar">전송</string>
+    <string name="aued_pause">일시 정지</string>
+    <string name="aued_play">재생</string>
+    <string name="aued_stop">정지</string>
+    <string name="aued_skip_to_start">처음으로 건너뛰기</string>
+    <string name="aued_skip_to_end">끝으로 건너뛰기</string>
+    <string name="aued_record">녹음</string>
+    <string name="aued_record_new_track">새 트랙에 녹음</string>
+    <string name="aued_record_hint">길게 누르면 새 트랙에 녹음합니다</string>
+    <string name="aued_loop">반복 재생 사용</string>
+    <string name="aued_state_playing">재생 중</string>
+    <string name="aued_state_recording">녹음 중</string>
+    <string name="aued_state_paused">일시 정지됨</string>
+    <string name="aued_state_stopped">정지됨</string>
+
+    <string name="aued_edit_toolbar">편집</string>
+    <string name="aued_zoom_in">확대</string>
+    <string name="aued_zoom_out">축소</string>
+    <string name="aued_zoom_normal">기본 배율</string>
+    <string name="aued_zoom_fit">창 너비에 맞추기</string>
+    <string name="aued_zoom_selection">선택 영역으로 확대</string>
+    <string name="aued_trim">선택 영역 밖의 오디오 잘라내기</string>
+    <string name="aued_silence">선택한 오디오 무음 처리</string>
+    <string name="aued_undo">실행 취소</string>
+    <string name="aued_redo">다시 실행</string>
+
+    <string name="aued_recording_meter">녹음 측정기</string>
+    <string name="aued_playback_meter">재생 측정기</string>
+    <string name="aued_start_monitoring">모니터링 시작</string>
+    <string name="aued_stop_monitoring">모니터링 중지</string>
+    <string name="aued_meter_level">최대 %1$s dB</string>
+    <string name="aued_meter_clipped">클리핑됨</string>
+    <string name="aued_meter_reset">측정기 초기화</string>
+    <string name="aued_left">L</string>
+    <string name="aued_right">R</string>
+
+    <string name="aued_audio_position">오디오 위치</string>
+    <string name="aued_selection">선택</string>
+    <string name="aued_selection_start">시작</string>
+    <string name="aued_selection_end">끝</string>
+    <string name="aued_edit_time">%1$s 편집</string>
+    <string name="aued_invalid_time">잘못된 시간</string>
+
+    <string name="aued_tracks">트랙</string>
+    <string name="aued_remove_track">트랙 제거</string>
+    <string name="aued_track_menu">메뉴 열기…</string>
+    <string name="aued_collapse">접기</string>
+    <string name="aued_expand">펼치기</string>
+    <string name="aued_mute">음소거</string>
+    <string name="aued_solo">솔로</string>
+    <string name="aued_volume">볼륨</string>
+    <string name="aued_pan">팬</string>
+    <string name="aued_show_mixer">볼륨 및 팬</string>
+    <string name="aued_mono">모노</string>
+    <string name="aued_stereo">스테레오</string>
+    <string name="aued_rate_hz">%1$d Hz</string>
+    <string name="aued_format_int16">16비트 PCM</string>
+    <string name="aued_format_int24">24비트 PCM</string>
+    <string name="aued_format_float">32비트 부동소수점</string>
+    <string name="aued_pan_center">가운데</string>
+    <string name="aued_pan_left">왼쪽 %1$d%%</string>
+    <string name="aued_pan_right">오른쪽 %1$d%%</string>
+    <string name="aued_db_value">%1$s dB</string>
+    <string name="aued_track_description">%1$s, %2$s</string>
+    <string name="aued_selected">선택됨</string>
+    <string name="aued_muted">음소거됨</string>
+    <string name="aued_soloed">솔로</string>
+
+    <string name="aued_timeline">타임라인</string>
+    <string name="aued_timeline_options">타임라인 옵션</string>
+    <string name="aued_waveform_area">트랙 패널</string>
+    <string name="aued_no_tracks">트랙이 없습니다. 오디오를 가져오거나 녹음하거나 트랙을 추가하세요.</string>
+</resources>

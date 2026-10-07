@@ -21,8 +21,16 @@ set(_pa_tests
    stats_before_start enumerate rates devices output input input_int16 duplex
    loopback complete abort_return idempotence blocked_callback disconnect
    duplex_disconnect xrun open_errors mono_mic warmup_timeout drift gain
-   terminate_open)
+   fixed_buffer terminate_open)
 foreach(_t IN LISTS _pa_tests)
    add_test(NAME portaudio.${_t} COMMAND portaudio-null-test ${_t})
    set_tests_properties(portaudio.${_t} PROPERTIES TIMEOUT 60 LABELS portaudio)
 endforeach()
+
+# Integration: Audacity's AudioIO (lib-audio-io) on the simulated device
+add_executable(portaudio-audioio-test audioio_monitor_test.cpp)
+target_link_libraries(portaudio-audioio-test PRIVATE audacity-core portaudio::android)
+set_target_properties(portaudio-audioio-test PROPERTIES
+   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+add_test(NAME portaudio.audioio_monitor COMMAND portaudio-audioio-test)
+set_tests_properties(portaudio.audioio_monitor PROPERTIES TIMEOUT 60 LABELS portaudio)

@@ -19,3 +19,6 @@ captures/
 
 # OS
 .DS_Store
+
+# Kotlin compiler caches
+.kotlin/

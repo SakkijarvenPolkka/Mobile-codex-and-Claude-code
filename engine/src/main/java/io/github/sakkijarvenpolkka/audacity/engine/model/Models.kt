@@ -206,6 +206,12 @@ data class Snapshot(
     val hasTimeSelection: Boolean get() = selection.t1 > selection.t0
     val projectEnd: Double get() = tracks.maxOfOrNull { trackEnd(it) } ?: 0.0
 
+    /** The track with this id, or null. */
+    fun track(id: Long): TrackState? = tracks.firstOrNull { it.id == id }
+
+    /** True when a menu item requiring [required] flags is enabled. */
+    fun enabled(required: Long): Boolean = CommandFlags.enabled(required, flags)
+
     private fun trackEnd(t: TrackState): Double =
         if (t.isLabel) t.labels.maxOfOrNull { it.t1 } ?: 0.0 else t.end
 
@@ -603,6 +609,24 @@ data class TransportSample(
     val isRecording: Boolean get() = state == STATE_RECORDING
     val isPaused: Boolean get() = state == STATE_PAUSED_PLAY || state == STATE_PAUSED_RECORD
     val isActive: Boolean get() = state in STATE_PLAYING..STATE_PAUSED_RECORD
+    val isMonitoring: Boolean get() = state == STATE_MONITORING
+
+    /**
+     * Play/record head for drawing at [nowNanos] (`System.nanoTime()`, the
+     * same clock as `CLOCK_MONOTONIC`): [displayTime] extrapolated by the time
+     * elapsed since [sampledAtNanos] while playing or recording (not paused),
+     * clamped to the loop end while looping and to [playEnd] while playing
+     * (API.md §6.4). NaN when there is no stream time.
+     */
+    fun headTime(nowNanos: Long, playEnd: Double = Double.POSITIVE_INFINITY): Double {
+        if (displayTime.isNaN()) return displayTime
+        if (state != STATE_PLAYING && state != STATE_RECORDING) return displayTime
+        val elapsed = (nowNanos - sampledAtNanos).coerceAtLeast(0L) / 1e9
+        val t = displayTime + elapsed * (if (speed > 0.0) speed else 1.0)
+        if (state == STATE_RECORDING) return t
+        val end = if (looping && loopT1 > loopT0) loopT1 else playEnd
+        return if (t > end) end else t
+    }
 
     companion object {
         const val SIZE = 16
@@ -682,11 +706,32 @@ object Zoom {
 
     /** The highest level whose pps does not exceed [pps]. */
     fun levelAtOrBelow(pps: Double): Int {
-        var level = Math.floor(8.0 * (Math.log(pps) / Math.log(2.0))).toInt()
+        if (!(pps > 0.0)) return MIN_LEVEL
+        var level = Math.floor(8.0 * (Math.log(pps) / Math.log(2.0)))
+            .coerceIn(MIN_LEVEL.toDouble(), MAX_LEVEL.toDouble()).toInt()
         while (level < MAX_LEVEL && ppsForLevel(level + 1) <= pps) level++
         while (level > MIN_LEVEL && ppsForLevel(level) > pps) level--
         return level.coerceIn(MIN_LEVEL, MAX_LEVEL)
     }
+
+    /** Horizontal scale for drawing tiles of [levelAtOrBelow] at the exact
+     *  [zoom] (`zoom / pps(level)`, in [1, 1.09) inside the level range). */
+    fun drawScale(zoom: Double): Double = zoom / ppsForLevel(levelAtOrBelow(zoom))
+
+    /** Absolute column containing time [t] at [level] (column c covers
+     *  `[c/pps, (c+1)/pps)`). */
+    fun columnAt(t: Double, level: Int): Long = Math.floor(t * ppsForLevel(level)).toLong()
+
+    /** Start time of column [column] at [level]. */
+    fun timeOfColumn(column: Long, level: Int): Double = column / ppsForLevel(level)
+
+    /** First column of the 256-column tile that contains [column]. */
+    fun tileStart(column: Long): Long = Math.floorDiv(column, TILE_COLUMNS.toLong()) * TILE_COLUMNS
+
+    /** Column mode vs sample mode for a clip (API.md §7.1, per clip:
+     *  sample mode when `pps > 0.5 · rate / stretchRatio`). */
+    fun needsSampleMode(pps: Double, rate: Double, stretchRatio: Double = 1.0): Boolean =
+        pps > 0.5 * rate / (if (stretchRatio > 0.0) stretchRatio else 1.0)
 }
 
 /** Return codes of the display functions (API.md §7.2). */

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Audacity Android port — editor strings. SPDX-License-Identifier: GPL-2.0-or-later -->
+<resources>
+    <!-- Transport toolbar (ControlToolBar) -->
+    <string name="aued_transport_toolbar">Transport</string>
+    <string name="aued_pause">Pause</string>
+    <string name="aued_play">Play</string>
+    <string name="aued_stop">Stop</string>
+    <string name="aued_skip_to_start">Skip to Start</string>
+    <string name="aued_skip_to_end">Skip to End</string>
+    <string name="aued_record">Record</string>
+    <string name="aued_record_new_track">Record New Track</string>
+    <string name="aued_record_hint">Long-press to record on a new track</string>
+    <string name="aued_loop">Enable Looping</string>
+    <string name="aued_state_playing">Playing</string>
+    <string name="aued_state_recording">Recording</string>
+    <string name="aued_state_paused">Paused</string>
+    <string name="aued_state_stopped">Stopped</string>
+
+    <!-- Edit toolbar -->
+    <string name="aued_edit_toolbar">Edit</string>
+    <string name="aued_zoom_in">Zoom In</string>
+    <string name="aued_zoom_out">Zoom Out</string>
+    <string name="aued_zoom_normal">Zoom Normal</string>
+    <string name="aued_zoom_fit">Fit to Width</string>
+    <string name="aued_zoom_selection">Zoom to Selection</string>
+    <string name="aued_trim">Trim audio outside selection</string>
+    <string name="aued_silence">Silence audio selection</string>
+    <string name="aued_undo">Undo</string>
+    <string name="aued_redo">Redo</string>
+
+    <!-- Meters -->
+    <string name="aued_recording_meter">Recording Meter</string>
+    <string name="aued_playback_meter">Playback Meter</string>
+    <string name="aued_start_monitoring">Start Monitoring</string>
+    <string name="aued_stop_monitoring">Stop Monitoring</string>
+    <string name="aued_meter_level">Peak %1$s dB</string>
+    <string name="aued_meter_clipped">clipped</string>
+    <string name="aued_meter_reset">Reset meters</string>
+    <string name="aued_left">L</string>
+    <string name="aued_right">R</string>
+
+    <!-- Time / Selection toolbars -->
+    <string name="aued_audio_position">Audio Position</string>
+    <string name="aued_selection">Selection</string>
+    <string name="aued_selection_start">Start</string>
+    <string name="aued_selection_end">End</string>
+    <string name="aued_edit_time">Edit %1$s</string>
+    <string name="aued_invalid_time">Invalid time</string>
+
+    <!-- Track control panel -->
+    <string name="aued_tracks">Tracks</string>
+    <string name="aued_remove_track">Remove Track</string>
+    <string name="aued_track_menu">Open menu…</string>
+    <string name="aued_collapse">Collapse</string>
+    <string name="aued_expand">Expand</string>
+    <string name="aued_mute">Mute</string>
+    <string name="aued_solo">Solo</string>
+    <string name="aued_volume">Volume</string>
+    <string name="aued_pan">Pan</string>
+    <string name="aued_show_mixer">Volume and pan</string>
+    <string name="aued_mono">Mono</string>
+    <string name="aued_stereo">Stereo</string>
+    <string name="aued_rate_hz">%1$d Hz</string>
+    <string name="aued_format_int16">16-bit PCM</string>
+    <string name="aued_format_int24">24-bit PCM</string>
+    <string name="aued_format_float">32-bit float</string>
+    <string name="aued_pan_center">Center</string>
+    <string name="aued_pan_left">%1$d%% Left</string>
+    <string name="aued_pan_right">%1$d%% Right</string>
+    <string name="aued_db_value">%1$s dB</string>
+    <string name="aued_track_description">%1$s, %2$s</string>
+    <string name="aued_selected">selected</string>
+    <string name="aued_muted">muted</string>
+    <string name="aued_soloed">solo</string>
+
+    <!-- Timeline / panel -->
+    <string name="aued_timeline">Timeline</string>
+    <string name="aued_timeline_options">Timeline Options</string>
+    <string name="aued_waveform_area">Track panel</string>
+    <string name="aued_no_tracks">No tracks. Import audio, record, or add a track to begin.</string>
+</resources>

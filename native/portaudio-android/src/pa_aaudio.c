@@ -1577,14 +1577,16 @@ static aaudio_result_t OpenDirection(PaAAudioStream *st, aaudio_direction_t dir,
     return first;
 }
 
+/* Open failed after one AAudio stream was opened.  An AAudio error callback may still
+   hold 'st' as userData, so the memory goes through the same delayed free as Close. */
 static void DestroyUnstartedStream(PaAAudioStream *st)
 {
-    if (st->out)
-        AAudioStream_close(st->out);
-    if (st->in)
-        AAudioStream_close(st->in);
-    st->out = st->in = NULL;
-    FreeStreamMemory(st);
+    atomic_store(&st->closed, 1);
+    PaUtil_TerminateStreamRepresentation(&st->streamRepresentation);
+    CloseAAudio(st); /* never started: no callbacks, closes immediately */
+    st->needsTeardown = 0;
+    st->closeNs = MonoNs();
+    HandToReaper(st);
 }
 
 static PaError OpenStream(PaUtilHostApiRepresentation *hostApi, PaStream **s, const PaStreamParameters *inputParameters,
