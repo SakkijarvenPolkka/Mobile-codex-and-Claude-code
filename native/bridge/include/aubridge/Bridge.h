@@ -58,6 +58,10 @@ AUBRIDGE_API std::string Invoke(const std::string &command,
 //! Answers a blocking `dialog` event. Any thread.
 AUBRIDGE_API void ReplyDialog(int dialogId, int button);
 
+//! Answers a blocking `multiChoice` dialog with the checked choice indices.
+//! Any thread.
+AUBRIDGE_API void ReplyDialogChoices(int dialogId, const std::vector<int> &indices);
+
 //! Requests cancel (stop == false) or stop (stop == true) of a running
 //! progress. Any thread; never blocks.
 AUBRIDGE_API void CancelProgress(int progressId, bool stop);

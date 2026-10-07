@@ -42,6 +42,7 @@ names with emoji).
 | `external fun start(config: ByteArray, listener: EngineListener): Boolean` | any | Starts the engine thread (once per process). `config` = JSON §2.1. Returns false if already started or the thread could not be created. Bootstrap runs asynchronously; completion is the `engine.ready` / `engine.failed` event. |
 | `external fun invoke(command: ByteArray, args: ByteArray): ByteArray` | background only | Posts the command to the engine thread and blocks until it finished. Returns the response envelope §3.1 (UTF-8 JSON). Calls are executed in order of arrival. |
 | `external fun replyDialog(dialogId: Int, button: Int)` | any | Answers a blocking `dialog` event (§4.4). |
+| `external fun replyDialogChoices(dialogId: Int, indices: IntArray)` | any | Answers a blocking `kind:"multiChoice"` dialog with the checked indices (§4.4). `replyDialog(id, -1)` cancels it. |
 | `external fun cancelProgress(progressId: Int, stop: Boolean)` | any | Requests cancel (`stop=false`) or stop (`stop=true`, keep partial result where supported, e.g. import) of a running progress (§4.3). Sets an atomic; never blocks. |
 | `external fun readTransport(out: DoubleArray): Boolean` | any, lock-free | Fills `out` (size ≥ 16) with the transport snapshot §6.4. Returns false before the engine is ready. |
 | `external fun readMeters(out: FloatArray): Boolean` | any, lock-free | Fills `out` (size ≥ 14) with meter values §6.5 and resets the peak accumulators. |
@@ -174,7 +175,10 @@ Error codes:
 Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 **S** = selection/view change only (emits `snapshot`, no undo entry);
 **L** = long-running (emits `progress` events, cancellable);
-**I** = allowed while audio is busy (otherwise `AUDIO_BUSY`).
+**I** = allowed while audio is busy (otherwise `AUDIO_BUSY`);
+**U** = updates the current undo state without a new history entry
+(`ProjectHistory::ModifyState(true)`), bumps the generation and emits a
+snapshot (3.7.9 treats mute/solo this way).
 
 #### app / settings (spine)
 
@@ -188,7 +192,7 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 
 | command | args | result | flags |
 |---|---|---|---|
-| `project.new` | `{closeCurrent?: bool=true}` | `{}` | – Opens an empty project (closing the current one; unsaved changes are discarded — Kotlin asks the user first using `project.info.dirty`). `closeCurrent:false` while a project is open → `UNSUPPORTED` (one project at a time). |
+| `project.new` | – | `{}` | – Opens an empty project (closing the current one; unsaved changes are discarded — Kotlin asks the user first using `project.info.dirty`). One project at a time. |
 | `project.open` | `{path}` (.aup3 in app storage) | `{}` | L. The current project is closed only when opening succeeded. `NOT_FOUND` for a missing file, `INVALID_ARGS` for a file that is not an SQLite database (use `import.files`) and for safety backups (`*.aup3.bak`, `*~.aup3`), `FAILED` when the project is already open or cannot be read. |
 | `project.save` | – | `{path}` | L, fails `NEEDS_PATH` when the project was never saved |
 | `project.saveAs` | `{path}` | `{path}` | L. Path must end with `.aup3`. |
@@ -197,13 +201,16 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `project.info` | – | `ProjectInfo` (§5.2) | I |
 | `project.snapshot` | – | `Snapshot` (§4.2) — also re-emits the `snapshot` event | I |
 | `project.setRate` | `{rate}` | `{}` | S (project rate is not an undoable state in 3.7.9; it updates the current undo state so autosave keeps it) |
-| `project.recoverable` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` | – Autosaved projects left by a previous process. |
+| `project.recoverable` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` | I. Autosaved projects left by a previous process. |
 | `project.recover` | `{path}` | `{}` | L Opens the recovered project (it stays temporary/dirty: `dirty` is true for a recovered unsaved project until it is saved). |
 | `project.discardRecoverable` | `{paths:[..]}` | `{}` | – |
 | `project.tags.get` | – | `{tags:[{name,value}]}` | I |
 | `project.tags.set` | `{tags:[{name,value}]}` | `{}` | M |
 | `project.list` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` in `filesDir/Projects` (safety backups `*~.aup3` hidden; `sizeBytes` includes the `-wal` file) | I |
-| `project.delete` | `{path}` | `{}` | – (not the open one) |
+| `project.delete` | `{path}` | `{}` | – (not the open one; also deletes `-wal`/`-shm`) |
+| `project.rename` | `{path, newName}` | `{path}` (new path) | – Renames `<name>.aup3` (+ `-wal`/`-shm`) in `filesDir/Projects`; `FAILED` for the open project or when the target exists. |
+| `project.compact` | – | `{freedBytes}` | M, L. Port of `ProjectFileManager::Compact`: discards undo history and vacuums the database (desktop *File ▸ Compact Project*). |
+| `project.compactInfo` | – | `{totalBytes, usedBytes, fileBytes, freeBytes}` | I |
 
 #### history (spine)
 
@@ -213,7 +220,7 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `history.redo` | – | `{}` | M |
 | `history.list` | – | `{current:int, states:[{index, description, shortDescription, sizeBytes}]}` | I |
 | `history.goto` | `{index}` | `{}` | M |
-| `history.purge` | `{keepFrom:int}` | `{}` | M (discard older states, "Discard" in the history window) |
+| `history.purge` | `{keepFrom:int}` | `{}` | M. Discards the states with `index < keepFrom` ("Discard" in the history window); `keepFrom` must be ≤ the current index. |
 
 #### view (spine)
 
@@ -233,17 +240,21 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 
 | command | args | flags |
 |---|---|---|
-| `select.set` | `{t0, t1}` (time selection; t0==t1 = cursor) | S, I |
+| `select.set` | `{t0, t1, trackIds?:[..], focus?:id}` (time selection; t0==t1 = cursor; optional track part replaces the track selection — a waveform tap is one command) | S, I |
 | `select.all` | – (all tracks, whole project) | S, I |
 | `select.none` | – | S, I |
 | `select.tracks` | `{ids:[..], mode:"set"\|"add"\|"remove"\|"toggle"}` | S, I |
 | `select.trackHeader` | `{id, shift:bool, ctrl:bool}` (track-header tap semantics, `SelectionState::HandleListSelection`) | S, I |
 | `select.allTracks` | – | S, I |
-| `select.startToCursor` / `select.cursorToEnd` | – | S, I |
-| `select.trackStartToEnd` | – (extent of selected tracks) | S, I |
-| `select.cursorToTrackStart` / `select.cursorToTrackEnd` | – | S, I |
+| `select.startToCursor` | – = 3.7.9 `SelTrackStartToCursor` (min start of selected tracks → t0) | S, I |
+| `select.cursorToEnd` | – = `SelCursorToTrackEnd` | S, I |
+| `select.trackStartToEnd` | – = `SelTrackStartToEnd` (extent of selected tracks) | S, I |
+| `select.toProjectStart` / `select.toProjectEnd` | – = `SelStart` / `SelEnd` (Shift+Home/End: extend to 0 / project end) | S, I |
+| `select.cursorToTrackStart` / `select.cursorToTrackEnd` | – = `CursTrackStart` / `CursTrackEnd` (moves the cursor, J/K) | S, I |
 | `select.clip` | `{trackId, clipIndex, generation}` | S, I |
-| `select.prevClipBoundary` / `select.nextClipBoundary` | – | S, I |
+| `select.prevClip` / `select.nextClip` | – = `SelPrevClip` / `SelNextClip` | S, I |
+| `select.prevClipBoundary` / `select.nextClipBoundary` | – = `CursPrevClipBoundary` / `CursNextClipBoundary` (cursor moves) | S, I |
+| `select.zeroCrossing` | – = `ZeroCross` (moves the selection edges to nearby zero crossings, `SelectMenus.cpp`) | S |
 | `select.focus` | `{id}` | S, I |
 | `playRegion.set` | `{t0, t1, active:bool}` | S, I |
 | `playRegion.clear` | – | S, I |
@@ -251,7 +262,7 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 
 #### edit (edit module) — all **M**, no args, results `{}`
 
-`edit.cut`, `edit.copy` (no undo entry), `edit.paste`, `edit.delete`,
+`edit.cut`, `edit.copy` (**S**: no undo entry, no generation bump; the clipboard is in the snapshot), `edit.paste`, `edit.delete`,
 `edit.splitCut`, `edit.splitDelete`, `edit.silence`, `edit.trim`,
 `edit.duplicate`, `edit.split`, `edit.splitNew`, `edit.join`,
 `edit.detachAtSilences`.
@@ -266,10 +277,11 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `tracks.remove` | `{ids:[..]}` | M |
 | `tracks.mixAndRender` | `{toNewTrack:bool}` | M, L |
 | `tracks.resample` | `{rate}` (selected wave tracks) | M, L |
-| `tracks.setGain` | `{id, gain}` | M (merged into one undo entry while dragging: `{id, gain, final:bool}`; only `final:true` pushes) , I |
-| `tracks.setPan` | `{id, pan, final:bool}` | M, I |
-| `tracks.setMute` | `{id, mute}` | M, I |
-| `tracks.setSolo` | `{id, solo}` (solo semantics from the `/GUI/Solo` pref: "Simple" default) | M, I |
+| `tracks.setGain` | `{id, gain, final:bool}` | I. `final:false` (while dragging): model change only, snapshot throttled ≤ 10 Hz, no history entry; `final:true`: `PushState("Moved volume slider", "Volume", CONSOLIDATE)` (M). |
+| `tracks.setPan` | `{id, pan, final:bool}` | I, same as setGain ("Moved pan slider", "Pan"). |
+| `tracks.setMute` | `{id, mute}` | U, I |
+| `tracks.setSolo` | `{id, solo}` (semantics from the `/GUI/Solo` pref, `soloMode`) | U, I |
+| `tracks.muteAll` | `{mute:bool}` (Tracks ▸ Mute/Unmute ▸ Mute/Unmute All Tracks) | U, I |
 | `tracks.rename` | `{id, name}` | M |
 | `tracks.move` | `{id, to:"up"\|"down"\|"top"\|"bottom"}` | M |
 | `tracks.makeStereo` | `{id}` (with the track below) | M |
@@ -278,7 +290,8 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `tracks.swapChannels` | `{id}` | M |
 | `tracks.setRate` | `{id, rate}` (no resampling, like the track menu "Rate") | M |
 | `tracks.setFormat` | `{id, format}` | M, L |
-| `tracks.align` | `{mode:"startToZero"\|"startToCursor"\|"startToSelEnd"\|"endToCursor"\|"endToSelEnd"\|"together"}` | M |
+| `tracks.align` | `{mode:"startToZero"\|"startToCursor"\|"startToSelEnd"\|"endToCursor"\|"endToSelEnd"\|"endToEnd"\|"together", moveSelection?:bool}` (`moveSelection` default = pref `/GUI/MoveSelectionWithTracks`) | M |
+| `tracks.sort` | `{by:"time"\|"name"}` | M |
 
 #### clips / labels (edit module)
 
@@ -287,26 +300,31 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `clips.move` | `{trackId, clipIndex, generation, newStart, toTrackId?}` | M (time shift; snaps nothing) |
 | `clips.rename` | `{trackId, clipIndex, generation, name}` | M |
 | `labels.add` | `{title?:string}` at the selection (first selected label track, or a new label track) → `{trackId, index}` | M, I |
-| `labels.edit` | `{trackId, index, title?, t0?, t1?}` | M |
-| `labels.remove` | `{trackId, index}` | M |
+| `labels.edit` | `{trackId, index, generation?, title?, t0?, t1?}` → `{index}` (new position: time edits re-sort with `LabelTrack::SortLabels`) | M |
+| `labels.remove` | `{trackId, index, generation?}` | M |
+| `labels.import` | `{path}` (text/SRT/WebVTT file in app storage) → `{trackId}` | M. Port of *File ▸ Import ▸ Labels* (new label track named after the file). |
+| `labels.export` | `{path, format:"text"\|"subrip"\|"webvtt"}` | – Port of *File ▸ Export ▸ Export Labels* (all label tracks). |
+
+Label references with a `generation` older than the current one fail with
+`STALE` (indices shift on every add/sort).
 
 #### effects / analyze (effects module)
 
 | command | args | result | flags |
 |---|---|---|---|
 | `effects.list` | – | `{effects:[EffectInfo], menus:{generate:[MenuSection], effect:[MenuSection], analyze:[MenuSection], tools:[MenuSection]}}` (§5.4) | I |
-| `effects.describe` | `{id}` | `EffectDescription` (§5.5) — current parameter values | – |
-| `effects.setParams` | `{id, params:{key:value,...}, duration?:seconds}` | `EffectDescription` (validated; unknown/invalid → `INVALID_ARGS`, nothing changed) | – |
-| `effects.loadPreset` | `{id, kind:"factory"\|"user"\|"defaults", name?, index?}` | `EffectDescription` | – |
-| `effects.savePreset` | `{id, name}` | `{}` | – |
-| `effects.deletePreset` | `{id, name}` | `{}` | – |
-| `effects.apply` | `{id, params?:{...}, duration?:seconds}` | `{applied:bool, message?:string}` | M, L. `params` (if present) is applied with `effects.setParams` semantics first. Generators with a point selection insert `duration` seconds at the cursor. Analyzers may add label tracks and/or return `message`. |
+| `effects.describe` | `{id}` | `EffectDescription` (§5.5) — current parameter values | I |
+| `effects.setParams` | `{id, params:{key:value,...}, duration?:seconds, curve?:{points:[{f,dB}], linearFreq}}` | `EffectDescription` (validated; unknown/invalid → `INVALID_ARGS`, nothing changed). `params` may be partial: the engine merges it into the current parameter string (missing keys would otherwise reset to defaults). `curve` only for the EQ effects. | I |
+| `effects.loadPreset` | `{id, kind:"factory"\|"user"\|"defaults", name?, index?}` | `EffectDescription`. For the EQ effects the built-in curves (`curves` of §5.5) are loaded with `kind:"factory", name`. | I |
+| `effects.savePreset` | `{id, name}` | `{}` | I |
+| `effects.deletePreset` | `{id, name}` | `{}` | I |
+| `effects.apply` | `{id, params?:{...}, duration?:seconds, curve?}` | `{applied:bool, message?:string}` | M, L. `params`/`curve` (if present) are applied with `effects.setParams` semantics first. Generators with a point selection insert `duration` seconds at the cursor. Analyzers may add label tracks and/or return `message`. |
 | `effects.preview` | `{id, params?, duration?}` | `{}` | starts asynchronous preview playback (≈6 s, Audacity's `/AudioIO/EffectsPreviewLen`); ends with a `transport` event |
 | `effects.stopPreview` | – | `{}` | I |
 | `effects.repeatLast` | – | `{applied, message?}` | M, L |
 | `effects.lastApplied` | – | `{id?, name?}` | I |
 | `effects.noiseReduction.captureProfile` | – (uses the current selection) | `{}` | – step 1 of Noise Reduction |
-| `analyze.spectrum` | `{algorithm:"spectrum"\|"autocorrelation"\|"cubeRootAutocorrelation"\|"enhancedAutocorrelation", window:"rectangular"\|"bartlett"\|"hamming"\|"hann"\|"blackman"\|"blackmanHarris"\|"welch"\|"gaussian25"\|"gaussian35"\|"gaussian45", size:int (power of two 128…65536)}` | `{rate, binHz (spectrum) or binSeconds (autocorr), values:[float], minValue, maxValue, warning?}` (dB for spectrum) | L |
+| `analyze.spectrum` | `{algorithm:"spectrum"\|"autocorrelation"\|"cubeRootAutocorrelation"\|"enhancedAutocorrelation"\|"cepstrum", window:"rectangular"\|"bartlett"\|"hamming"\|"hann"\|"blackman"\|"blackmanHarris"\|"welch"\|"gaussian25"\|"gaussian35"\|"gaussian45", size:int (power of two 128…131072)}` | `{rate, binHz (spectrum) or binSeconds (autocorr/cepstrum), values:[float], minValue, maxValue, warning?}` (dB for spectrum). The analysed length is capped by the engine (phones: Audacity allows up to 2^27 samples = 1.5 GB of buffers); `warning` says when the selection was truncated. | L |
 | `analyze.contrast` | `{foreground:{t0,t1}, background:{t0,t1}}` | `{foregroundDb, backgroundDb, differenceDb, passes:bool}` | – |
 
 #### import / export (io module)
@@ -316,25 +334,26 @@ Legend: **M** = mutates the model (pushes an undo state, emits `snapshot`);
 | `import.formats` | – | `{groups:[{description, extensions:[..]}], extensions:[..]}` | I |
 | `import.files` | `{paths:[..], newProject:bool=false}` (real paths in `cacheDir/import/...`, original file names kept) | `{trackIds:[..], messages:[..]}` | M, L. With `newProject` a new project is created first. Each file is one undo entry ("Imported 'name'"). |
 | `export.formats` | – | `{formats:[ExportFormat]}` (§5.6) | I |
-| `export.defaults` | `{formatKey}` | `{hasSelection, defaultChannels, maxChannels, defaultRate, rates:[..]}` | – |
-| `export.options` | `{formatKey}` | `ExportOptions` (§5.6) — opens/refreshes the options session | – |
-| `export.setOption` | `{formatKey, id, value:{t,v}}` | `ExportOptions` | – |
+| `export.defaults` | `{formatKey}` | `{hasSelection, defaultChannels, maxChannels, defaultRate, rates:[..]}` | I |
+| `export.options` | `{formatKey}` | `ExportOptions` (§5.6) — opens/refreshes the options session | I |
+| `export.setOption` | `{formatKey, id, value:{t,v}}` | `ExportOptions` | I |
 | `export.run` | `{path, formatKey, range:"project"\|"selection", channels:int, rate:int, skipSilenceAtStart?:bool}` | `{path}` | L. `path` is a staging path (`cacheDir/export/<uuid>/<name>.<ext>`) that must not exist yet; Kotlin copies the result to the SAF Uri. |
 
 #### transport / audio (audio module)
 
 | command | args | result | flags |
 |---|---|---|---|
-| `transport.play` | `{loop?:bool=false, t0?, t1?}` | `{}` | Desktop *Play*: with a time selection play it, else play from the cursor to the end; `loop` plays the play region (or the selection) looped. Explicit `t0`/`t1` override. |
+| `transport.play` | `{loop?:bool=false, t0?, t1?}` | `{}` | No args = Space (`PlayCurrentRegion`): loops the play region if it is active, else plays the selection, or cursor → end. `loop:true` = if the play region is inactive, set it to the selection (or the whole project for a point selection) and activate it, then play looped (Transport ▸ Looping ▸ Enable + Space). `t0` (and optional `t1`) = Quick-Play: plays `[t0, t1 or project end]` once, never loops, does not change the play region. |
 | `transport.stop` | – | `{}` | I. Stops playback/recording/preview/monitoring. Recording is finalised (one undo entry "Recorded Audio"). |
 | `transport.pause` | – | `{}` | I. Toggles pause. |
-| `transport.record` | `{newTrack:bool}` | `{}` | `newTrack:false` = desktop *Record* (R): record into the selected tracks at the cursor if they fit the channel count, else a new track; `newTrack:true` = *Record New Track* (Shift+R). Fails `UNSUPPORTED` without microphone permission. |
+| `transport.record` | `{newTrack:bool}` | `{}` | `newTrack:false` = desktop *Record* (R): records into the selected wave tracks (same rate, channel count = `recordChannels`) starting at max(cursor, end of those tracks); if none fit, into new tracks at the cursor; with a time selection after that start, stops at the selection end. `newTrack:true` = *Record New Track* (Shift+R). Fails `UNSUPPORTED` without microphone permission. |
 | `transport.seek` | `{t}` | `{}` | I. While playing: jump; while stopped: moves the cursor (= `select.set`). |
 | `transport.skipToStart` / `transport.skipToEnd` | – | `{}` | S |
 | `transport.monitor` | `{enabled:bool}` | `{}` | I. Input level monitoring without recording. |
 | `audio.devices` | – | `{outputs:[AudioDevice], inputs:[AudioDevice], current:{output, input, recordChannels}}` | I |
 | `audio.permission` | `{recordPermission:bool}` | `{}` | I |
-| `audio.latency` | – | `{outputLatencyMs, inputLatencyMs, correctionMs}` | I |
+| `audio.latency` | – | `{outputLatencyMs, inputLatencyMs, correctionMs}` (`correctionMs` = value actually used: measured duplex offset + user trim) | I |
+| `audio.setDevices` | `{devices:[{id, name, type, isSource, isSink, channelCounts:[..], sampleRates:[..]}]}` | `{}` | I (applied when idle). Kotlin passes `AudioManager.getDevices()`; native code cannot enumerate Android devices. Without it only "Default Output/Input" exist. |
 
 #### display (display module, besides the binary JNI calls)
 
@@ -470,6 +489,9 @@ Cancel (and Stop when `stoppable`) calling `NativeBridge.cancelProgress`.
   `replyDialog(id, buttonIndex)` exactly once (index into `buttons`; `-1` =
   dismissed/cancel). `kind:"choice"` dialogs (BasicUI multi-dialog) carry
   `choices:[..]` and the reply is the chosen index.
+* `kind:"multiChoice"` (e.g. choosing the streams of a multi-stream file on
+  import) carries `choices:[..]` and `defaultChecked:[bool]`; Kotlin answers
+  with `replyDialogChoices(id, indices)` or cancels with `replyDialog(id, -1)`.
 
 ### 4.5 `transport`
 
@@ -498,15 +520,23 @@ lines (wxLog), for a debug screen. Rate limited.
   "outputDevice": "Default Output",   // device name, /AudioIO/PlaybackDevice
   "inputDevice": "Default Input",     // /AudioIO/RecordingDevice
   "latencyMs": 100,                   // /AudioIO/LatencyDuration (buffer)
-  "latencyCorrectionMs": -130,        // /AudioIO/LatencyCorrection
+  "latencyCorrectionMs": 0,           // user trim added to the measured duplex offset
+                                      // (/Android/AAudio/UserLatencyTrimMs); the engine writes
+                                      // /AudioIO/LatencyCorrection itself before each recording
   "overdub": true,                    // /AudioIO/Duplex (play other tracks while recording)
   "swPlaythrough": false,             // /AudioIO/SWPlaythrough
   "preRollSec": 5.0, "crossfadeMs": 10.0,
-  "realtimeDither": "none", "hqDither": "shaped",   // /Quality/...
+  "realtimeDither": "none", "hqDither": "shaped",   // "none"|"rectangle"|"triangle"|"shaped"
+                                      // (/Quality/...; InitDitherers() is re-run after a change)
   "effectsGroupBy": "default",        // /Effects/GroupBy
   "soloMode": "Simple",               // /GUI/Solo: "Simple" | "Multi" (3.7.9 default Multi; the engine writes Simple on first run)
   "editClipsCanMove": true,           // /GUI/EditClipCanMove
-  "selectAllOnNone": false            // /GUI/SelectAllOnNone
+  "selectAllOnNone": false,           // /GUI/SelectAllOnNone
+  "syncLock": false,                  // /GUI/SyncLockTracks
+  "pasteAsNewClips": false,           // /GUI/PasteAsNewClips
+  "moveSelectionWithTracks": true,    // /GUI/MoveSelectionWithTracks
+  "preferNewTrackRecord": false,      // /GUI/PreferNewTrackRecord (R behaves like Shift+R)
+  "dropoutDetection": true            // /Warnings/DropoutDetected
 }
 ```
 
@@ -618,6 +648,10 @@ recording (not paused), clamped to the loop end / play end.
 
 ### 6.5 `readMeters(out: FloatArray)` layout
 
+`readMeters` resets the accumulators, so there must be exactly **one**
+consumer per process (the editor's shared meter reader).
+
+
 `[playPeakL, playPeakR, playRmsL, playRmsR, playClipL, playClipR,
   recPeakL, recPeakR, recRmsL, recRmsR, recClipL, recClipR,
   playChannels, recChannels]` — linear amplitudes since the previous call
@@ -642,8 +676,10 @@ and informs the engine with `audio.permission`.
 * Absolute columns: column `c` covers time `[c/pps, (c+1)/pps)`. Kotlin asks
   for 256-column tiles (`firstColumn` multiple of 256, `count` = 256) and
   translates by `−hpos·pps` when drawing.
-* Column mode applies while `pps ≤ 0.5·rate` (≤ 0.5 px per sample); beyond that
-  the UI requests individual samples (§7.4).
+* Column vs sample mode is decided **per clip**: a clip is drawn from columns
+  while `pps ≤ 0.5 · clip.rate / clip.stretchRatio` (snapshot `clips[]`,
+  `WaveformView.cpp:860`), otherwise from individual samples (§7.4) for that
+  clip's visible range.
 
 ### 7.2 `waveColumns(trackId, channel, zoomLevel, firstColumn, count, out)`
 
@@ -653,8 +689,10 @@ and informs the engine with `audio.permission`.
 * Returns the track's `waveVersion` (≥ 0) on success, or a negative status:
   `-1` no such track/channel, `-2` partial data (recording tail, re-request
   soon; data in `out` is valid where not NaN — returned as `-(2)` only when
-  nothing could be filled), `-3` engine not ready, `-4` sample mode needed for
-  the whole range. Bit 62 of a non-negative return is set when the tile is
+  nothing could be filled), `-3` engine not ready (or busy for > 250 ms),
+  `-4` only when **every** clip intersecting the range needs sample mode.
+  Columns of sample-mode clips are `NaN`. `waveVersion` is always in
+  `[0, 2^62)`; bit 62 of a non-negative return is set when the tile is
   partial (recording tail): Kotlin re-requests it on the next poll.
 
 ### 7.3 `envelopeColumns(trackId, zoomLevel, firstColumn, count, out)`
@@ -672,7 +710,8 @@ Returns `null` on error, else little-endian binary:
 `out` size ≥ `count·rows`, column-major (`out[c·rows + r]`, r = 0 lowest
 frequency), unsigned 8-bit normalised magnitude (0 = ≤ −range dB, 255 = 0 dB)
 using Audacity's default spectrogram settings (window 2048 Hann, range 80 dB,
-gain 20 dB, linear frequency scale up to rate/2). Colour mapping is done in
+gain 20 dB, **linear** frequency scale 0 … rate/2 — a v1 simplification of
+3.7.9's Mel default; the editor draws a linear axis). Colour mapping is done in
 Kotlin. Returns as §7.2 (`-5` = spectrogram unsupported).
 
 ## 8. Threading rules summary (native)
