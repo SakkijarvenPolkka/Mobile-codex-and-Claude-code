@@ -5,6 +5,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+val nativeAbis = (project.findProperty("audacity.abis") as String? ?: "arm64-v8a,x86_64")
+    .split(',').map { it.trim() }.filter { it.isNotEmpty() }
+
 android {
     namespace = "io.github.sakkijarvenpolkka.audacity"
     compileSdk = 36
@@ -46,6 +49,18 @@ android {
         jniLibs {
             // Keep the native libraries uncompressed and page aligned.
             useLegacyPackaging = false
+        }
+    }
+
+    // One APK per ABI (the Audacity core is ~70 native libraries per ABI):
+    // app-arm64-v8a-*.apk for phones, app-x86_64-*.apk for emulators and
+    // Chromebooks. -Paudacity.universalApk=true adds a universal APK.
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include(*nativeAbis.toTypedArray())
+            isUniversalApk = (project.findProperty("audacity.universalApk") as String? ?: "false").toBoolean()
         }
     }
 
