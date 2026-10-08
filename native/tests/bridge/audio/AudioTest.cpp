@@ -19,7 +19,12 @@
      synthetic id <= -2), R appends after the end of the selected track,
      dropouts (simulated input xrun -> "Dropouts" label track), overdub in
      loopback mode with the measured latency correction (alignment of the
-     recorded copy within 2 ms)
+     recorded copy within 2 ms, also of the first take, which is re-aligned
+     to its own measurement), the correction stored per route (connected
+     devices), re-alignment of late and early takes
+   * transport.pause {paused, cause} (audio focus, headphones unplugged,
+     microphone silenced: no toggle, transport event reason "device")
+   * audio.setInputOptions (input presets of the AAudio streams)
    * transport.monitor on/off, permission revoked while monitoring
    * audio.setDevices (PortAudio re-initialised; playback still works)
 
@@ -730,6 +735,51 @@ int BestLag(const std::vector<float> &a, const std::vector<float> &b,
    return best;
 }
 
+//! Lag (samples) of the recorded copy `take` of `source` from 0.1 s on
+int TakeLag(int64_t source, int64_t take, double &residual)
+{
+   const auto a = Samples(source, 0.0, 1.5);
+   const auto b = Samples(take, 0.0, 1.5);
+   residual = 1;
+   if (a.size() < 4800 + 48000 || b.empty())
+      return 1 << 20;
+   const int lag = BestLag(a, b, 720, 4800, 48000, residual);
+   if (std::getenv("AUDIO_TEST_DEBUG"))
+      for (size_t blk = 0; blk < 150; ++blk) {
+         double err = 0, en = 0;
+         for (size_t i = blk * 480; i < (blk + 1) * 480 && i < a.size(); ++i) {
+            const long j = long(i) + lag;
+            const double y = (j >= 0 && size_t(j) < b.size()) ? b[size_t(j)] : 0.0;
+            err += (y - a[i]) * (y - a[i]);
+            en += a[i] * a[i];
+         }
+         if (en > 0 && err / en > 0.01)
+            std::fprintf(stderr, "    block %zu (%.0f ms): error %.3f\n", blk, blk * 10.0, err / en);
+      }
+   return lag;
+}
+
+//! Start time of the first clip of track `id`
+double ClipStart(int64_t id)
+{
+   const auto snap = Snap();
+   for (const auto &t : snap["tracks"])
+      if (t.value("id", int64_t(-1)) == id && !t["clips"].empty())
+         return t["clips"][0].value("start", -1.0);
+   return -1.0;
+}
+
+//! The first playback stream of the process plays ~200 ms of silence at
+//! its start (also without recording); the alignment checks compare from
+//! 0.1 s on, so play something before the first overdub of a group
+void WarmUpPlayback()
+{
+   Req("select.set", { { "t0", 0.0 }, { "t1", 0.3 } });
+   const auto from = Mark();
+   Req("transport.play");
+   WaitTransport("stopped", from);
+}
+
 int64_t Overdub(double seconds)
 {
    Req("select.set", { { "t0", 0.0 }, { "t1", 0.0 } });
@@ -756,9 +806,21 @@ void TestOverdubLoopback()
 
    NewProject();
    const auto source = Tone(1.6, 25.0, 0.5);
-   // First overdub: uses an estimate and measures the round trip
+   WarmUpPlayback();
+   // First overdub: starts with an estimate, measures the round trip and
+   // is re-aligned to it when it is committed
    const auto first = Overdub(1.7);
-   (void)first;
+   if (first >= 0) {
+      double residual = 1;
+      const int lag = TakeLag(source, first, residual);
+      std::fprintf(stderr, "  first take lag %d samples, residual %.4f, starts at %.4f s\n",
+         lag, residual, ClipStart(first));
+      CHECK(std::abs(lag) <= 96);
+      CHECK(residual < 0.05);
+      // The estimate is low: the take was late and lost only input from
+      // before its start
+      CHECK(Near(ClipStart(first), 0.0, 1e-6));
+   }
    auto latency = Req("audio.latency");
    PaAAudioStreamStats st{};
    PaAAudio_GetActiveStreamStats(&st);
@@ -793,6 +855,167 @@ void TestOverdubLoopback()
    Req("settings.set", { { "settings", { { "latencyCorrectionMs", 0.0 } } } });
 
    PaNull_SetConfig(&config);
+}
+
+
+json DeviceList(bool withBluetooth)
+{
+   auto list = json::array({
+      { { "id", 2 }, { "name", "Pixel" }, { "type", 2 }, { "isSink", true } },
+      { { "id", 3 }, { "name", "Pixel" }, { "type", 15 }, { "isSource", true } } });
+   if (withBluetooth)
+      list.push_back({ { "id", 41 }, { "name", "Buds" }, { "type", 8 },
+         { "isSink", true } });
+   return list;
+}
+
+void TestOverdubRoutes()
+{
+   std::fprintf(stderr, "== overdub routes\n");
+   PaNullConfig config{};
+   PaNull_GetConfig(&config);
+   auto loop = config;
+   loop.loopback = 1;
+   loop.loopbackDelayFrames = 0;
+   PaNull_SetConfig(&loop);
+
+   NewProject();
+   const auto source = Tone(1.6, 25.0, 0.5);
+   WarmUpPlayback();
+   const auto checkTake = [&](int64_t take, const char *what) {
+      double residual = 1;
+      const int lag = TakeLag(source, take, residual);
+      std::fprintf(stderr, "  %s: lag %d samples, residual %.4f, clip starts at %.4f s\n",
+         what, lag, residual, ClipStart(take));
+      CHECK_MSG(std::abs(lag) <= 96, what);
+      CHECK_MSG(residual < 0.05, what);
+   };
+
+   // Route A (speaker + microphone), never measured
+   Req("audio.setDevices", { { "devices", DeviceList(false) } });
+   CHECK(!Req("audio.latency").value("measured", true));
+   auto take = Overdub(1.7);
+   checkTake(take, "route A, first take");
+   CHECK(Near(ClipStart(take), 0.0, 1e-6));
+   auto latencyA = Req("audio.latency");
+   CHECK(latencyA.value("measured", false));
+   const double offsetA = latencyA.value("duplexOffsetMs", 0.0);
+   Req("history.undo");
+
+   // A Bluetooth headset connects: another route, nothing measured there
+   Req("audio.setDevices", { { "devices", DeviceList(true) } });
+   CHECK(!Req("audio.latency").value("measured", true));
+   // ... with a much shorter round trip on the simulated device (smaller
+   // bursts: smaller AAudio buffers)
+   auto shorter = loop;
+   shorter.framesPerBurst = 192;
+   PaNull_SetConfig(&shorter);
+   take = Overdub(1.7);
+   checkTake(take, "route B, first take");
+   auto latencyB = Req("audio.latency");
+   CHECK(latencyB.value("measured", false));
+   const double offsetB = latencyB.value("duplexOffsetMs", 0.0);
+   std::fprintf(stderr, "  round trip A %.2f ms, B %.2f ms\n", offsetA, offsetB);
+   CHECK(offsetA - offsetB > 20);
+   Req("history.undo");
+
+   // Back on route A: its own measurement, not B's
+   Req("audio.setDevices", { { "devices", DeviceList(false) } });
+   auto again = Req("audio.latency");
+   CHECK(again.value("measured", false));
+   CHECK(Near(again.value("duplexOffsetMs", 0.0), offsetA, 0.01));
+   // The route's round trip changed (still the short one): the take starts
+   // with A's correction, too early, and is moved right at commit
+   take = Overdub(1.7);
+   checkTake(take, "route A, early take");
+   const double start = ClipStart(take);
+   CHECK(Near(start, (offsetA - offsetB) / 1000.0, 0.005));
+   Req("history.undo");
+
+   PaNull_SetConfig(&config);
+   Req("audio.setDevices", { { "devices", json::array() } });
+}
+
+void TestPauseCause()
+{
+   std::fprintf(stderr, "== pause with a cause\n");
+   NewProject();
+   Tone(3.0);
+   Req("select.set", { { "t0", 0.0 }, { "t1", 0.0 } });
+   auto from = Mark();
+   Req("transport.play");
+   WaitTransport("playing", from);
+   from = Mark();
+   CHECK(Req("transport.pause", { { "paused", true }, { "cause", "focus" } })
+      .value("toggled", false));
+   auto paused = WaitTransport("paused", from);
+   if (paused) {
+      CHECK(paused->value("reason", "") == "device");
+      CHECK(paused->value("message", "").find("another app") != std::string::npos);
+   }
+   CHECK(ReadT().State() == 3);
+   // Already paused: nothing toggles back
+   CHECK(!Req("transport.pause", { { "paused", true }, { "cause", "noisy" } })
+      .value("toggled", true));
+   CHECK(ReadT().State() == 3);
+   CHECK(Err("transport.pause", { { "paused", true }, { "cause", "bogus" } })
+      == "INVALID_ARGS");
+   from = Mark();
+   CHECK(Req("transport.pause", { { "paused", false } }).value("toggled", false));
+   auto resumed = WaitTransport("playing", from);
+   if (resumed)
+      CHECK(resumed->value("reason", "") == "user");
+   CHECK(!Req("transport.pause", { { "paused", false } }).value("toggled", true));
+   // Without `paused` it still toggles
+   CHECK(Req("transport.pause").value("toggled", false));
+   CHECK(WaitUntil([] { return ReadT().State() == 3; }, 5s));
+   StopAndWait();
+   // Nothing playing: no-op
+   CHECK(!Req("transport.pause", { { "paused", true }, { "cause", "silenced" } })
+      .value("toggled", true));
+}
+
+void TestInputOptions()
+{
+   std::fprintf(stderr, "== input options\n");
+   auto r = Req("audio.setInputOptions");
+   CHECK(r.value("preset", "") == "auto");
+   CHECK(r.value("monoPreset", "") == "voiceRecognition");
+   CHECK(r.value("stereoPreset", "") == "camcorder");
+   CHECK(!r.value("unprocessedSupported", true));
+
+   NewProject();
+   // Mono and stereo recordings use their presets
+   Req("select.set", { { "t0", 0.0 }, { "t1", 0.0 } });
+   const auto record = [](int channels) {
+      Req("settings.set", { { "settings", { { "recordChannels", channels } } } });
+      const auto from = Mark();
+      Req("transport.record", { { "newTrack", true } });
+      WaitTransport("recording", from);
+      WaitUntil([] { return ReadT().Stream() >= 0.2; }, 30s);
+      PaAAudioStreamStats st{};
+      PaAAudio_GetActiveStreamStats(&st);
+      StopAndWait();
+      return st.inputPreset;
+   };
+   CHECK(record(1) == 6);   // VOICE_RECOGNITION
+   CHECK(record(2) == 5);   // CAMCORDER: the stereo microphone pair
+
+   r = Req("audio.setInputOptions", { { "unprocessedSupported", true } });
+   CHECK(r.value("monoPreset", "") == "unprocessed");
+   CHECK(r.value("stereoPreset", "") == "unprocessed");
+   CHECK(record(2) == 9);
+
+   r = Req("audio.setInputOptions", { { "preset", "voiceRecognition" } });
+   CHECK(r.value("preset", "") == "voiceRecognition");
+   CHECK(r.value("stereoPreset", "") == "voiceRecognition");
+   CHECK(record(2) == 6);
+   CHECK(Err("audio.setInputOptions", { { "preset", "bogus" } }) == "INVALID_ARGS");
+   // The choice is a preference
+   CHECK(Req("audio.setInputOptions").value("preset", "") == "voiceRecognition");
+
+   Req("audio.setInputOptions", { { "preset", "auto" }, { "unprocessedSupported", false } });
+   Req("settings.set", { { "settings", { { "recordChannels", 1 } } } });
 }
 
 void TestMonitoring()
@@ -925,6 +1148,9 @@ int main()
    run("append", TestRecordAppend);
    run("dropouts", TestDropouts);
    run("overdub", TestOverdubLoopback);
+   run("routes", TestOverdubRoutes);
+   run("pausecause", TestPauseCause);
+   run("inputoptions", TestInputOptions);
    run("monitor", TestMonitoring);
    run("devices", TestSetDevices);
 

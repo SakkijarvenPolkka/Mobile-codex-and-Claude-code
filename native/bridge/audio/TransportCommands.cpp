@@ -167,12 +167,36 @@ json StopCommand(const json &)
    return json::object();
 }
 
-json Pause(const json &)
+//! transport.pause `cause`: why Kotlin pauses (the transport event then has
+//! reason "device" and this message)
+std::string PauseMessage(const std::string &cause)
 {
+   if (cause == "focus")
+      return "Paused: another app is playing audio, or a call is active";
+   if (cause == "noisy")
+      return "Paused: the headphones were disconnected";
+   if (cause == "silenced")
+      return "Paused: another app (a call or an assistant) is using the "
+         "microphone, so the recording would only contain silence";
+   Fail(ErrorCode::INVALID_ARGS, "unknown pause cause: " + cause);
+}
+
+//! transport.pause {paused?:bool, cause?:"focus"|"noisy"|"silenced"}:
+//! without `paused` it toggles; with it, it pauses or resumes (nothing
+//! changes when already in that state)
+json Pause(const json &args)
+{
+   const auto paused = OptBool(args, "paused");
+   const auto cause = OptString(args, "cause");
+   const std::string message = cause ? PauseMessage(*cause) : std::string{};
+   const char *reason = cause ? "device" : "user";
    auto *project = Session::Get().Project();
    bool toggled = false;
-   if (project)
-      toggled = TransportManager::Get(*project).TogglePause();
+   if (project) {
+      auto &transport = TransportManager::Get(*project);
+      toggled = paused ? transport.SetPaused(*paused, reason, message)
+                       : transport.TogglePause(reason, message);
+   }
    return json{ { "toggled", toggled } };
 }
 

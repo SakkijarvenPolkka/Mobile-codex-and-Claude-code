@@ -80,8 +80,14 @@ public:
    //! recording is committed ("Recorded Audio").  `reason` goes into the
    //! transport event ("user", "end", "device", "error").
    void Stop(const char *reason = "user", const std::string &message = {});
-   //! transport.pause; false when nothing plays/records
-   bool TogglePause();
+   //! transport.pause; false when nothing plays/records.  `reason` and
+   //! `message` go into the transport event.
+   bool TogglePause(const char *reason = "user",
+      const std::string &message = {});
+   //! transport.pause {paused}: pauses or resumes (no toggle); false when
+   //! nothing plays/records or the state is already `paused`
+   bool SetPaused(bool paused, const char *reason = "user",
+      const std::string &message = {});
    //! transport.seek while playing (not while recording)
    bool SeekWhilePlaying(double t);
    //! transport.record (OnRecord): altAppearance = Shift+R
@@ -126,6 +132,9 @@ private:
    bool DoRecord(const TransportSequences &sequences, double t0, double t1,
       bool altAppearance, const AudioIOStartStreamOptions &options);
    void CancelRecording();
+   //! OnCommitRecording of a recording with playback: moves the recorded
+   //! clips by (correction this take needed - correction it started with)
+   void RealignTake();
    void AddDropoutLabels(
       const std::vector<std::pair<double, double>> &intervals);
    void FollowSelection();
@@ -151,6 +160,14 @@ private:
    // Recording in progress
    std::vector<std::shared_ptr<WaveTrack>> mCaptureTracks;
    bool mRecordingDuplex{ false };
+   //! Overdub latency correction (audio-io.md §2.7.4) of the running take:
+   //! the /AudioIO/LatencyCorrection AudioIO applied, the user trim in it,
+   //! the route its measurement is stored under, and the re-alignment done
+   //! at commit (seconds, also applied to the dropout labels)
+   double mAppliedCorrectionMs{ 0 };
+   double mUserTrimMs{ 0 };
+   std::string mRouteKey;
+   double mRealignSec{ 0 };
    double mRecordStart{ 0 };
    double mLastRecordedEnd{ -1 };
    int64_t mLastLiveTouchNs{ 0 };

@@ -5,18 +5,22 @@
 
   AudioDevices.cpp
 
-  audio.devices / audio.setDevices / audio.permission / audio.latency
-  (API.md §3.3, §5.3, §6.6), the PortAudio re-initialisation for a new
-  device list (instead of DeviceManager::Rescan, which is not used:
-  audio-io.md §1.8), the AAudio defaults from the start configuration, and
-  the bridge-owned latency correction (audio-io.md §2.7.4): the duplex
-  offset measured by the host API is stored per route after every
-  recording with playback and used, with the user's trim, for the next one.
+  audio.devices / audio.setDevices / audio.permission / audio.latency /
+  audio.setInputOptions (API.md §3.3, §5.3, §6.6), the PortAudio
+  re-initialisation for a new device list (instead of DeviceManager::Rescan,
+  which is not used: audio-io.md §1.8), the AAudio defaults from the start
+  configuration, the input presets, and the bridge-owned latency correction
+  (audio-io.md §2.7.4): the duplex offset measured by the host API is stored
+  per route after every recording with playback and used, with the user's
+  trim, for the next one on that route (TransportManager also re-aligns
+  each take to its own measurement).
 
 **********************************************************************/
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -46,6 +50,9 @@ namespace {
 //! A device list from Kotlin, kept until AudioIO is idle
 struct DeviceDescriptor {
    std::string name;
+   //! "<label>: <product>" with its directions, without the " (id N)" that
+   //! makes names unique (ids change when a Bluetooth device reconnects)
+   std::string routeName;
    int32_t id = 0;
    int maxIn = 0, maxOut = 0;
    double rate = 0;
@@ -57,8 +64,71 @@ std::optional<std::vector<DeviceDescriptor>> &PendingDevices()
    return pending;
 }
 
+//! The connected devices (the latest audio.setDevices list, applied or
+//! not): where Android routes a "Default" device depends on them
+std::string &ConnectedDevicesSignature()
+{
+   static std::string signature;
+   return signature;
+}
+
+//! UNPROCESSED input supported (AudioManager
+//! PROPERTY_SUPPORT_AUDIO_SOURCE_UNPROCESSED), reported by Kotlin
+bool &UnprocessedSupported()
+{
+   static bool supported = false;
+   return supported;
+}
+
 const wxString kDuplexOffsetGroup = wxT("/Android/AAudio/DuplexOffsetMs/");
-const wxString kLastDuplexOffset = wxT("/Android/AAudio/LastDuplexOffsetMs");
+const wxString kInputPresetKey = wxT("/Android/AAudio/InputPreset");
+
+// AAUDIO_INPUT_PRESET_* (<aaudio/AAudio.h>)
+constexpr int kPresetGeneric = 1;
+constexpr int kPresetCamcorder = 5;
+constexpr int kPresetVoiceRecognition = 6;
+constexpr int kPresetUnprocessed = 9;
+constexpr int kPresetVoicePerformance = 10;
+
+struct PresetName {
+   const char *name;
+   int preset;
+};
+//! audio.setInputOptions preset names; "auto" = UNPROCESSED where the
+//! device supports it, else VOICE_RECOGNITION (mono) / CAMCORDER (stereo:
+//! the stereo microphone pair; VOICE_RECOGNITION is one microphone on
+//! most phones, duplicated into both channels)
+constexpr PresetName kPresetNames[] = {
+   { "auto", 0 },
+   { "unprocessed", kPresetUnprocessed },
+   { "voiceRecognition", kPresetVoiceRecognition },
+   { "camcorder", kPresetCamcorder },
+   { "generic", kPresetGeneric },
+   { "voicePerformance", kPresetVoicePerformance },
+};
+
+const char *PresetLabel(int preset)
+{
+   for (const auto &p : kPresetNames)
+      if (p.preset == preset && preset != 0)
+         return p.name;
+   return "default";
+}
+
+//! FNV-1a, as a short stable pref key component
+std::string HashHex(const std::string &text)
+{
+   uint64_t h = 1469598103934665603ULL;
+   for (unsigned char c : text) {
+      h ^= c;
+      h *= 1099511628211ULL;
+   }
+   static const char digits[] = "0123456789abcdef";
+   std::string out(16, '0');
+   for (int i = 15; i >= 0; --i, h >>= 4)
+      out[size_t(i)] = digits[h & 0xf];
+   return out;
+}
 
 //! android.media.AudioDeviceInfo TYPE_* labels; nullptr = not offered
 const char *TypeLabel(int type, bool &excluded)
@@ -159,6 +229,8 @@ std::vector<DeviceDescriptor> ParseDevices(const json &args)
       desc.maxOut = isSink ? channels : 0;
       if (desc.maxIn == 0 && desc.maxOut == 0)
          continue;
+      desc.routeName = std::string(isSink ? ">" : "") + (isSource ? "<" : "") +
+         desc.name;
       desc.rate = NativeRate(d);
       result.push_back(std::move(desc));
    }
@@ -250,6 +322,32 @@ const PaDeviceInfo *CurrentDevice(bool output)
    return index >= 0 ? Pa_GetDeviceInfo(index) : nullptr;
 }
 
+std::string Signature(const std::vector<DeviceDescriptor> &devices)
+{
+   std::vector<std::string> names;
+   for (const auto &d : devices)
+      names.push_back(d.routeName);
+   std::sort(names.begin(), names.end());
+   names.erase(std::unique(names.begin(), names.end()), names.end());
+   std::string signature;
+   for (const auto &n : names)
+      signature += n + "\n";
+   return signature;
+}
+
+//! The device of a pref follows Android's routing: a "Default" device, or
+//! a device that is gone (AudioIO then opens the default)
+bool FollowsRouting(bool output)
+{
+   const wxString name = output
+      ? AudioIOPlaybackDevice.Read() : AudioIORecordingDevice.Read();
+   if (name.empty() || name == wxString::FromUTF8(output
+         ? PA_AAUDIO_DEFAULT_OUTPUT_NAME : PA_AAUDIO_DEFAULT_INPUT_NAME))
+      return true;
+   const auto *info = CurrentDevice(output);
+   return !info || !info->name || wxString::FromUTF8(info->name) != name;
+}
+
 //! Pref key of the measured duplex offset of the current route
 wxString RouteKey()
 {
@@ -258,6 +356,11 @@ wxString RouteKey()
    for (auto &c : route)
       if (!std::isalnum(static_cast<unsigned char>(c)))
          c = '_';
+   // Speaker, wired, USB and every Bluetooth headset have very different
+   // round trips (~30-300 ms), but the default devices keep their names
+   const auto &signature = ConnectedDevicesSignature();
+   if (!signature.empty() && (FollowsRouting(true) || FollowsRouting(false)))
+      route += "_" + HashHex(signature);
    return kDuplexOffsetGroup + FromUtf8(route);
 }
 
@@ -302,6 +405,9 @@ json Devices(const json &)
 json SetDevices(const json &args)
 {
    auto devices = ParseDevices(args);
+   // What is connected now (also while a stream runs: a take keeps the
+   // route key it started with)
+   ConnectedDevicesSignature() = Signature(devices);
    if (AudioIdle()) {
       PendingDevices().reset();
       ApplyDevices(devices);
@@ -362,6 +468,38 @@ json Latency(const json &)
       { "userTrimMs", AudioUserLatencyTrimMs.Read() } };
 }
 
+json InputOptionsJson()
+{
+   PaAAudioOptions o{};
+   PaAAudio_GetOptions(&o);
+   wxString preset;
+   gPrefs->Read(kInputPresetKey, &preset, wxString(wxT("auto")));
+   return json{ { "preset", ToUtf8(preset) },
+      { "monoPreset", PresetLabel(o.inputPreset) },
+      { "stereoPreset",
+        PresetLabel(o.stereoInputPreset > 0 ? o.stereoInputPreset : o.inputPreset) },
+      { "unprocessedSupported", UnprocessedSupported() } };
+}
+
+//! audio.setInputOptions {unprocessedSupported?, preset?}: the microphone
+//! processing of streams opened afterwards (a running stream keeps its own)
+json SetInputOptions(const json &args)
+{
+   if (auto supported = OptBool(args, "unprocessedSupported"))
+      UnprocessedSupported() = *supported;
+   if (auto preset = OptString(args, "preset")) {
+      const bool known = std::any_of(std::begin(kPresetNames),
+         std::end(kPresetNames),
+         [&](const PresetName &p) { return *preset == p.name; });
+      if (!known)
+         Fail(ErrorCode::INVALID_ARGS, "unknown input preset: " + *preset);
+      gPrefs->Write(kInputPresetKey, FromUtf8(*preset));
+      gPrefs->Flush();
+   }
+   ApplyInputOptions();
+   return InputOptionsJson();
+}
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -376,6 +514,44 @@ void ApplyStartConfigDefaults()
    if (config.audioOutputSampleRate > 0)
       PaAAudio_SetDefaults(double(config.audioOutputSampleRate),
          std::max(0, config.audioFramesPerBuffer));
+   ApplyInputOptions();
+}
+
+void ApplyInputOptions()
+{
+   wxString name;
+   gPrefs->Read(kInputPresetKey, &name, wxString(wxT("auto")));
+   int mono = 0, stereo = 0;
+   for (const auto &p : kPresetNames)
+      if (name == wxString::FromUTF8(p.name))
+         mono = stereo = p.preset;
+   if (mono == 0) {
+      // "auto" (or an unknown stored value).  The host API falls back to
+      // VOICE_RECOGNITION if a preset cannot be opened.
+      mono = UnprocessedSupported() ? kPresetUnprocessed : kPresetVoiceRecognition;
+      stereo = UnprocessedSupported() ? kPresetUnprocessed : kPresetCamcorder;
+   }
+   PaAAudioOptions o{};
+   PaAAudio_GetOptions(&o);
+   o.inputPreset = mono;
+   o.stereoInputPreset = stereo == mono ? 0 : stereo;
+   PaAAudio_SetOptions(&o);
+}
+
+std::string CurrentRouteKey()
+{
+   return ToUtf8(RouteKey());
+}
+
+bool LastStreamDuplexOffsetMs(double &ms)
+{
+   PaAAudioStreamStats st{};
+   if (!PaAAudio_GetActiveStreamStats(&st) || !st.hasInput || !st.hasOutput)
+      return false;
+   if (!(st.duplexOffsetSec > 0) || st.duplexOffsetSec > 2.0)
+      return false;
+   ms = st.duplexOffsetSec * 1000.0;
+   return true;
 }
 
 void ApplyPendingDeviceChange()
@@ -401,29 +577,21 @@ bool MeasuredDuplexOffsetMs(double &ms)
 double OverdubCorrectionMs()
 {
    double offset = 0;
-   if (!MeasuredDuplexOffsetMs(offset)) {
-      // Another route's measurement is a better guess than the static
-      // device latencies
-      double last = 0;
-      if (gPrefs->Read(kLastDuplexOffset, &last) && last > 0 && last < 2000)
-         offset = last;
-      else
-         offset = EstimatedDuplexOffsetMs();
-   }
+   if (!MeasuredDuplexOffsetMs(offset))
+      // Not another route's measurement (a Bluetooth headset's 250 ms
+      // would make a wired take 220 ms early, and an early take has lost
+      // its beginning): the static latencies, a low estimate
+      offset = EstimatedDuplexOffsetMs();
    // Audacity's sign: negative shifts the recording earlier
    return -offset + AudioUserLatencyTrimMs.Read();
 }
 
-void StoreMeasuredDuplexOffset()
+void StoreMeasuredDuplexOffset(const std::string &routeKey)
 {
-   PaAAudioStreamStats st{};
-   if (!PaAAudio_GetActiveStreamStats(&st) || !st.hasInput || !st.hasOutput)
+   double ms = 0;
+   if (routeKey.empty() || !LastStreamDuplexOffsetMs(ms))
       return;
-   if (!(st.duplexOffsetSec > 0) || st.duplexOffsetSec > 2.0)
-      return;
-   const double ms = st.duplexOffsetSec * 1000.0;
-   gPrefs->Write(RouteKey(), ms);
-   gPrefs->Write(kLastDuplexOffset, ms);
+   gPrefs->Write(FromUtf8(routeKey), ms);
    gPrefs->Flush();
    Events::Log(Events::LogLevel::Info,
       "measured duplex offset " + std::to_string(ms) + " ms");
@@ -432,6 +600,7 @@ void StoreMeasuredDuplexOffset()
 void ResetDeviceState()
 {
    PendingDevices().reset();
+   ConnectedDevicesSignature().clear();
 }
 
 void RegisterDeviceCommands(ModuleRegistry &registry)
@@ -440,6 +609,7 @@ void RegisterDeviceCommands(ModuleRegistry &registry)
    registry.AddCommand("audio.setDevices", SetDevices);
    registry.AddCommand("audio.permission", Permission);
    registry.AddCommand("audio.latency", Latency);
+   registry.AddCommand("audio.setInputOptions", SetInputOptions);
 }
 
 } // namespace aubridge

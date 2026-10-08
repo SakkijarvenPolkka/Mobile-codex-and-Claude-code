@@ -32,6 +32,11 @@
 #define T_AAUDIO_ERROR_INVALID_RATE (-880)
 #define T_AAUDIO_FORMAT_PCM_I16 1
 #define T_AAUDIO_PERFORMANCE_MODE_NONE 10
+#define T_AAUDIO_PERFORMANCE_MODE_LOW_LATENCY 12
+#define T_AAUDIO_INPUT_PRESET_CAMCORDER 5
+#define T_AAUDIO_INPUT_PRESET_VOICE_RECOGNITION 6
+#define T_AAUDIO_INPUT_PRESET_UNPROCESSED 9
+#define T_AAUDIO_POLICY_NEVER 1
 
 static int g_failures;
 static int g_checks;
@@ -218,6 +223,9 @@ static int Callback(const void *input, void *output, unsigned long frames, const
     }
     if (input && output && r->nOffsets < (int)(sizeof r->offsets / sizeof r->offsets[0]))
         r->offsets[r->nOffsets++] = ti->outputBufferDacTime - ti->inputBufferAdcTime;
+    /* input only: how long ago the first frame of this buffer was captured */
+    if (input && !output && r->nOffsets < (int)(sizeof r->offsets / sizeof r->offsets[0]))
+        r->offsets[r->nOffsets++] = ti->currentTime - ti->inputBufferAdcTime;
 
     if (input) {
         for (i = 0; i < frames; ++i) {
@@ -1281,6 +1289,324 @@ typedef struct {
     void (*fn)(void);
 } TestCase;
 
+
+/* Input-only: inputBufferAdcTime is the capture time of the buffer's FIRST frame.  AAudio
+   counts an input buffer as read before the data callback (AOSP legacy and MMAP; the
+   simulator does the same), so the buffer delivered at time T started at T - frames/rate. */
+static void TestAdcTime(void)
+{
+    PaStream *s = NULL;
+    Recorder r;
+    double lag;
+    RecorderInit(&r, 1, 0);
+    CHECK_PA(Pa_Initialize());
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (!s)
+        return;
+    CHECK_PA(Pa_StartStream(s));
+    SleepMs(600);
+    CHECK_PA(Pa_AbortStream(s));
+    CHECK(atomic_load(&r.bad) == 0);
+    /* the first callbacks use an estimate until the poller has a timestamp */
+    if (r.nOffsets > 10) {
+        memmove(r.offsets, r.offsets + 10, (size_t)(r.nOffsets - 10) * sizeof r.offsets[0]);
+        r.nOffsets -= 10;
+    }
+    lag = MedianOffset(&r);
+    printf("input-only: currentTime - inputBufferAdcTime = %.2f ms (one 480-frame burst = 10 ms)\n", lag * 1000);
+    CHECK(lag > 0.008 && lag < 0.016);
+    CHECK_PA(Pa_CloseStream(s));
+    CHECK_PA(Pa_Terminate());
+    CheckNoMisuse();
+}
+
+/* AudioDeviceInfo.getChannelCounts() = [1] (mono USB microphone / mono speaker): the device
+   still offers 2 channels; a stereo recording on it gets the mono signal on both channels. */
+static void TestMonoDevice(void)
+{
+    PaAAudioDeviceDesc devs[2];
+    PaNullConfig cfg;
+    PaStream *s = NULL;
+    Recorder r;
+    PaAAudioStreamStats st;
+    const PaDeviceInfo *d;
+    PaNull_GetConfig(&cfg);
+    cfg.maxInputChannels = 1; /* the simulated microphone is mono */
+    PaNull_SetConfig(&cfg);
+    memset(devs, 0, sizeof devs);
+    devs[0].name = "USB headset: C-Media";
+    devs[0].aaudioDeviceId = 3;
+    devs[0].maxOutputChannels = 1;
+    devs[1].name = "USB headset: C-Media (id 4)";
+    devs[1].aaudioDeviceId = 4;
+    devs[1].maxInputChannels = 1;
+    CHECK_PA(PaAAudio_SetDeviceList(devs, 2));
+    CHECK_PA(Pa_Initialize());
+    d = Pa_GetDeviceInfo(2);
+    CHECK(d && d->maxOutputChannels == 2 && d->maxInputChannels == 0);
+    d = Pa_GetDeviceInfo(3);
+    CHECK(d && d->maxInputChannels == 2 && d->maxOutputChannels == 0);
+    /* stereo recording on the mono microphone, input only */
+    RecorderInit(&r, 2, 0);
+    CHECK_PA(Open(&s, &r, 3, paNoDevice, 0.05));
+    if (s) {
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(300);
+        CHECK(PaAAudio_GetActiveStreamStats(&st) == 1);
+        CHECK(st.inputDeviceId == 4);
+        CHECK(st.inputChannelsOpened == 1);
+        CHECK_PA(Pa_AbortStream(s));
+        CHECK_NEAR(InputRms(&r, 0), 0.5 / sqrt(2.0), 0.01);
+        CHECK_NEAR(InputRms(&r, 1), 0.5 / sqrt(2.0), 0.01);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    /* overdub: stereo playback on the mono output, stereo recording on the mono microphone */
+    RecorderInit(&r, 2, 2);
+    CHECK_PA(Open(&s, &r, 3, 2, 0.05));
+    if (s) {
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(600);
+        CHECK(PaAAudio_GetActiveStreamStats(&st) == 1);
+        CHECK(st.outputDeviceId == 3 && st.inputDeviceId == 4);
+        CHECK_PA(Pa_AbortStream(s));
+        CHECK(atomic_load(&r.callbacks) > 10);
+        CHECK_NEAR(InputRms(&r, 1), 0.5 / sqrt(2.0), 0.02);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    CHECK_PA(Pa_Terminate());
+    CheckNoMisuse();
+}
+
+/* Full duplex keeps the input on the FAST capture path: the read-mode input asks for at
+   most 4096 frames of capacity (the simulator, like AudioFlinger, refuses FAST capture
+   above that); inputPerformanceMode applies to duplex input too; overflows during the
+   warm-up (whose input is discarded) are not reported as lost input. */
+static void TestDuplexCapacity(void)
+{
+    PaStream *s = NULL;
+    Recorder r;
+    PaAAudioStreamStats st;
+    PaNullOpenInfo info;
+    PaAAudioOptions o;
+    CHECK_PA(Pa_Initialize());
+    RecorderInit(&r, 1, 2);
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (s) {
+        CHECK(PaNull_GetLastOpen(1, &info) == 1);
+        printf("duplex input: capacity %d, performance mode %d -> %d\n", info.bufferCapacity, info.performanceMode,
+               info.grantedPerformanceMode);
+        CHECK(info.bufferCapacity > 0 && info.bufferCapacity <= 4096);
+        CHECK(info.performanceMode == T_AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        CHECK(info.grantedPerformanceMode == T_AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(40); /* in the warm-up (~200 ms) */
+        PaNull_SimulateXRun(1, 0);
+        SleepMs(600);
+        CHECK(PaAAudio_GetActiveStreamStats(&st) == 1);
+        CHECK(st.inputPerformanceMode == T_AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
+        CHECK(st.inputBufferCapacity <= 4096 + 480); /* rounded up to whole bursts */
+        CHECK_PA(Pa_StopStream(s));
+        CHECK(atomic_load(&r.callbacks) > 20);
+        CHECK(atomic_load(&r.overflowCallbacks) == 0);
+        CHECK(st.inputXRuns == 0);
+        CHECK(st.droppedInputFrames <= 2 * 480 && st.paddedInputFrames <= 2 * 480);
+        CHECK_NEAR(InputRms(&r, 0), 0.5 / sqrt(2.0), 0.01);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    /* a later overflow is still reported */
+    RecorderInit(&r, 1, 2);
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (s) {
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(500);
+        PaNull_SimulateXRun(1, 480);
+        SleepMs(200);
+        CHECK_PA(Pa_StopStream(s));
+        CHECK(atomic_load(&r.overflowCallbacks) >= 1);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    /* inputPerformanceMode = NONE also for duplex input (larger FIFO then) */
+    PaAAudio_GetDefaultOptions(&o);
+    o.inputPerformanceMode = T_AAUDIO_PERFORMANCE_MODE_NONE;
+    PaAAudio_SetOptions(&o);
+    RecorderInit(&r, 1, 2);
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (s) {
+        CHECK(PaNull_GetLastOpen(1, &info) == 1);
+        CHECK(info.performanceMode == T_AAUDIO_PERFORMANCE_MODE_NONE);
+        CHECK(info.bufferCapacity >= 9600);
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(500);
+        CHECK_PA(Pa_StopStream(s));
+        CHECK(atomic_load(&r.callbacks) > 10);
+        CHECK_NEAR(InputRms(&r, 0), 0.5 / sqrt(2.0), 0.01);
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    PaAAudio_SetOptions(NULL);
+    CHECK_PA(Pa_Terminate());
+    CheckNoMisuse();
+}
+
+/* Runs a 1-in stream (duplex when withOutput) for 500 ms; returns the input RMS. */
+static double RecordRms(int withOutput, PaAAudioStreamStats *st)
+{
+    PaStream *s = NULL;
+    Recorder r;
+    double rms = -1.0;
+    RecorderInit(&r, 1, withOutput ? 2 : 0);
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (!s)
+        return rms;
+    CHECK_PA(Pa_StartStream(s));
+    SleepMs(withOutput ? 600 : 400);
+    CHECK(PaAAudio_GetActiveStreamStats(st) == 1);
+    CHECK_PA(Pa_AbortStream(s));
+    CHECK(atomic_load(&r.callbacks) > 5);
+    rms = InputRms(&r, 0);
+    CHECK_PA(Pa_CloseStream(s));
+    return rms;
+}
+
+static void SetProps(const char *manufacturer, const char *arch, const char *chip, const char *changelist,
+                     const char *soc, const char *sdk)
+{
+    PaNull_SetSystemProperty(NULL, NULL);
+    PaNull_SetSystemProperty("ro.product.manufacturer", manufacturer);
+    PaNull_SetSystemProperty("ro.arch", arch);
+    PaNull_SetSystemProperty("ro.hardware.chipname", chip);
+    PaNull_SetSystemProperty("ro.build.changelist", changelist);
+    PaNull_SetSystemProperty("ro.soc.model", soc);
+    PaNull_SetSystemProperty("ro.build.version.sdk", sdk);
+}
+
+/* Oboe's QuirksManager list: Samsung Exynos 9810 builds <= 18847185 record silence through
+   MMAP (unless VOICE_COMMUNICATION), Exynos 990 builds < 19350896 corrupt it, SM8150 on
+   Android 9 has no working MMAP.  The simulator records silence like the S9 when
+   mmapInputSilent is set and an input opens with MMAP allowed. */
+static void TestMMapQuirks(void)
+{
+    PaNullConfig cfg;
+    PaNullOpenInfo info;
+    PaAAudioStreamStats st;
+    PaAAudioOptions o;
+    PaNull_GetConfig(&cfg);
+    cfg.mmapInputSilent = 1;
+    PaNull_SetConfig(&cfg);
+    char buf[PA_NULL_PROP_VALUE_MAX];
+
+    /* Galaxy S9 on an affected build: MMAP disabled for the input only, audio recorded */
+    SetProps("samsung", "exynos9810", "exynos9810", "18000000", NULL, "29");
+    CHECK(PaNull_GetSystemProperty("ro.arch", buf) == 10 && strcmp(buf, "exynos9810") == 0);
+    CHECK(PaNull_GetSystemProperty("ro.soc.model", buf) == 0 && buf[0] == '\0');
+    CHECK_PA(Pa_Initialize());
+    CHECK_NEAR(RecordRms(1, &st), 0.5 / sqrt(2.0), 0.02);
+    CHECK(st.inputMMapDisabled == 1 && st.outputMMapDisabled == 0);
+    CHECK(st.inputPerformanceMode == T_AAUDIO_PERFORMANCE_MODE_LOW_LATENCY); /* still FAST */
+    CHECK(PaNull_GetLastOpen(1, &info) && info.mmapPolicy == T_AAUDIO_POLICY_NEVER);
+    CHECK(PaNull_GetLastOpen(0, &info) && info.mmapPolicy == 0);
+    CHECK_NEAR(RecordRms(0, &st), 0.5 / sqrt(2.0), 0.01); /* input-only too */
+    CHECK(st.inputMMapDisabled == 1);
+    /* the process-wide policy was restored: an output opened later may use MMAP */
+    {
+        PaStream *s = NULL;
+        Recorder r;
+        RecorderInit(&r, 0, 2);
+        CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+        CHECK(PaNull_GetLastOpen(0, &info) && info.mmapPolicy == 0);
+        if (s)
+            CHECK_PA(Pa_CloseStream(s));
+    }
+    /* ignoreMMapQuirks: the device's bug shows (silence) */
+    PaAAudio_GetDefaultOptions(&o);
+    o.ignoreMMapQuirks = 1;
+    PaAAudio_SetOptions(&o);
+    CHECK(RecordRms(0, &st) < 1e-6);
+    CHECK(st.inputMMapDisabled == 0);
+    PaAAudio_SetOptions(NULL);
+    CHECK_PA(Pa_Terminate());
+
+    /* fixed S9 build, other phones: MMAP stays enabled */
+    cfg.mmapInputSilent = 0;
+    PaNull_SetConfig(&cfg);
+    SetProps("samsung", "exynos9810", "exynos9810", "18847186", NULL, "29");
+    CHECK_PA(Pa_Initialize());
+    RecordRms(1, &st);
+    CHECK(st.inputMMapDisabled == 0 && st.outputMMapDisabled == 0);
+    CHECK_PA(Pa_Terminate());
+    SetProps("Google", NULL, NULL, NULL, "Tensor G3", "34");
+    CHECK_PA(Pa_Initialize());
+    RecordRms(1, &st);
+    CHECK(st.inputMMapDisabled == 0 && st.outputMMapDisabled == 0);
+    CHECK_PA(Pa_Terminate());
+
+    /* Galaxy S20 (Exynos 990) before the fix: input */
+    SetProps("samsung", "exynos990", "exynos990", "19350000", NULL, "30");
+    CHECK_PA(Pa_Initialize());
+    RecordRms(1, &st);
+    CHECK(st.inputMMapDisabled == 1 && st.outputMMapDisabled == 0);
+    CHECK_PA(Pa_Terminate());
+
+    /* SM8150 on Android 9: input and output; on Android 10 not */
+    SetProps("qcom", NULL, NULL, NULL, "SDM8150", "28");
+    CHECK_PA(Pa_Initialize());
+    RecordRms(1, &st);
+    CHECK(st.inputMMapDisabled == 1 && st.outputMMapDisabled == 1);
+    CHECK_PA(Pa_Terminate());
+    SetProps("qcom", NULL, NULL, NULL, "SDM8150", "29");
+    CHECK_PA(Pa_Initialize());
+    RecordRms(1, &st);
+    CHECK(st.inputMMapDisabled == 0 && st.outputMMapDisabled == 0);
+    CHECK_PA(Pa_Terminate());
+
+    PaNull_SetSystemProperty(NULL, NULL);
+    PaNull_SetConfig(NULL);
+    CheckNoMisuse();
+}
+
+/* Input presets: inputPreset for mono, stereoInputPreset (when set) for >= 2 channels */
+static void TestPresets(void)
+{
+    PaNullOpenInfo info;
+    PaAAudioStreamStats st;
+    PaAAudioOptions o;
+    PaStream *s = NULL;
+    Recorder r;
+    CHECK_PA(Pa_Initialize());
+    RecordRms(0, &st);
+    CHECK(PaNull_GetLastOpen(1, &info) && info.inputPreset == T_AAUDIO_INPUT_PRESET_VOICE_RECOGNITION);
+    CHECK(st.inputPreset == T_AAUDIO_INPUT_PRESET_VOICE_RECOGNITION);
+    PaAAudio_GetOptions(&o);
+    CHECK(o.inputPreset == T_AAUDIO_INPUT_PRESET_VOICE_RECOGNITION && o.stereoInputPreset == 0);
+    o.stereoInputPreset = T_AAUDIO_INPUT_PRESET_CAMCORDER;
+    PaAAudio_SetOptions(&o);
+    PaAAudio_GetOptions(&o);
+    CHECK(o.stereoInputPreset == T_AAUDIO_INPUT_PRESET_CAMCORDER);
+    RecordRms(1, &st); /* mono duplex */
+    CHECK(st.inputPreset == T_AAUDIO_INPUT_PRESET_VOICE_RECOGNITION);
+    RecorderInit(&r, 2, 0); /* stereo */
+    CHECK_PA(Open(&s, &r, paNoDevice, paNoDevice, 0.05));
+    if (s) {
+        CHECK(PaNull_GetLastOpen(1, &info) && info.inputPreset == T_AAUDIO_INPUT_PRESET_CAMCORDER);
+        CHECK_PA(Pa_StartStream(s));
+        SleepMs(100);
+        CHECK(PaAAudio_GetActiveStreamStats(&st) == 1 && st.inputPreset == T_AAUDIO_INPUT_PRESET_CAMCORDER);
+        CHECK_PA(Pa_AbortStream(s));
+        CHECK_PA(Pa_CloseStream(s));
+    }
+    o.inputPreset = T_AAUDIO_INPUT_PRESET_UNPROCESSED;
+    o.stereoInputPreset = 0;
+    PaAAudio_SetOptions(&o);
+    RecordRms(0, &st);
+    CHECK(st.inputPreset == T_AAUDIO_INPUT_PRESET_UNPROCESSED);
+    o.stereoInputPreset = -3; /* invalid: same as inputPreset */
+    PaAAudio_SetOptions(&o);
+    PaAAudio_GetOptions(&o);
+    CHECK(o.stereoInputPreset == 0);
+    PaAAudio_SetOptions(NULL);
+    CHECK_PA(Pa_Terminate());
+    CheckNoMisuse();
+}
+
 static const TestCase kTests[] = {
     { "stats_before_start", TestStatsBeforeStart },
     { "enumerate", TestEnumerate },
@@ -1305,6 +1631,11 @@ static const TestCase kTests[] = {
     { "gain", TestGain },
     { "fixed_buffer", TestFixedBuffer },
     { "terminate_open", TestTerminateOpen },
+    { "adc_time", TestAdcTime },
+    { "mono_device", TestMonoDevice },
+    { "duplex_capacity", TestDuplexCapacity },
+    { "mmap_quirks", TestMMapQuirks },
+    { "presets", TestPresets },
 };
 
 int main(int argc, char **argv)

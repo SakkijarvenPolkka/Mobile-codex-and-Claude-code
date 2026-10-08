@@ -56,6 +56,7 @@
 #include "AudioModule.h"
 #include "DefaultPlaybackPolicy.h"
 #include "BridgeError.h"
+#include "BridgePrefs.h"
 #include "Events.h"
 #include "Json.h"
 #include "Session.h"
@@ -582,9 +583,10 @@ void TransportManager::Stop(const char *reason, const std::string &message)
    const int dropouts = mLastDropouts;
    if (wasRecording) {
       if (mRecordingDuplex)
-         StoreMeasuredDuplexOffset();
+         StoreMeasuredDuplexOffset(mRouteKey);
       mCaptureTracks.clear();
       mRecordingDuplex = false;
+      mRouteKey.clear();
       mLastRecordedEnd = -1;
       // Recording committed (new track ids, "Recorded Audio")
       Session::Get().Touch();
@@ -632,17 +634,27 @@ void TransportManager::SettleSeek()
       std::this_thread::sleep_for(2ms);
 }
 
-bool TransportManager::TogglePause()
+bool TransportManager::TogglePause(const char *reason,
+   const std::string &message)
 {
    // ProjectAudioManager::OnPause minus scrubbing.  Pausing while nothing
    // plays would make the next stream start paused: not offered.
    if (!CanStopAudioStream() || !OwnStreamActive())
       return false;
+   return SetPaused(!AudioIO::Get()->IsPaused(), reason, message);
+}
+
+bool TransportManager::SetPaused(bool paused, const char *reason,
+   const std::string &message)
+{
+   if (!CanStopAudioStream() || !OwnStreamActive())
+      return false;
    auto gAudioIO = AudioIO::Get();
-   const bool paused = !gAudioIO->IsPaused();
+   if (gAudioIO->IsPaused() == paused)
+      return false;
    constexpr auto publish = true;
    gAudioIO->SetPaused(paused, publish);
-   UpdateState("user");
+   UpdateState(reason, message);
    return true;
 }
 
@@ -990,8 +1002,13 @@ bool TransportManager::DoRecord(const TransportSequences &sequences,
       gPrefs->Read(wxT("/AudioIO/SWPlaythrough"), &swPlaythrough, false);
       mRecordingDuplex =
          !transportSequences.playbackSequences.empty() || swPlaythrough;
-      AudioIOLatencyCorrection.Write(
-         mRecordingDuplex ? OverdubCorrectionMs() : 0.0);
+      // The route is decided now: a device change during the take must
+      // not file its measurement under the new route
+      mRouteKey = mRecordingDuplex ? CurrentRouteKey() : std::string{};
+      mUserTrimMs = AudioUserLatencyTrimMs.Read();
+      mAppliedCorrectionMs = mRecordingDuplex ? OverdubCorrectionMs() : 0.0;
+      mRealignSec = 0;
+      AudioIOLatencyCorrection.Write(mAppliedCorrectionMs);
    }
 
    auto &projectAudioIO = ProjectAudioIO::Get(*p);
@@ -1032,6 +1049,66 @@ void TransportManager::CancelRecording()
    PendingTracks::Get(mProject).ClearPendingTracks();
    mCaptureTracks.clear();
    mRecordingDuplex = false;
+   mRouteKey.clear();
+}
+
+void TransportManager::RealignTake()
+{
+   // AudioIO applied the correction known when the take started (StartStream
+   // reads it once): the stored measurement of the route, or a low estimate
+   // on a route never measured.  The host API measured this take's own
+   // round trip meanwhile; move the recorded clips by the difference, so
+   // that every take is aligned, also the first one on a new route.
+   mRealignSec = 0;
+   double measuredMs = 0;
+   if (!LastStreamDuplexOffsetMs(measuredMs))
+      // No valid AAudio timestamps: the take keeps the applied correction
+      return;
+   // Audacity's sign: negative = the take was late, move it earlier
+   const double shift =
+      (-measuredMs + mUserTrimMs - mAppliedCorrectionMs) / 1000.0;
+   for (const auto &track : mCaptureTracks) {
+      try {
+         const double rate = track->GetRate();
+         if (rate <= 0)
+            continue;
+         const auto samples = std::llround(shift * rate);
+         if (samples == 0)
+            continue;
+         const auto clip = track->GetRightmostClip();
+         // Only a clip this take created (it starts at the recording start);
+         // a take that continued an existing clip is left as it is
+         if (!clip ||
+             std::fabs(clip->GetPlayStartTime() - mRecordStart) > 1.0 / rate)
+            continue;
+         const double delta = double(samples) / rate;
+         if (delta < 0) {
+            // Late: drop what was captured before the aligned start (the
+            // input AudioIO would have discarded with the right correction)
+            const double cut = clip->GetPlayStartTime() - delta;
+            if (cut >= clip->GetPlayEndTime())
+               continue;
+            clip->ClearLeft(cut);
+         }
+         // Early (delta > 0): AudioIO discarded too much; that beginning is
+         // lost, but the rest lands where it belongs
+         clip->ShiftBy(delta);
+         mRealignSec = delta;
+      }
+      catch (const std::exception &e) {
+         Events::Log(Events::LogLevel::Warning,
+            std::string("could not re-align the recording: ") + e.what());
+      }
+      catch (...) {
+         Events::Log(Events::LogLevel::Warning,
+            "could not re-align the recording");
+      }
+   }
+   if (mRealignSec != 0)
+      Events::Log(Events::LogLevel::Info, "overdub re-aligned by " +
+         std::to_string(mRealignSec * 1000.0) + " ms (applied correction " +
+         std::to_string(mAppliedCorrectionMs) + " ms, measured round trip " +
+         std::to_string(measuredMs) + " ms)");
 }
 
 double TransportManager::RecordedEnd() const
@@ -1366,11 +1443,13 @@ void TransportManager::AddDropoutLabels(
        recording */
       auto pTrack = LabelTrack::Create(tracks, tracks.MakeUniqueTrackName(_("Dropouts")));
       long counter = 1;
-      for (auto &interval : intervals)
+      for (auto &interval : intervals) {
+         // The recorded clips may have been re-aligned (RealignTake)
+         const double t0 = std::max(0.0, interval.first + mRealignSec);
          pTrack->AddLabel(
-            SelectedRegion{ interval.first,
-               interval.first + interval.second },
+            SelectedRegion{ t0, t0 + interval.second },
             wxString::Format(wxT("%ld"), counter++));
+      }
 
       auto &history = ProjectHistory::Get( project );
       history.ModifyState( true ); // this might fail and throw
@@ -1418,6 +1497,10 @@ void TransportManager::OnAudioIONewBlocks()
 void TransportManager::OnCommitRecording()
 {
    PendingTracks::Get(mProject).ApplyPendingTracks();
+   // Inside AudioIO::StopStream, before OnAudioIOStopRecording pushes the
+   // "Recorded Audio" state (RealignTake does not throw)
+   if (mRecordingDuplex)
+      RealignTake();
 }
 
 void TransportManager::OnSoundActivationThreshold()

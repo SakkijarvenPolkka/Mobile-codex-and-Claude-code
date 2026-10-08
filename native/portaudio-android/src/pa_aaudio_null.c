@@ -14,6 +14,12 @@
  *           presentation timeline (an underrun gap).
  *   input (callback): frames [base + (k-1)B, base + kB) are delivered at
  *           start + k*B/R; frame p was captured at start + (p - base)/R.
+ *           framesRead/framesWritten count the buffer before the callback
+ *           runs (as AOSP's legacy and MMAP input paths do).
+ *   open:   an input asking LOW_LATENCY with a capacity > 4096 frames is
+ *           granted NONE (AudioFlinger refuses FAST capture); with
+ *           mmapInputSilent, a LOW_LATENCY input opened while the MMAP policy
+ *           is not NEVER records silence (Samsung quirk).
  *   input (read mode): frames become available in bursts as the clock
  *           advances (rate R * (1 + drift)); a reader slower than the buffer
  *           capacity loses the oldest frames (xrun, framesRead jumps).
@@ -80,6 +86,8 @@ struct AAudioStreamStruct {
     aaudio_format_t format;
     aaudio_sharing_mode_t sharing;
     aaudio_performance_mode_t perf;
+    aaudio_input_preset_t preset;
+    int mmapSilent; /* input records silence (PaNullConfig.mmapInputSilent) */
     AAudioStream_dataCallback dataCb;
     void *dataUd;
     AAudioStream_errorCallback errorCb;
@@ -124,6 +132,16 @@ static int64_t g_outFrames, g_outCallbacks;
 static int g_outChannels;
 static float g_air[AIR_FRAMES];
 static int64_t g_airTag[AIR_FRAMES]; /* air index + 1; 0 = empty */
+static PaNullOpenInfo g_lastOpen[2];  /* [output, input] */
+static aaudio_policy_t g_mmapPolicy;   /* AAudio_setMMapPolicy; 0 = unspecified */
+#define MAX_PROPS 32
+static struct {
+    char name[64];
+    char value[PA_NULL_PROP_VALUE_MAX];
+} g_props[MAX_PROPS];
+static int g_propCount;
+/* AudioFlinger: FAST capture only for frameCount <= its pipe (4096 frames) */
+#define FAST_CAPTURE_MAX_FRAMES 4096
 
 static void DefaultConfig(PaNullConfig *c)
 {
@@ -375,12 +393,18 @@ aaudio_result_t AAudioStreamBuilder_openStream(AAudioStreamBuilder *b, AAudioStr
     s->format = format;
     s->burst = c.framesPerBurst > 0 ? c.framesPerBurst : 480;
     s->capacity = s->burst * (c.bufferCapacityBursts > 1 ? c.bufferCapacityBursts : 2);
-    if (b->capacity > s->capacity)
+    if (b->capacity > 0) /* a requested capacity is honoured, rounded up to whole bursts (>= 2) */
         s->capacity = ((b->capacity + s->burst - 1) / s->burst) * s->burst;
+    if (s->capacity < 2 * s->burst)
+        s->capacity = 2 * s->burst;
     atomic_store(&s->bufferSize, b->direction == AAUDIO_DIRECTION_OUTPUT ? 2 * s->burst : s->capacity);
     s->deviceId = b->deviceId ? b->deviceId : (b->direction == AAUDIO_DIRECTION_OUTPUT ? 1001 : 1002);
     s->sharing = b->sharing;
     s->perf = b->perf;
+    if (b->direction == AAUDIO_DIRECTION_INPUT && b->perf == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY
+        && b->capacity > FAST_CAPTURE_MAX_FRAMES)
+        s->perf = AAUDIO_PERFORMANCE_MODE_NONE; /* FAST (and RAW) refused: normal capture path */
+    s->preset = b->direction == AAUDIO_DIRECTION_INPUT ? b->preset : 0;
     s->dataCb = b->dataCb;
     s->dataUd = b->dataUd;
     s->errorCb = b->errorCb;
@@ -400,6 +424,23 @@ aaudio_result_t AAudioStreamBuilder_openStream(AAudioStreamBuilder *b, AAudioStr
     ++g_openCount;
     ++g_totalOpen;
     s->id = ++g_nextId;
+    s->mmapSilent = b->direction == AAUDIO_DIRECTION_INPUT && c.mmapInputSilent
+                    && s->perf == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY && g_mmapPolicy != AAUDIO_POLICY_NEVER;
+    {
+        PaNullOpenInfo *info = &g_lastOpen[b->direction == AAUDIO_DIRECTION_INPUT ? 1 : 0];
+        memset(info, 0, sizeof *info);
+        info->valid = 1;
+        info->deviceId = b->deviceId;
+        info->channelCount = b->channelCount;
+        info->sampleRate = b->sampleRate;
+        info->performanceMode = b->perf;
+        info->grantedPerformanceMode = s->perf;
+        info->bufferCapacity = b->capacity;
+        info->inputPreset = b->direction == AAUDIO_DIRECTION_INPUT ? b->preset : 0;
+        info->usage = b->direction == AAUDIO_DIRECTION_OUTPUT ? b->usage : 0;
+        info->contentType = b->direction == AAUDIO_DIRECTION_OUTPUT ? b->contentType : 0;
+        info->mmapPolicy = g_mmapPolicy;
+    }
     pthread_mutex_unlock(&g_sim);
     *out = s;
     return AAUDIO_OK;
@@ -445,7 +486,9 @@ static void GenerateInput(const AAudioStream *s, void *buf, int64_t pos, int32_t
     for (j = 0; j < n; ++j) {
         const int64_t p = pos + j;
         double v;
-        if (c->loopback) {
+        if (s->mmapSilent) {
+            v = 0.0;
+        } else if (c->loopback) {
             const double tNs = (double)startNs + (double)(p - basePos) * 1e9 / ((double)s->rate * factor);
             v = AirRead(llround(tNs * (double)s->rate / 1e9) - c->loopbackDelayFrames);
         } else {
@@ -554,6 +597,13 @@ static void *CallbackThread(void *arg)
         startNs = s->startNs;
         basePos = s->basePos;
         bufferSize = atomic_load(&s->bufferSize);
+        if (!output) {
+            /* AOSP (AudioStreamLegacy::callDataCallbackFrames, MMAP callbackLoop): an input
+               stream counts the frames as captured and read BEFORE the data callback, so
+               getFramesRead() in the callback is the index after audioData's last frame */
+            s->framesWritten += s->burst;
+            s->framesRead += s->burst;
+        }
         pthread_mutex_unlock(&s->lock);
 
         if (!output) {
@@ -565,9 +615,8 @@ static void *CallbackThread(void *arg)
         atomic_store(&s->inDataCallback, 0);
 
         pthread_mutex_lock(&s->lock);
-        s->framesWritten += s->burst;
-        if (!output)
-            s->framesRead += s->burst;
+        if (output)
+            s->framesWritten += s->burst; /* after: the data goes to the device now */
         if (r == AAUDIO_CALLBACK_RESULT_STOP)
             s->callbackReturnedStop = 1;
         pthread_mutex_unlock(&s->lock);
@@ -862,6 +911,31 @@ aaudio_direction_t AAudioStream_getDirection(AAudioStream *s)
     return Check(s, "AAudioStream_getDirection") ? s->direction : AAUDIO_DIRECTION_OUTPUT;
 }
 
+aaudio_input_preset_t AAudioStream_getInputPreset(AAudioStream *s)
+{
+    return Check(s, "AAudioStream_getInputPreset") ? s->preset : 0;
+}
+
+aaudio_result_t AAudio_setMMapPolicy(aaudio_policy_t policy)
+{
+    if (policy != AAUDIO_UNSPECIFIED && policy != AAUDIO_POLICY_NEVER && policy != AAUDIO_POLICY_AUTO
+        && policy != AAUDIO_POLICY_ALWAYS)
+        return AAUDIO_ERROR_ILLEGAL_ARGUMENT;
+    pthread_mutex_lock(&g_sim);
+    g_mmapPolicy = policy;
+    pthread_mutex_unlock(&g_sim);
+    return AAUDIO_OK;
+}
+
+aaudio_policy_t AAudio_getMMapPolicy(void)
+{
+    aaudio_policy_t p;
+    pthread_mutex_lock(&g_sim);
+    p = g_mmapPolicy;
+    pthread_mutex_unlock(&g_sim);
+    return p;
+}
+
 int64_t AAudioStream_getFramesWritten(AAudioStream *s)
 {
     int64_t v;
@@ -948,10 +1022,13 @@ void PaNull_GetConfig(PaNullConfig *config)
 void PaNull_SetConfig(const PaNullConfig *config)
 {
     pthread_mutex_lock(&g_sim);
-    if (config)
+    if (config) {
         g_cfg = *config;
-    else
+    } else {
         DefaultConfig(&g_cfg);
+        g_mmapPolicy = AAUDIO_UNSPECIFIED;
+        g_propCount = 0;
+    }
     if (!(g_cfg.sampleRate >= 8000.0 && g_cfg.sampleRate <= 192000.0))
         g_cfg.sampleRate = 48000.0;
     if (g_cfg.framesPerBurst <= 0)
@@ -1123,6 +1200,59 @@ void PaNull_FailNextOpen(int aaudioError, int direction)
     g_failErr = aaudioError;
     g_failDir = direction;
     pthread_mutex_unlock(&g_sim);
+}
+
+int PaNull_GetLastOpen(int direction, PaNullOpenInfo *info)
+{
+    if (!info)
+        return 0;
+    pthread_mutex_lock(&g_sim);
+    *info = g_lastOpen[direction == 1 ? 1 : 0];
+    pthread_mutex_unlock(&g_sim);
+    return info->valid;
+}
+
+void PaNull_SetSystemProperty(const char *name, const char *value)
+{
+    int i;
+    pthread_mutex_lock(&g_sim);
+    if (!name) {
+        g_propCount = 0;
+        pthread_mutex_unlock(&g_sim);
+        return;
+    }
+    for (i = 0; i < g_propCount; ++i)
+        if (!strcmp(g_props[i].name, name))
+            break;
+    if (!value) {
+        if (i < g_propCount)
+            g_props[i] = g_props[--g_propCount];
+    } else if (i < g_propCount || g_propCount < MAX_PROPS) {
+        if (i == g_propCount)
+            ++g_propCount;
+        snprintf(g_props[i].name, sizeof g_props[i].name, "%s", name);
+        snprintf(g_props[i].value, sizeof g_props[i].value, "%s", value);
+    }
+    pthread_mutex_unlock(&g_sim);
+}
+
+int PaNull_GetSystemProperty(const char *name, char *value)
+{
+    int i, n = 0;
+    if (!value)
+        return 0;
+    value[0] = '\0';
+    if (!name)
+        return 0;
+    pthread_mutex_lock(&g_sim);
+    for (i = 0; i < g_propCount; ++i)
+        if (!strcmp(g_props[i].name, name)) {
+            snprintf(value, PA_NULL_PROP_VALUE_MAX, "%s", g_props[i].value);
+            n = (int)strlen(value);
+            break;
+        }
+    pthread_mutex_unlock(&g_sim);
+    return n;
 }
 
 int PaNull_GetMisuseCount(void)

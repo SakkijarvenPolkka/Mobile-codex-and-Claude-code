@@ -1,6 +1,8 @@
 /*
  * Audacity Android port — runs the [TransportService] while this project
- * plays or records (transport events, API.md §4.5).
+ * plays or records (transport events, API.md §4.5), together with the
+ * [AudioInterruptions] (audio focus, headphones unplugged, silenced
+ * microphone, no monitoring in the background).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -28,10 +30,11 @@ object TransportForeground {
         else -> Want.STOP
     }
 
-    /** Follows [engine]'s transport state for the life of [scope]. */
+    /** Follows [engine]'s transport state for the life of [scope] (or of the returned job). */
     fun follow(context: Context, engine: AudacityEngine, scope: CoroutineScope): Job {
         val app = context.applicationContext
         return scope.launch(Dispatchers.Main.immediate) {
+            AudioInterruptions(app, engine, this).start()
             engine.transportState.map { it.state }.distinctUntilChanged().collect { state ->
                 when (want(state)) {
                     Want.RECORDING -> TransportService.start(app, recording = true)

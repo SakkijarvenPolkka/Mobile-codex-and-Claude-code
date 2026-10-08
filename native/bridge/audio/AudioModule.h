@@ -119,14 +119,28 @@ void ApplyStartConfigDefaults();
 //! once AudioIO is idle (no stream at all, not even monitoring)
 void ApplyPendingDeviceChange();
 //! The /AudioIO/LatencyCorrection value (ms) a recording with playback
-//! ("overdub") on the current devices uses: -(measured duplex offset) +
-//! user trim (Audacity's sign: negative shifts the recording earlier)
+//! ("overdub") on the current route uses: -(duplex offset measured on this
+//! route, else the static device estimate) + user trim (Audacity's sign:
+//! negative shifts the recording earlier).  The estimate is deliberately
+//! low: TransportManager re-aligns every take to its own measurement, and a
+//! take that is late can be trimmed without loss, an early one cannot.
 double OverdubCorrectionMs();
 //! Measured duplex offset (ms) of the current route; false if none yet
 bool MeasuredDuplexOffsetMs(double &ms);
+//! Identifies the current route for the stored duplex offset: the device
+//! preferences plus, while a "Default" device follows Android's routing,
+//! the set of connected devices (audio.setDevices), so that speaker,
+//! wired, USB and each Bluetooth headset are measured separately
+std::string CurrentRouteKey();
+//! The duplex offset (ms) measured by the host API during the most recent
+//! stream with input and output; false when nothing valid was measured
+bool LastStreamDuplexOffsetMs(double &ms);
 //! After a stream with input and output stopped: store the measured duplex
-//! offset of the route it used
-void StoreMeasuredDuplexOffset();
+//! offset under the route key the take started with
+void StoreMeasuredDuplexOffset(const std::string &routeKey);
+//! Engine thread: PaAAudio input presets from the /Android/AAudio/InputPreset
+//! preference and the UNPROCESSED support reported by Kotlin
+void ApplyInputOptions();
 //! Reset module statics (Register / BeforeShutdown)
 void ResetDeviceState();
 

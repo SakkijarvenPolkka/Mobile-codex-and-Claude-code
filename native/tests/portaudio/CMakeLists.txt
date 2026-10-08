@@ -21,14 +21,16 @@ set(_pa_tests
    stats_before_start enumerate rates devices output input input_int16 duplex
    loopback complete abort_return idempotence blocked_callback disconnect
    duplex_disconnect xrun open_errors mono_mic warmup_timeout drift gain
-   fixed_buffer terminate_open)
+   fixed_buffer terminate_open adc_time mono_device duplex_capacity mmap_quirks
+   presets)
 foreach(_t IN LISTS _pa_tests)
    add_test(NAME portaudio.${_t} COMMAND portaudio-null-test ${_t})
    set_tests_properties(portaudio.${_t} PROPERTIES TIMEOUT 60 LABELS portaudio)
 endforeach()
 # Timing-sensitive (clock drift, callback periods): they fail when other
 # tests load the CPUs, so ctest -j runs them alone
-set_tests_properties(portaudio.drift portaudio.fixed_buffer PROPERTIES RUN_SERIAL TRUE)
+set_tests_properties(portaudio.drift portaudio.fixed_buffer portaudio.adc_time
+   PROPERTIES RUN_SERIAL TRUE)
 
 # Integration: Audacity's AudioIO (lib-audio-io) on the simulated device
 add_executable(portaudio-audioio-test audioio_monitor_test.cpp)

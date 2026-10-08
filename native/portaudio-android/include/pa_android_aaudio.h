@@ -14,6 +14,10 @@
  *   0  "Default Output"  output, 2 ch, AAUDIO_UNSPECIFIED device (follows Android routing)
  *   1  "Default Input"   input,  2 ch, AAUDIO_UNSPECIFIED device
  *   2+ devices supplied with PaAAudio_SetDeviceList() (AudioManager.getDevices())
+ * Every device offers at least 2 channels in each direction it supports, even when
+ * AudioDeviceInfo reports only [1] (mono USB microphone, mono speaker): AAudio converts
+ * the channel count in SHARED mode, and input streams fall back to the other count and
+ * map user channel c to device channel c % n.
  * Pa_GetDefaultOutputDevice()/Pa_GetDefaultInputDevice() are always valid.
  *
  * Thread rules: the Set* functions take an internal mutex and may be called
@@ -52,8 +56,8 @@ typedef struct PaAAudioDeviceDesc {
     const char *name;          /**< UTF-8, unique and stable (stored in the /AudioIO/PlaybackDevice and
                                     /AudioIO/RecordingDevice prefs); copied */
     int32_t aaudioDeviceId;    /**< AudioDeviceInfo.getId(); 0 = AAUDIO_UNSPECIFIED (default routing) */
-    int maxInputChannels;      /**< 0 = not an input device */
-    int maxOutputChannels;     /**< 0 = not an output device */
+    int maxInputChannels;      /**< 0 = not an input device; PortAudio reports max(this, 2) */
+    int maxOutputChannels;     /**< 0 = not an output device; PortAudio reports max(this, 2) */
     double nativeSampleRate;   /**< 0 = use the PaAAudio_SetDefaults() rate */
     int framesPerBurst;        /**< 0 = use the PaAAudio_SetDefaults() burst */
 } PaAAudioDeviceDesc;
@@ -62,8 +66,8 @@ typedef struct PaAAudioDeviceDesc {
 typedef struct PaAAudioOptions {
     int sharingMode;           /**< AAUDIO_SHARING_MODE_SHARED (default, 1) or _EXCLUSIVE (0) */
     int outputPerformanceMode; /**< AAUDIO_PERFORMANCE_MODE_LOW_LATENCY (default, 12) */
-    int inputPerformanceMode;  /**< input-only streams; LOW_LATENCY (default) or NONE (10). Duplex input is always LOW_LATENCY */
-    int inputPreset;           /**< AAUDIO_INPUT_PRESET_* ; default VOICE_RECOGNITION (6). UNPROCESSED (9) falls back to 6 if it cannot be opened */
+    int inputPerformanceMode;  /**< input streams (input-only and full duplex); LOW_LATENCY (default) or NONE (10) */
+    int inputPreset;           /**< AAUDIO_INPUT_PRESET_* ; default VOICE_RECOGNITION (6). Any other preset falls back to 6 if it cannot be opened */
     int usage;                 /**< AAUDIO_USAGE_MEDIA (default, 1) */
     int contentType;           /**< AAUDIO_CONTENT_TYPE_MUSIC (default, 2) */
     int acceptAnyRate;         /**< 1: Pa_IsFormatSupported accepts any rate in [8000,192000] (AAudio resamples);
@@ -75,6 +79,11 @@ typedef struct PaAAudioOptions {
     int warmupTimeoutMs;       /**< full duplex: fail if the input delivers nothing for this long; 0 = 1500 */
     int maxFramesPerUserCallback; /**< upper bound of framesPerBuffer passed to the PortAudio callback; 0 = 2048 */
     int autoGrowOutputBuffer;  /**< 1 (default): output-only streams grow the AAudio buffer by one burst per xrun */
+    int stereoInputPreset;     /**< preset of input streams opened with >= 2 channels (e.g. CAMCORDER (5), which uses
+                                    the stereo microphone pair on most phones); 0 (default) = inputPreset */
+    int ignoreMMapQuirks;      /**< 0 (default): on devices known to record silence or corrupt audio through MMAP
+                                    (Oboe's QuirksManager list: Samsung Exynos 990 / 9810 builds, Qualcomm SM8150 on
+                                    Android 9) the stream is opened with MMAP disabled; 1: never */
 } PaAAudioOptions;
 
 /** Snapshot of the most recently started stream (kept after it stops/closes). */
@@ -106,12 +115,17 @@ typedef struct PaAAudioStreamStats {
     int64_t callbackCount;               /**< AAudio data callbacks since start */
     int64_t framesProcessed;             /**< frames passed to the PortAudio callback since start */
     double cpuLoad;                      /**< Pa_GetStreamCpuLoad() */
+    int inputPreset;                     /**< AAudioStream_getInputPreset() of the input stream (0 = no input) */
+    int inputMMapDisabled;               /**< 1: the input was opened with MMAP disabled (device quirk) */
+    int outputMMapDisabled;              /**< 1: the output was opened with MMAP disabled (device quirk) */
 } PaAAudioStreamStats;
 
 /** Fills *opts with the built-in defaults (call, modify fields, then PaAAudio_SetOptions). */
 PA_AAUDIO_EXPORT void PaAAudio_GetDefaultOptions(PaAAudioOptions *opts);
 /** Sets options for streams opened later; NULL restores the defaults. Any thread. */
 PA_AAUDIO_EXPORT void PaAAudio_SetOptions(const PaAAudioOptions *opts);
+/** Fills *opts with the options currently in effect (read-modify-write with PaAAudio_SetOptions). */
+PA_AAUDIO_EXPORT void PaAAudio_GetOptions(PaAAudioOptions *opts);
 
 /**
  * Replaces the list of specific devices exposed after the two default devices.

@@ -50,7 +50,26 @@ typedef struct PaNullConfig {
                                     after it was "played" (default 0) */
     int loopbackDelayFrames;   /**< extra acoustic delay of the loopback (default 0) */
     double inputDriftPpm;      /**< read-mode (full-duplex) input clock error in ppm (default 0) */
+    int mmapInputSilent;       /**< 1: like the Samsung devices in Oboe's QuirksManager, an input stream opened
+                                    with LOW_LATENCY while the MMAP policy (AAudio_setMMapPolicy) is not NEVER
+                                    records digital silence (default 0) */
 } PaNullConfig;
+
+/** What pa_aaudio.c asked AAudioStreamBuilder_openStream for, and what it got. */
+typedef struct PaNullOpenInfo {
+    int valid;                 /**< 1 once a stream of that direction was opened */
+    int deviceId;              /**< requested (0 = AAUDIO_UNSPECIFIED) */
+    int channelCount;          /**< requested (0 = unspecified) */
+    int sampleRate;            /**< requested */
+    int performanceMode;       /**< requested */
+    int grantedPerformanceMode;/**< granted: an input asking LOW_LATENCY with a buffer capacity above 4096 frames
+                                    gets NONE (AudioFlinger refuses FAST capture for frameCount > its 4096-frame
+                                    pipe; Oboe's AudioStreamAAudio clamps input capacity for that reason) */
+    int bufferCapacity;        /**< requested (0 = unspecified) */
+    int inputPreset;           /**< requested (input only) */
+    int usage, contentType;    /**< requested (output only) */
+    int mmapPolicy;            /**< AAudio_getMMapPolicy() at open time (0 = unspecified, 1 = NEVER) */
+} PaNullOpenInfo;
 
 typedef struct PaNullOutputStats {
     int64_t frames;            /**< output frames consumed since the last reset */
@@ -61,7 +80,7 @@ typedef struct PaNullOutputStats {
 } PaNullOutputStats;
 
 PA_AAUDIO_EXPORT void PaNull_GetConfig(PaNullConfig *config);
-/** NULL restores the defaults. */
+/** NULL restores the defaults (and clears the simulated system properties and MMAP policy). */
 PA_AAUDIO_EXPORT void PaNull_SetConfig(const PaNullConfig *config);
 /** Changes only the input sine (applies immediately). */
 PA_AAUDIO_EXPORT void PaNull_SetInputSignal(double frequencyHz, double amplitude);
@@ -79,6 +98,18 @@ PA_AAUDIO_EXPORT void PaNull_SetInputStalled(int stalled);
 /** The next AAudioStreamBuilder_openStream for 'direction' (0 output, 1 input, -1 any)
     fails with aaudioError (an AAUDIO_ERROR_* value; 0 cancels). */
 PA_AAUDIO_EXPORT void PaNull_FailNextOpen(int aaudioError, int direction);
+
+/** The last successful open of 'direction' (0 output, 1 input); returns info->valid. */
+PA_AAUDIO_EXPORT int PaNull_GetLastOpen(int direction, PaNullOpenInfo *info);
+
+/** Simulated Android system properties (__system_property_get) read by pa_aaudio.c at
+    Pa_Initialize, e.g. "ro.product.manufacturer".  value NULL removes the property;
+    name NULL removes all of them. */
+PA_AAUDIO_EXPORT void PaNull_SetSystemProperty(const char *name, const char *value);
+/** Copies the property into value (at least PA_NULL_PROP_VALUE_MAX bytes; "" if unset) and
+    returns its length, like __system_property_get. */
+#define PA_NULL_PROP_VALUE_MAX 92
+PA_AAUDIO_EXPORT int PaNull_GetSystemProperty(const char *name, char *value);
 
 /** Number of AAudio API misuses detected so far, and a description of the last one. */
 PA_AAUDIO_EXPORT int PaNull_GetMisuseCount(void);

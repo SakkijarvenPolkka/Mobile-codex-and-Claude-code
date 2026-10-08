@@ -158,6 +158,19 @@ int64_t AAudioStream_getFramesWritten(AAudioStream *stream);
 int64_t AAudioStream_getFramesRead(AAudioStream *stream);
 aaudio_result_t AAudioStream_getTimestamp(AAudioStream *stream, clockid_t clockid,
     int64_t *framePosition, int64_t *timeNanoseconds);
+aaudio_input_preset_t AAudioStream_getInputPreset(AAudioStream *stream);
+
+/* Not in the NDK header: libaaudio exports these (API 28+) and the Android build of
+   pa_aaudio.c reaches them with dlsym(), like Oboe's AAudioExtensions.  The policy is
+   process-wide and applies to streams opened afterwards. */
+enum {
+    AAUDIO_POLICY_NEVER = 1,
+    AAUDIO_POLICY_AUTO,
+    AAUDIO_POLICY_ALWAYS
+};
+typedef int32_t aaudio_policy_t;
+aaudio_result_t AAudio_setMMapPolicy(aaudio_policy_t policy);
+aaudio_policy_t AAudio_getMMapPolicy(void);
 
 #ifdef __cplusplus
 }

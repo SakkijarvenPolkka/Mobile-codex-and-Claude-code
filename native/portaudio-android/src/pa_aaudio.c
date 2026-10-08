@@ -39,6 +39,8 @@
 
 #ifdef __ANDROID__
 #include <android/log.h>
+#include <dlfcn.h>
+#include <sys/system_properties.h>
 #endif
 
 #include "pa_allocation.h"
@@ -52,6 +54,10 @@
 
 #ifndef PA_AAUDIO_NULL_BACKEND
 #define PA_AAUDIO_NULL_BACKEND 0
+#endif
+
+#if PA_AAUDIO_NULL_BACKEND
+#include "pa_null.h" /* simulated system properties */
 #endif
 
 #if PA_AAUDIO_NULL_BACKEND
@@ -81,6 +87,12 @@ PaError PaAAudio_Initialize(PaUtilHostApiRepresentation **hostApi, PaHostApiInde
 #define TERMINATE_WAIT_NS (2000 * NS_PER_MS)     /* Terminate waits for pending teardowns */
 #define POLL_PERIOD_NS (20 * NS_PER_MS)          /* timestamp poller */
 #define DUPLEX_OFFSET_HISTORY 32
+/* Capacity hint of the read-mode (full-duplex) input.  AAudio's legacy path passes it to
+   AudioRecord as frameCount, and AudioFlinger grants FAST (and RAW) capture only when
+   frameCount <= its 4096-frame pipe (Threads.cpp); Oboe clamps input capacity to 4096 for
+   the same reason (AudioStreamAAudio.cpp, b/80308183). */
+#define DUPLEX_INPUT_CAPACITY 4096
+#define PROP_VALUE_MAX_ 92                       /* PROP_VALUE_MAX of <sys/system_properties.h> */
 
 enum {
     PH_WARMUP_DRAIN,   /* full duplex: discard stale input */
@@ -185,6 +197,8 @@ static void DefaultOptions(PaAAudioOptions *o)
     o->warmupTimeoutMs = 1500;
     o->maxFramesPerUserCallback = 2048;
     o->autoGrowOutputBuffer = 1;
+    o->stereoInputPreset = 0;
+    o->ignoreMMapQuirks = 0;
 }
 
 /* g_lock held */
@@ -239,11 +253,126 @@ void PaAAudio_SetOptions(const PaAAudioOptions *opts)
         o.maxFramesPerUserCallback = 2048;
     o.maxFramesPerUserCallback = ClampInt(o.maxFramesPerUserCallback, 64, 16384);
     o.autoGrowOutputBuffer = o.autoGrowOutputBuffer ? 1 : 0;
+    if (o.stereoInputPreset < 0)
+        o.stereoInputPreset = 0;
+    o.ignoreMMapQuirks = o.ignoreMMapQuirks ? 1 : 0;
 
     pthread_mutex_lock(&g_lock);
     g_opts = o;
     g_optsInitialized = 1;
     pthread_mutex_unlock(&g_lock);
+}
+
+void PaAAudio_GetOptions(PaAAudioOptions *opts)
+{
+    if (!opts)
+        return;
+    pthread_mutex_lock(&g_lock);
+    EnsureOptionsLocked();
+    *opts = g_opts;
+    pthread_mutex_unlock(&g_lock);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Device quirks: Oboe's QuirksManager::isMMapSafe (QuirksManager.cpp)        */
+/* ------------------------------------------------------------------------ */
+
+enum {
+    QUIRK_EXYNOS990_INPUT = 1,  /* b/159066712: S20 (Exynos 990) LSI records corrupt low-latency audio */
+    QUIRK_EXYNOS9810_INPUT = 2, /* oboe#1110: S9/S9+ (Exynos 9810) record silence unless VOICE_COMMUNICATION */
+    QUIRK_SM8150 = 4            /* oboe#1121: SM8150 on Android 9 does not actually support MMAP */
+};
+
+typedef aaudio_result_t (*SetMMapPolicyFn)(int32_t policy);
+typedef int32_t (*GetMMapPolicyFn)(void);
+
+static int g_mmapQuirks;                 /* g_lock; detected at Pa_Initialize */
+static SetMMapPolicyFn g_setMMapPolicy;  /* written once at Pa_Initialize (engine thread) */
+static GetMMapPolicyFn g_getMMapPolicy;
+static int g_mmapFnsLoaded;
+
+#define MMAP_POLICY_NEVER 1
+#define MMAP_POLICY_AUTO 2
+
+/* __system_property_get; value has PROP_VALUE_MAX_ bytes; "" when unset */
+static int ReadProperty(const char *name, char *value)
+{
+    value[0] = '\0';
+#if PA_AAUDIO_NULL_BACKEND
+    return PaNull_GetSystemProperty(name, value);
+#elif defined(__ANDROID__)
+    return __system_property_get(name, value);
+#else
+    (void)name;
+    return 0;
+#endif
+}
+
+static long PropertyLong(const char *name)
+{
+    char v[PROP_VALUE_MAX_];
+    if (ReadProperty(name, v) <= 0)
+        return 0;
+    return strtol(v, NULL, 10);
+}
+
+/* The QuirksManager constructor and isMMapSafe() checks of Oboe */
+static int DetectMMapQuirks(void)
+{
+    char manufacturer[PROP_VALUE_MAX_], arch[PROP_VALUE_MAX_], chip[PROP_VALUE_MAX_], soc[PROP_VALUE_MAX_];
+    int quirks = 0;
+    ReadProperty("ro.product.manufacturer", manufacturer);
+    if (!strcmp(manufacturer, "samsung")) {
+        ReadProperty("ro.arch", arch);
+        if (!strncmp(arch, "exynos", 6)) {
+            const long changelist = PropertyLong("ro.build.changelist"); /* 0 when unknown: affected */
+            ReadProperty("ro.hardware.chipname", chip);
+            if (!strcmp(chip, "exynos990") && changelist < 19350896L)
+                quirks |= QUIRK_EXYNOS990_INPUT;
+            if (!strcmp(chip, "exynos9810") && changelist <= 18847185L)
+                quirks |= QUIRK_EXYNOS9810_INPUT;
+        }
+    } else if (!strcmp(manufacturer, "qcom")) {
+        ReadProperty("ro.soc.model", soc);
+        if ((!strcmp(soc, "SDM8150") || !strcmp(soc, "SM8150")) && PropertyLong("ro.build.version.sdk") <= 28)
+            quirks |= QUIRK_SM8150;
+    }
+    return quirks;
+}
+
+/* 1: a stream of this direction and preset must not use MMAP on this device */
+static int MMapUnsafe(int quirks, aaudio_direction_t dir, aaudio_input_preset_t preset)
+{
+    if (quirks & QUIRK_SM8150)
+        return 1;
+    if (dir != AAUDIO_DIRECTION_INPUT)
+        return 0;
+    if (quirks & QUIRK_EXYNOS990_INPUT)
+        return 1;
+    return (quirks & QUIRK_EXYNOS9810_INPUT) && preset != AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION;
+}
+
+/* AAudio_setMMapPolicy/AAudio_getMMapPolicy: exported by libaaudio but not in the NDK
+   (Oboe's AAudioExtensions).  g_lock held. */
+static void LoadMMapPolicyFunctionsLocked(void)
+{
+    if (g_mmapFnsLoaded)
+        return;
+    g_mmapFnsLoaded = 1;
+#if PA_AAUDIO_NULL_BACKEND
+    g_setMMapPolicy = AAudio_setMMapPolicy;
+    g_getMMapPolicy = AAudio_getMMapPolicy;
+#elif defined(__ANDROID__)
+    {
+        void *lib = dlopen("libaaudio.so", RTLD_NOW); /* already loaded; never closed */
+        if (lib) {
+            g_setMMapPolicy = (SetMMapPolicyFn)dlsym(lib, "AAudio_setMMapPolicy");
+            g_getMMapPolicy = (GetMMapPolicyFn)dlsym(lib, "AAudio_getMMapPolicy");
+        }
+        if (!g_setMMapPolicy || !g_getMMapPolicy)
+            g_setMMapPolicy = NULL, g_getMMapPolicy = NULL;
+    }
+#endif
 }
 
 static void FreeUserDevicesLocked(void)
@@ -413,6 +542,8 @@ struct PaAAudioStream {
     int outFrameBytes, inFrameBytes, inSampleBytes;
     int outBurst, inBurst, outCapacity, inCapacity, outBufferSize;
     int segFrames;          /* max frames per buffer-processor pass */
+    int mmapQuirks;         /* QUIRK_* of this device (0 with opts.ignoreMMapQuirks) */
+    int outMMapDisabled, inMMapDisabled;
     void *inBuf;            /* input scratch: segFrames * inFrameBytes */
     int drainCallbacks, cushionCallbacks, discardCallbacks;
     int64_t excessThreshold;
@@ -684,7 +815,10 @@ static void PublishStreamStarted(PaAAudioStream *st)
         s.inputSharingMode = AAudioStream_getSharingMode(st->in);
         s.inputFormat = st->inFormat;
         s.inputChannelsOpened = st->inCh;
+        s.inputPreset = AAudioStream_getInputPreset(st->in);
+        s.inputMMapDisabled = st->inMMapDisabled;
     }
+    s.outputMMapDisabled = st->out ? st->outMMapDisabled : 0;
     s.outputLatencySec = -1.0;
     s.inputLatencySec = -1.0;
     s.duplexOffsetSec = -1.0;
@@ -929,8 +1063,13 @@ static aaudio_result_t DuplexWarmup(PaAAudioStream *st, int32_t n)
             if (got < 0)
                 return (aaudio_result_t)got;
         }
-        if (--st->warmupCount <= 0)
+        if (--st->warmupCount <= 0) {
             st->phase = PH_RUNNING; /* the next callback is the first real one */
+            /* Overflows while the warm-up threw input away lost nothing: count only later ones
+               (paInputOverflow makes Audacity label a dropout) */
+            st->lastXrunIn = AAudioStream_getXRunCount(st->in);
+            st->lastXrunOut = AAudioStream_getXRunCount(st->out);
+        }
         break;
     default:
         return 0;
@@ -1138,7 +1277,10 @@ static aaudio_data_callback_result_t InputCallback(AAudioStream *as, void *userD
         }
     }
     gain = atomic_load(&g_inputGain);
-    inBase = AAudioStream_getFramesRead(st->in); /* index of audioData[0] in timestamp units */
+    /* index of audioData[0] in timestamp units: AAudio counts the buffer as read BEFORE the
+       data callback (AOSP AudioStreamLegacy::callDataCallbackFrames "Increment before because
+       we already got the data from the device"; MMAP callbackLoop read()s, then calls back) */
+    inBase = AAudioStream_getFramesRead(st->in) - numFrames;
     while (done < numFrames) {
         const int32_t seg = numFrames - done < st->segFrames ? numFrames - done : st->segFrames;
         const void *src = in + (size_t)done * (size_t)st->inFrameBytes;
@@ -1491,39 +1633,62 @@ static aaudio_result_t OpenOne(PaAAudioStream *st, aaudio_direction_t dir, const
 {
     AAudioStreamBuilder *b = NULL;
     aaudio_result_t r = AAudio_createStreamBuilder(&b);
+    aaudio_performance_mode_t perf =
+        dir == AAUDIO_DIRECTION_OUTPUT ? st->opts.outputPerformanceMode : st->opts.inputPerformanceMode;
+    int restorePolicy = 0, mmapDisabled = 0;
+    int32_t oldPolicy = 0;
     *result = NULL;
     if (r != AAUDIO_OK)
         return r;
+    /* Devices on which MMAP records silence/corrupt audio (Oboe's isMMapSafe): open this
+       stream with the MMAP policy NEVER (legacy path, still FAST), or without LOW_LATENCY
+       (which is what selects MMAP) if libaaudio does not export the policy functions */
+    if (perf == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY && MMapUnsafe(st->mmapQuirks, dir, preset)) {
+        mmapDisabled = 1;
+        if (g_setMMapPolicy && g_getMMapPolicy) {
+            oldPolicy = g_getMMapPolicy();
+            restorePolicy = g_setMMapPolicy(MMAP_POLICY_NEVER) == AAUDIO_OK;
+        }
+        if (!restorePolicy)
+            perf = AAUDIO_PERFORMANCE_MODE_NONE;
+    }
     AAudioStreamBuilder_setDirection(b, dir);
     AAudioStreamBuilder_setDeviceId(b, d->aaudioDeviceId);
     AAudioStreamBuilder_setSampleRate(b, (int32_t)lrint(st->rate));
     AAudioStreamBuilder_setChannelCount(b, channels);
     AAudioStreamBuilder_setFormat(b, format);
     AAudioStreamBuilder_setSharingMode(b, st->opts.sharingMode);
+    AAudioStreamBuilder_setPerformanceMode(b, perf);
     if (dir == AAUDIO_DIRECTION_OUTPUT) {
-        AAudioStreamBuilder_setPerformanceMode(b, st->opts.outputPerformanceMode);
         AAudioStreamBuilder_setUsage(b, st->opts.usage);
         AAudioStreamBuilder_setContentType(b, st->opts.contentType);
         AAudioStreamBuilder_setDataCallback(b, OutputCallback, st);
     } else {
-        AAudioStreamBuilder_setPerformanceMode(b, withCallback ? st->opts.inputPerformanceMode
-                                                               : AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
         AAudioStreamBuilder_setInputPreset(b, preset);
         if (withCallback) {
             AAudioStreamBuilder_setDataCallback(b, InputCallback, st);
+        } else if (perf == AAUDIO_PERFORMANCE_MODE_LOW_LATENCY) {
+            /* read-mode FIFO polled from the output callback; more would cost FAST capture */
+            AAudioStreamBuilder_setBufferCapacityInFrames(b, DUPLEX_INPUT_CAPACITY);
         } else {
-            /* read-mode FIFO polled from the output callback: room for jitter */
+            /* normal capture path anyway (large chunks): room for jitter */
             const int32_t cap = (int32_t)(0.2 * st->rate);
-            AAudioStreamBuilder_setBufferCapacityInFrames(b, cap > 4096 ? cap : 4096);
+            AAudioStreamBuilder_setBufferCapacityInFrames(b, cap > DUPLEX_INPUT_CAPACITY ? cap : DUPLEX_INPUT_CAPACITY);
         }
     }
     AAudioStreamBuilder_setErrorCallback(b, ErrorCallback, st);
     r = AAudioStreamBuilder_openStream(b, result);
     AAudioStreamBuilder_delete(b);
+    if (restorePolicy && g_setMMapPolicy(oldPolicy) != AAUDIO_OK)
+        g_setMMapPolicy(MMAP_POLICY_AUTO);
     if (r != AAUDIO_OK) {
         *result = NULL;
         return r;
     }
+    if (dir == AAUDIO_DIRECTION_OUTPUT)
+        st->outMMapDisabled = mmapDisabled;
+    else
+        st->inMMapDisabled = mmapDisabled;
     if (AAudioStream_getSampleRate(*result) != (int32_t)lrint(st->rate))
         r = AAUDIO_ERROR_INVALID_RATE;
     else if (AAudioStream_getFormat(*result) != format)
@@ -1549,7 +1714,10 @@ static aaudio_result_t OpenDirection(PaAAudioStream *st, aaudio_direction_t dir,
     int channelChoices[2];
     int nPresets = 1, nChannels = 1, p, c, f;
     aaudio_result_t first = AAUDIO_OK;
-    presets[0] = st->opts.inputPreset;
+    /* a stereo request may use another preset (CAMCORDER: the stereo microphone pair) */
+    presets[0] = dir == AAUDIO_DIRECTION_INPUT && channels >= 2 && st->opts.stereoInputPreset > 0
+                     ? st->opts.stereoInputPreset
+                     : st->opts.inputPreset;
     channelChoices[0] = channels;
     if (dir == AAUDIO_DIRECTION_INPUT) {
         if (presets[0] != AAUDIO_INPUT_PRESET_VOICE_RECOGNITION)
@@ -1617,6 +1785,7 @@ static PaError OpenStream(PaUtilHostApiRepresentation *hostApi, PaStream **s, co
     pthread_mutex_lock(&g_lock);
     EnsureOptionsLocked();
     st->opts = g_opts;
+    st->mmapQuirks = g_opts.ignoreMMapQuirks ? 0 : g_mmapQuirks;
     pthread_mutex_unlock(&g_lock);
     atomic_store(&st->isStopped, 1);
     atomic_store(&st->isActive, 0);
@@ -1709,8 +1878,13 @@ static PaError OpenStream(PaUtilHostApiRepresentation *hostApi, PaStream **s, co
         st->cushionCallbacks = st->opts.duplexCushionBursts > 0 ? st->opts.duplexCushionBursts : 1;
         st->discardCallbacks = st->opts.duplexDiscardCallbacks > 0 ? st->opts.duplexDiscardCallbacks
                                                                     : ClampInt((int)ceil(0.120 / perCallback), 3, 60);
-        st->excessThreshold = 3 * (int64_t)(st->inBurst > st->outBurst ? st->inBurst : st->outBurst)
-                              + (int64_t)(0.010 * sampleRate);
+        const int64_t maxBurst = st->inBurst > st->outBurst ? st->inBurst : st->outBurst;
+        /* input left after a callback before excess input is dropped; it must trigger before
+           the (small, DUPLEX_INPUT_CAPACITY) AAudio FIFO overflows */
+        const int64_t room = (int64_t)st->inCapacity - st->outBurst - 2 * (int64_t)st->inBurst;
+        st->excessThreshold = 3 * maxBurst + (int64_t)(0.010 * sampleRate);
+        if (st->excessThreshold > room)
+            st->excessThreshold = room > maxBurst ? room : maxBurst;
     }
 
     st->streamRepresentation.streamInfo.structVersion = 1;
@@ -1812,6 +1986,15 @@ PaError PaAAudio_Initialize(PaUtilHostApiRepresentation **hostApi, PaHostApiInde
     }
     if (defBurst <= 0)
         defBurst = (int)lrint(defRate * 0.004); /* ~4 ms */
+    {
+        const int quirks = DetectMMapQuirks();
+        pthread_mutex_lock(&g_lock);
+        g_mmapQuirks = quirks;
+        LoadMMapPolicyFunctionsLocked();
+        pthread_mutex_unlock(&g_lock);
+        if (quirks)
+            LOGI("device quirks 0x%x: MMAP is disabled for the affected streams", quirks);
+    }
 
     h = (PaAAudioHostApi *)PaUtil_AllocateZeroInitializedMemory((long)sizeof *h);
     if (!h)
@@ -1870,8 +2053,12 @@ PaError PaAAudio_Initialize(PaUtilHostApiRepresentation **hostApi, PaHostApiInde
         di->structVersion = 2;
         di->name = d->name;
         di->hostApi = hostApiIndex;
-        di->maxInputChannels = d->maxInputChannels;
-        di->maxOutputChannels = d->maxOutputChannels;
+        /* AudioDeviceInfo may report [1] (mono USB mic or speaker), but AAudio converts the
+           channel count in SHARED mode and input maps user channel c to device channel
+           c % n: offer stereo (Audacity always plays 2 channels and records the
+           /AudioIO/RecordChannels preference, which is not limited per device) */
+        di->maxInputChannels = d->maxInputChannels > 0 ? (d->maxInputChannels < 2 ? 2 : d->maxInputChannels) : 0;
+        di->maxOutputChannels = d->maxOutputChannels > 0 ? (d->maxOutputChannels < 2 ? 2 : d->maxOutputChannels) : 0;
         di->defaultLowInputLatency = 2.0 * burst / rate;
         di->defaultLowOutputLatency = 2.0 * burst / rate;
         di->defaultHighInputLatency = 0.04;
