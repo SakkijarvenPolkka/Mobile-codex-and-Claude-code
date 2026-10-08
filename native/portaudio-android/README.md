@@ -45,9 +45,9 @@ defined, so PortAudio's `PaUtil_GetTime` (CPU load) uses `CLOCK_MONOTONIC` and `
 |---|---|---|
 | `PaAAudio_SetDeviceList(devs, n)` (alias `PaAAudio_SetDevices`) | any | Copies Java's `AudioDeviceInfo` list; skips empty names, zero-channel entries, duplicates and the two default names. Takes effect at the next `Pa_Initialize`. |
 | `PaAAudio_SetDefaults(rate, burst)` | any | Native rate/burst of the default route (`AudioManager.getProperty`). Without it `Pa_Initialize` probes by opening (never starting) an output stream. `rate <= 0` re-enables probing. **Call it before `AudioIO::Init()`** – the probe costs an AAudio open. |
-| `PaAAudio_GetDefaultOptions` / `PaAAudio_SetOptions(opts or NULL)` | any | Sharing/performance modes, input preset, usage/content type, `acceptAnyRate`, duplex warm-up lengths, warm-up timeout, max frames per PortAudio callback, auto-grow of the output buffer. Applies to streams opened later. |
+| `PaAAudio_GetDefaultOptions` / `PaAAudio_GetOptions` / `PaAAudio_SetOptions(opts or NULL)` | any | Sharing/performance modes (the input mode applies to duplex input too), input preset and a separate `stereoInputPreset` for ≥ 2-channel input (the bridge uses CAMCORDER: the stereo microphone pair), usage/content type, `acceptAnyRate`, duplex warm-up lengths, warm-up timeout, max frames per PortAudio callback, auto-grow of the output buffer, `ignoreMMapQuirks`. Applies to streams opened later. |
 | `PaAAudio_SetInputGain(linear)` | any | Software input gain in [0, 16] applied in the callback (3.7.9 has no record gain without PortMixer). |
-| `PaAAudio_GetActiveStreamStats(&s)` | any, never blocks on audio threads | Snapshot of the most recently started stream, kept after stop/close: running/active/disconnected/lastAAudioError/warmupTimedOut, rate, device ids, bursts, buffer size/capacity, granted performance & sharing modes, formats, input channels opened, measured output/input latency, **duplex offset** (median DAC−ADC of paired frames = round-trip correction), xruns, padded/dropped input frames, callback/frame counts, CPU load. |
+| `PaAAudio_GetActiveStreamStats(&s)` | any, never blocks on audio threads | Snapshot of the most recently started stream, kept after stop/close: running/active/disconnected/lastAAudioError/warmupTimedOut, rate, device ids, bursts, buffer size/capacity, granted performance & sharing modes, formats, input channels opened, input preset, MMAP disabled by a device quirk, measured output/input latency, **duplex offset** (median DAC−ADC of paired frames = round-trip correction), xruns, padded/dropped input frames, callback/frame counts, CPU load. |
 | `PaAAudio_GetLastErrorText()` / `PaAAudio_ClearLastError()` | any | `"AAUDIO_ERROR_X: <operation>"`; `AudioIO::LastPaErrorString()` shows only `Pa_GetErrorText`, append this. Thread-local copy. |
 
 ## Device model
@@ -129,9 +129,12 @@ or from Stop/Abort), never after close. A restart after Stop works (counters and
 
 ## Full duplex (output-driven)
 
-The output stream has the data callback; the input stream is opened in read mode (capacity hint
-≥ 0.2 s) with `LOW_LATENCY` and read non-blocking from the output callback. Start order: input,
-then output. Warm-up (output silent, Audacity time does not move): **drain** (≈ 80 ms of callbacks
+The output stream has the data callback; the input stream is opened in read mode with
+`inputPerformanceMode` (`LOW_LATENCY` by default) and read non-blocking from the output callback.
+Its capacity hint is 4096 frames: AAudio's legacy path passes it to `AudioRecord` as `frameCount`,
+and AudioFlinger grants FAST (and RAW) capture only up to its 4096-frame pipe (Oboe clamps input
+capacity the same way, b/80308183); with `NONE` it is max(0.2 s, 4096). The excess threshold below
+is capped to fit that FIFO. Start order: input, then output. Warm-up (output silent, Audacity time does not move): **drain** (≈ 80 ms of callbacks
 that got input data; discard it all), **cushion** (1 callback), **discard** (≈ 120 ms; read one
 buffer when available). Steady state reads exactly `n` frames per `n` output frames:
 
@@ -141,16 +144,23 @@ buffer when available). Steady state reads exactly `n` frames per `n` output fra
 * no debt and `avail > n + 3·max(bursts) + 10 ms` (input clock faster) → surplus discarded
   (`paInputOverflow`), so latency stays bounded;
 * AAudio input xrun → `paInputOverflow` (Audacity records a dropout only for real data loss);
+  xruns during the warm-up (whose input is discarded anyway) are not reported;
 * read error / `DISCONNECTED` → Finished; no input data at all for `warmupTimeoutMs` (1.5 s) during
   warm-up → Finished with `warmupTimedOut` and `AAUDIO_ERROR_TIMEOUT`.
 
 Mono microphones: if AAudio opens fewer (or more) input channels than requested, user channel `c`
-reads device channel `c % inCh` through the buffer processor's channel descriptors.
+reads device channel `c % inCh` through the buffer processor's channel descriptors. Devices whose
+`AudioDeviceInfo` reports only one channel (mono USB microphone or speaker) are offered with 2
+channels: AAudio converts in SHARED mode, and Audacity always opens 2 playback channels and the
+`/AudioIO/RecordChannels` preference for recording.
 
 ## Timestamps and latency
 
-* Frame indices come from AAudio (`getFramesWritten(out)`/`getFramesRead(in)` at callback entry –
-  the documented timestamp units, including frames lost in overruns).
+* Frame indices come from AAudio (`getFramesWritten(out)` at output-callback entry, and in the
+  input-only callback `getFramesRead(in) − numFrames`: AOSP counts an input buffer as read before
+  calling back – legacy `callDataCallbackFrames`, MMAP `callbackLoop`; read-mode input:
+  `getFramesRead` before `AAudioStream_read`) – the documented timestamp units, including frames
+  lost in overruns.
 * `outputBufferDacTime = tsTime + (outIndex − tsPos)/rate`, `inputBufferAdcTime` likewise;
   estimates (`now + bufferSize/rate`, `now − (n+burst)/rate`) until the first timestamp; never
   decreasing; `currentTime` and `Pa_GetStreamTime` = `CLOCK_MONOTONIC` seconds.
@@ -160,12 +170,25 @@ reads device channel `c % inCh` through the buffer processor's channel descripto
 * Stats: `outputLatencySec = (framesWritten − tsPos)/rate − (now − tsTime)`,
   `inputLatencySec = (now − tsTime) − (framesRead − tsPos)/rate`, `duplexOffsetSec` = median of the
   last 32 steady-state `outputBufferDacTime − inputBufferAdcTime` values; the bridge writes
-  `/AudioIO/LatencyCorrection = −duplexOffsetSec·1000` (+ user trim) before an overdub.
+  `/AudioIO/LatencyCorrection = −duplexOffsetSec·1000` (+ user trim) of the route before an
+  overdub, and re-aligns the take to its own measurement when it is committed.
+
+## Device quirks (MMAP)
+
+`Pa_Initialize` reads the system properties Oboe's `QuirksManager::isMMapSafe` uses
+(`ro.product.manufacturer`, `ro.arch`, `ro.hardware.chipname`, `ro.build.changelist`,
+`ro.soc.model`, `ro.build.version.sdk`). On Samsung Exynos 990 builds < 19350896 (corrupt
+low-latency recording, b/159066712) and Exynos 9810 builds ≤ 18847185 (silence unless
+VOICE_COMMUNICATION, oboe#1110) the input, and on SM8150 with Android ≤ 9 every stream, is opened
+with `AAudio_setMMapPolicy(NEVER)` (dlsym'ed from libaaudio like Oboe's `AAudioExtensions`;
+restored right after the open), or without `LOW_LATENCY` if libaaudio does not export it.
+`stats.inputMMapDisabled/outputMMapDisabled` report it; `ignoreMMapQuirks` turns it off.
 
 ## Errors and disconnects
 
 Open falls back float → int16, the other input channel count (1↔2) and input preset →
-`VOICE_RECOGNITION`, except after `DISCONNECTED`, `NO_SERVICE`, `INVALID_RATE`. AAudio results map
+`VOICE_RECOGNITION` (the default; the bridge chooses UNPROCESSED where supported, else
+CAMCORDER for stereo), except after `DISCONNECTED`, `NO_SERVICE`, `INVALID_RATE`. AAudio results map
 to `paDeviceUnavailable` (DISCONNECTED), `paInvalidSampleRate`, `paInvalidChannelCount`
 (OUT_OF_RANGE), `paSampleFormatNotSupported`, `paInsufficientMemory`, `paTimedOut`, otherwise
 `paUnanticipatedHostError` + `Pa_GetLastHostErrorInfo` (`paInDevelopment`, AAudio code, text).
@@ -201,21 +224,25 @@ RECORD_AUDIO permission.
 API. The simulator paces callback threads with absolute `CLOCK_MONOTONIC` deadlines (default
 48 kHz, 480-frame bursts, capacity 16 bursts, initial output buffer 2 bursts), measures output
 (RMS/peak per channel), generates input (440 Hz sine, amplitude 0.5, or a loopback of output
-channel 0 with a configurable delay), models timestamps/xruns/overruns consistently, and can
-simulate disconnects, xruns, stalled input, input clock drift, mono microphones and open
-failures. It counts AAudio API misuse (stop/close/wait/read from the stream's own data callback,
+channel 0 with a configurable delay), models timestamps/xruns/overruns consistently (an input
+buffer is counted as read before its callback, like AOSP), refuses FAST capture to an input asking
+for more than 4096 frames of capacity, and can simulate disconnects, xruns, stalled input, input
+clock drift, mono microphones, open failures, system properties and a device that records silence
+through MMAP (`mmapInputSilent`); `PaNull_GetLastOpen` reports what each open requested. It counts AAudio API misuse (stop/close/wait/read from the stream's own data callback,
 close while a callback runs, any call on a closed stream) instead of crashing; every test asserts
 zero misuse. See `include/pa_null.h`. For AudioIO tests on the host link `portaudio::android`
 and call `PaNull_*` before/while running AudioIO (e.g. loopback for overdub alignment).
 
 ## Verification done (host)
 
-* `ctest --test-dir native/build-host -L portaudio` – 24 tests: enumeration/re-init, rate policy,
+* `ctest --test-dir native/build-host -L portaudio` – 29 tests: enumeration/re-init, rate policy,
   device injection, output/input/int16/duplex/loopback, fixed `framesPerBuffer` (adapting buffer
   processor), paComplete drain, paAbort, idempotence of
   Stop/Abort/Close/Terminate, blocked-callback deadlock safety, disconnect (output and duplex),
   xruns + buffer growth, open errors and fallbacks, mono mic, warm-up timeout, ±5 % clock drift,
-  input gain, Terminate with a running stream, and `portaudio.audioio_monitor` (Audacity's
+  input gain, Terminate with a running stream, input-only ADC time of the first frame, mono
+  `AudioDeviceInfo` devices, duplex input capacity / FAST path / warm-up xruns, MMAP quirks,
+  input presets, and `portaudio.audioio_monitor` (Audacity's
   `AudioIO::Init`, rate probes, `GetBestRate`, 3× `StartMonitoring`/`StopStream`).
 * Loopback: the measured lag of every impulse equals `duplexOffsetSec·rate + delay` exactly.
 * ThreadSanitizer and AddressSanitizer+UBSan builds of the same tests: clean (one intentional
@@ -224,8 +251,9 @@ and call `PaNull_*` before/while running AudioIO (e.g. loopback for overdub alig
 
 ## Self-review: what can only be checked on a device
 
-* AAudio behaviour the simulator assumes: `getFramesWritten/Read` at callback entry index the
-  first frame of the buffer; `requestStop` from another thread with a running callback returns
+* AAudio behaviour the simulator assumes: `getFramesWritten(out)` at output-callback entry
+  indexes the first frame of the buffer, `getFramesRead(in)` at input-callback entry the frame
+  after its last (AOSP source); `requestStop` from another thread with a running callback returns
   (MMAP joins the callback thread – our callback returns quickly once `abortRequested` is set);
   timestamps use the same frame units as the counters; `AAudioStream_read(timeout 0)` never blocks.
 * Legacy (non-MMAP) paths deliver input in large chunks; the warm-up/cushion heuristics and the
@@ -235,7 +263,9 @@ and call `PaNull_*` before/while running AudioIO (e.g. loopback for overdub alig
 * `ProbeDefaults` opens an output stream inside `Pa_Initialize` if Java did not call
   `PaAAudio_SetDefaults` (cost ~10–100 ms).
 * An input preset of `UNPROCESSED` may be refused on some devices (falls back to
-  `VOICE_RECOGNITION`).
+  `VOICE_RECOGNITION`); CAMCORDER really being the stereo pair, and FAST capture with the
+  4096-frame duplex input, need a device (`stats.inputPerformanceMode`).
+* The MMAP quirk list is Oboe's; `AAudio_setMMapPolicy` reached through dlsym is not NDK API.
 * Not implemented: blocking streams, automatic reopen after disconnect, `AAudioStream_release`
   (API 30), MMAP detection.
 

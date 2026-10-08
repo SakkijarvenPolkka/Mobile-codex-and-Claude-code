@@ -202,6 +202,9 @@ internal class MeterHub(private val engine: AudacityEngine) {
     }
 }
 
+/** Width of the mic/speaker column (the mic is a button: a wide touch area). */
+private val ICON_SLOT = 36.dp
+
 /**
  * Recording and Playback meters stacked (MeterToolBar ×2): mic/speaker
  * button (tap = start/stop input monitoring), L/R bars with a dB scale,
@@ -233,7 +236,7 @@ fun MeterToolbar(engine: AudacityEngine, modifier: Modifier = Modifier) {
             icon = {
                 Box(
                     Modifier
-                        .size(24.dp)
+                        .size(width = ICON_SLOT, height = 24.dp)
                         .clickable(enabled = canMonitor, role = Role.Button, onClickLabel = monitorDesc) {
                             scope.engineCall { engine.monitor(!monitoring) }
                         }
@@ -245,13 +248,13 @@ fun MeterToolbar(engine: AudacityEngine, modifier: Modifier = Modifier) {
             },
         )
         Row(Modifier.fillMaxWidth().height(10.dp)) {
-            Box(Modifier.size(24.dp, 10.dp))
+            Box(Modifier.size(ICON_SLOT, 10.dp))
             Canvas(Modifier.weight(1f).fillMaxHeight()) { drawScale(measurer, scaleStyle, pal.text) }
         }
         MeterRow(
             hub, hub.playback, pal.meterOutput, playDesc, resetDesc,
             icon = {
-                Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.size(ICON_SLOT, 24.dp), contentAlignment = Alignment.Center) {
                     Icon(AudacityIcons.Speaker, null, tint = pal.glyph, modifier = Modifier.size(18.dp))
                 }
             },

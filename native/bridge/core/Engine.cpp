@@ -508,6 +508,14 @@ void Bootstrap(const std::string &configJson)
       BasicUI::Yield();
       gPrefs->Flush();
       EngineThread::Get().AddTickHandler(&EngineTick);
+      // Fast ticks while a stream is open (transport state, meters, end of
+      // playback) or a snapshot waits; otherwise the engine idles
+      EngineThread::Get().SetActivityProbe([] {
+         if (Session::Get().SnapshotPending())
+            return true;
+         auto audio = AudioIO::Get();
+         return audio && (audio->IsBusy() || audio->IsMonitoring());
+      });
       registry.RunAfterBootstrap();
 
       // 12. Recovery candidates: Kotlin decides; otherwise an empty project

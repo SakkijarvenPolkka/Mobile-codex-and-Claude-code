@@ -119,8 +119,10 @@ without it), the `TimeSignatureRestorer` undo extension, the `Clipboard`.
   `AddBeforeShutdown`.
 * Projects: `AddProjectOpened(fn(AudacityProject&))` (the session is
   current), `AddProjectClosing(fn)` (stop streams for that project here).
-* `AddTickHandler(fn)`: every ~50 ms on the outermost loop (transport polling,
-  meters, throttled snapshots).
+* `AddTickHandler(fn)`: on the outermost loop, every ~50 ms while the engine
+  is active (a task ran in the last 2 s, an audio stream is open or a
+  snapshot is pending), else every ~2 s (transport polling, meters, throttled
+  snapshots).  Work that must run promptly while idle posts a task instead.
 * `AddSnapshotContributor(fn(json&, AudacityProject&))`: runs after the spine
   filled the snapshot (incl. `flags`; you may OR bits). Set `lastEffect`,
   `lastGenerator`, `lastAnalyzer`, `lastTool` (the spine derives the

@@ -22,6 +22,11 @@ namespace {
 thread_local bool tIsEngine = false;
 constexpr size_t kStackSize = 8 * 1024 * 1024;   // like the desktop main thread
 constexpr auto kTickPeriod = std::chrono::milliseconds(50);
+//! Nothing going on (no task for kActiveWindow, the activity probe says no)
+constexpr auto kIdleTickPeriod = std::chrono::milliseconds(2000);
+//! A task keeps the fast tick this long (throttled commands, device changes,
+//! states that modules publish a few ticks later)
+constexpr auto kActiveWindow = std::chrono::milliseconds(2000);
 }
 
 EngineThread &EngineThread::Get()
@@ -47,6 +52,7 @@ bool EngineThread::Start(Task bootstrap, Task shutdown)
    mCommands.clear();
    mDisplay.clear();
    mTickHandlers.clear();
+   mActivityProbe = {};
 
    pthread_attr_t attr;
    if (pthread_attr_init(&attr) != 0)
@@ -156,6 +162,11 @@ int EngineThread::AddTickHandler(std::function<void()> handler)
    return id;
 }
 
+void EngineThread::SetActivityProbe(std::function<bool()> probe)
+{
+   mActivityProbe = std::move(probe);
+}
+
 void EngineThread::RemoveTickHandler(int id)
 {
    auto &v = mTickHandlers;
@@ -209,6 +220,7 @@ void EngineThread::Run()
    RunGuarded(mBootstrap);
 
    auto nextTick = clock::now() + kTickPeriod;
+   auto lastTask = clock::now();
    for (;;) {
       Task task;
       {
@@ -228,11 +240,27 @@ void EngineThread::Run()
             queue->pop_front();
          }
       }
-      if (task)
+      auto now = clock::now();
+      if (task) {
          RunGuarded(task);
-      if (clock::now() >= nextTick) {
+         now = lastTask = clock::now();
+         // Work arrived while idle: back to the fast tick
+         if (nextTick > now + kTickPeriod)
+            nextTick = now + kTickPeriod;
+      }
+      if (now >= nextTick) {
          Tick();
-         nextTick = clock::now() + kTickPeriod;
+         now = clock::now();
+         bool active = now - lastTask < kActiveWindow;
+         if (!active && mActivityProbe) {
+            try {
+               active = mActivityProbe();
+            }
+            catch (...) {
+               active = true;
+            }
+         }
+         nextTick = now + (active ? kTickPeriod : kIdleTickPeriod);
       }
    }
 
@@ -247,6 +275,7 @@ void EngineThread::Run()
       commands.swap(mCommands);
       display.swap(mDisplay);
       mTickHandlers.clear();
+      mActivityProbe = {};
       mBootstrap = {};
       mShutdown = {};
    }

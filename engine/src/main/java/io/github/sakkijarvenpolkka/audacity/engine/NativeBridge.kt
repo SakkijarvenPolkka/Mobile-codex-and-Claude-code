@@ -43,7 +43,10 @@ object NativeBridge {
         private set
 
     /** Loads the library once per process; false when it is missing (e.g. a
-     *  build with `-Paudacity.buildNative=false`) or failed to link. */
+     *  build with `-Paudacity.buildNative=false`) or failed to link
+     *  ([loadError] says why). The first access maps every Audacity library
+     *  and runs their static initializers: never on the main thread
+     *  ([NativeAudacityEngine.start] reads it on Dispatchers.IO). */
     val isLoaded: Boolean by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         try {
             // Loaded from this class: JNI_OnLoad finds the app classes with
@@ -110,7 +113,11 @@ object NativeBridge {
 /** Seam over [NativeBridge] so that [NativeAudacityEngine] can be tested on
  *  the JVM without the native library. */
 internal interface BridgeApi {
+    /** Loads the library on first use (dlopen of every Audacity library):
+     *  never on the main thread. */
     val isLoaded: Boolean
+    /** Why [isLoaded] is false (null when loaded or unknown). */
+    val loadError: Throwable? get() = null
     fun start(config: ByteArray, listener: EngineListener): Boolean
     fun invoke(command: ByteArray, args: ByteArray): ByteArray
     fun replyDialog(dialogId: Int, button: Int)
@@ -128,6 +135,7 @@ internal interface BridgeApi {
 /** [BridgeApi] backed by the real JNI functions. */
 internal object NativeBridgeApi : BridgeApi {
     override val isLoaded: Boolean get() = NativeBridge.isLoaded
+    override val loadError: Throwable? get() = NativeBridge.loadError
     override fun start(config: ByteArray, listener: EngineListener) = NativeBridge.start(config, listener)
     override fun invoke(command: ByteArray, args: ByteArray) = NativeBridge.invoke(command, args)
     override fun replyDialog(dialogId: Int, button: Int) = NativeBridge.replyDialog(dialogId, button)

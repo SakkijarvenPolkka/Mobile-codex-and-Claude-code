@@ -7,9 +7,11 @@
 
   Host test of the bridge spine, driven only through Bridge.h:
    * Invoke before Start -> NOT_READY; Start twice -> false
-   * crash recovery: a child process creates an unsaved project with a
-     track and dies without Stop(); the engine then reports it in
-     engine.ready ("recoverable") / project.recoverable and recovers it
+   * crash recovery: child processes die without Stop() after leaving an
+     untouched project, a saved unmodified project, a project whose track
+     was removed, and an unsaved project with a track; only the last is
+     reported in engine.ready ("recoverable") / project.recoverable (the
+     empty temporary projects are deleted) and it is recovered
    * error envelopes (UNKNOWN_COMMAND, INVALID_ARGS, NO_PROJECT, NEEDS_PATH)
    * app.info, settings round trip (incl. audacity.cfg on disk)
    * project.new, debug.makeTestTrack, snapshot before response, flags,
@@ -24,6 +26,12 @@
      (undo history, freed space, dirty flag, reopen)
    * Stop() and a restart in the same process; a restart with locale ko_KR
      and the Korean catalog: engine strings in Korean, `language` setting
+   * an idle engine thread wakes up about every 2 s, not every 50 ms
+   * optional (BRIDGE_TEST_SMALL_TMP=<dir on a file system with < 100 MB
+     free>): one Android low-storage warning per process instead of the
+     desktop's two "Directories Preferences" warnings per start; with the
+     file system full, no crash when the initial project cannot be created
+     (initialProject self-check, project.new answers FAILED)
 
   Exit code 0 on success.  BRIDGE_TEST_VERBOSE=1 prints the events.
 
@@ -31,10 +39,14 @@
 #include "BridgeTestSupport.h"
 
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <sstream>
+#include <dirent.h>
+#include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <thread>
 
@@ -136,30 +148,167 @@ std::optional<json> StartAndWait(Sink &sink, std::shared_ptr<Sink> pSink,
 }
 
 // ---------------------------------------------------------------------------
-// Crash child: create an unsaved project with a track, then die
+// Crash children: start, leave something behind, die without Stop() (the way
+// Android ends an app).  Modes:
+//  * "empty"   -- the untouched initial project
+//  * "saved"   -- the initial project saved as files/Projects/Clean.aup3
+//  * "deleted" -- a track added and removed again (autosave without tracks)
+//  * "track"   -- an unsaved project with a track (the one to recover)
+// Each child must find nothing to recover from the ones before it: empty
+// temporary projects are deleted and clean saved projects forgotten.
 // ---------------------------------------------------------------------------
-int CrashChild(const std::string &root)
+const char *const kCrashModes[] = { "empty", "saved", "deleted", "track" };
+
+int CrashChild(const std::string &root, const std::string &mode)
 {
    TempDirs dirs{ root };
    auto sink = std::make_shared<Sink>();
    auto ready = StartAndWait(*sink, sink, dirs);
    if (!ready)
       return 2;
-   if (!Ok(Call("project.info")))
+   if (ready->value("recoverable", -1) != 0) {
+      std::fprintf(stderr, "crash child %s: %s\n", mode.c_str(),
+         ready->dump().c_str());
+      return 6;
+   }
+   auto info = Call("project.info");
+   if (!Ok(info))
       return 3;
-   if (!Call("project.info")["result"].value("open", false) &&
-       !Ok(Call("project.new")))
+   // Nothing recoverable: the engine opened an empty project
+   if (!info["result"].value("open", false))
       return 4;
-   auto r = Call("debug.makeTestTrack", { { "seconds", 2.0 },
-      { "frequency", 220.0 }, { "channels", 1 } });
-   if (!Ok(r))
-      return 5;
+   if (mode == "saved") {
+      if (!MakeDirs(dirs.filesDir + "/Projects"))
+         return 7;
+      auto r = Call("project.saveAs",
+         { { "path", dirs.filesDir + "/Projects/Clean.aup3" } });
+      if (!Ok(r)) {
+         std::fprintf(stderr, "crash child saveAs: %s\n", r.dump().c_str());
+         return 7;
+      }
+   }
+   else if (mode == "deleted" || mode == "track") {
+      auto r = Call("debug.makeTestTrack", { { "seconds", 2.0 },
+         { "frequency", 220.0 }, { "channels", 1 } });
+      if (!Ok(r))
+         return 5;
+      if (mode == "deleted") {
+         r = Call("tracks.remove",
+            { { "ids", json::array({ r["result"]["id"] }) } });
+         if (!Ok(r)) {
+            std::fprintf(stderr, "crash child remove: %s\n", r.dump().c_str());
+            return 8;
+         }
+      }
+   }
    // Simulated crash: no Stop(), no destructors
    std::fflush(nullptr);
    std::_Exit(0);
 }
 
 // ---------------------------------------------------------------------------
+// Low storage (optional: BRIDGE_TEST_SMALL_TMP = a directory on a file system
+// with less than 100 MB free, e.g. a 60 MB tmpfs).  ProjectFileIO warns for
+// every project object (the bootstrap probe and the initial project): one
+// warning per process, with Android advice instead of the desktop's
+// "Directories Preferences".
+// ---------------------------------------------------------------------------
+int LowSpaceChild(const std::string &root)
+{
+   TempDirs dirs{ root };
+   auto sink = std::make_shared<Sink>();
+   auto ready = StartAndWait(*sink, sink, dirs);
+   if (!ready)
+      return 2;
+   int warnings = 0;
+   for (const auto &e : sink->Since(0)) {
+      if (e.type != "dialog")
+         continue;
+      const auto message = e.payload.value("message", "");
+      std::fprintf(stderr, "low-space child dialog: %s\n", message.c_str());
+      if (message.find("Directories Preferences") != std::string::npos)
+         return 3;
+      if (message.find("free storage space") != std::string::npos)
+         ++warnings;
+   }
+   // A second project in the same process: no second warning
+   const auto before = sink->Count();
+   auto r = Call("project.new");
+   std::fprintf(stderr, "low-space child project.new: %s\n", r.dump().c_str());
+   for (const auto &e : sink->Since(before))
+      if (e.type == "dialog" && e.payload.value("message", "").find(
+             "free storage space") != std::string::npos)
+         ++warnings;
+   aubridge::Stop();
+   return warnings == 1 ? 0 : 10 + warnings;
+}
+
+//! Storage full: the initial project cannot be created.  The engine must not
+//! crash (ProjectSession::Abandon after a failed OpenProject), report the
+//! failed initialProject self-check, and answer project.new with FAILED
+int FullDiskChild(const std::string &root)
+{
+   TempDirs dirs{ root };
+   auto sink = std::make_shared<Sink>();
+   auto ready = StartAndWait(*sink, sink, dirs);
+   if (!ready)
+      return 2;
+   bool initialFailed = false;
+   for (const auto &check : (*ready)["selfChecks"])
+      if (check.value("name", "") == "initialProject" && !check.value("ok", true))
+         initialFailed = true;
+   if (!initialFailed)
+      return 3;
+   auto info = Call("project.info");
+   if (!Ok(info) || info["result"].value("open", true))
+      return 4;
+   auto r = Call("project.new");
+   std::fprintf(stderr, "full-disk child project.new: %s\n", r.dump().c_str());
+   if (ErrorCodeOf(r) != "FAILED")
+      return 5;
+   aubridge::Stop();
+   return 0;
+}
+
+//! Fills the file system of `dir` until `leaveBytes` are free; the filler
+//! file's path, empty on failure
+std::string FillFileSystem(const std::string &dir, uint64_t leaveBytes)
+{
+   struct statvfs st {};
+   if (::statvfs(dir.c_str(), &st) != 0)
+      return {};
+   const uint64_t avail = uint64_t(st.f_bavail) * st.f_frsize;
+   if (avail <= leaveBytes)
+      return {};
+   const std::string path = dir + "/filler";
+   const int fd = ::open(path.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0600);
+   if (fd < 0)
+      return {};
+   const int rc = ::posix_fallocate(fd, 0, off_t(avail - leaveBytes));
+   ::close(fd);
+   if (rc != 0) {
+      ::unlink(path.c_str());
+      return {};
+   }
+   return path;
+}
+
+//! Names of the files in `dir` ending in `suffix`
+std::vector<std::string> FilesEndingWith(const std::string &dir,
+   const std::string &suffix)
+{
+   std::vector<std::string> names;
+   if (auto d = ::opendir(dir.c_str())) {
+      while (auto e = ::readdir(d)) {
+         const std::string name = e->d_name;
+         if (EndsWith(name, suffix))
+            names.push_back(name);
+      }
+      ::closedir(d);
+   }
+   return names;
+}
+
 void TestNoProjectErrors()
 {
    auto r = Call("no.such.command");
@@ -243,6 +392,59 @@ void TestRecovery(Sink &sink, const TempDirs &dirs)
    CHECK(!FileExists(path));
    r = Call("project.recoverable");
    CHECK(Ok(r) && r["result"]["projects"].empty());
+}
+
+//! Voluntary context switches of the engine thread so far (-1: unknown).
+//! Threads created on the engine thread inherit its name "AudacityEngine"
+//! (the audio thread, SQLite's checkpointer): the engine thread is the
+//! first of them (lowest id)
+long EngineThreadSwitches()
+{
+   long engineTid = -1;
+   if (auto d = ::opendir("/proc/self/task")) {
+      while (auto e = ::readdir(d)) {
+         const std::string tid = e->d_name;
+         if (tid.empty() || !std::isdigit(static_cast<unsigned char>(tid[0])))
+            continue;
+         if (ReadFile("/proc/self/task/" + tid + "/comm").rfind("AudacityEngine", 0) != 0)
+            continue;
+         const long id = std::stol(tid);
+         if (engineTid < 0 || id < engineTid)
+            engineTid = id;
+      }
+      ::closedir(d);
+   }
+   if (engineTid < 0)
+      return -1;
+   std::istringstream status(
+      ReadFile("/proc/self/task/" + std::to_string(engineTid) + "/status"));
+   std::string line;
+   while (std::getline(status, line))
+      if (line.rfind("voluntary_ctxt_switches:", 0) == 0)
+         return std::stol(line.substr(line.find(':') + 1));
+   return -1;
+}
+
+//! An idle engine (project open, no stream) must not tick every 50 ms
+void TestIdleWakeups()
+{
+   CHECK(Ok(Call("project.info")));
+   // A task keeps the fast tick for 2 s
+   std::this_thread::sleep_for(3s);
+   const long before = EngineThreadSwitches();
+   if (before < 0) {
+      std::fprintf(stderr, "no /proc thread statistics: idle wakeup test skipped\n");
+      return;
+   }
+   std::this_thread::sleep_for(4s);
+   const long wakeups = EngineThreadSwitches() - before;
+   std::fprintf(stderr, "engine thread wakeups in 4 s of idle: %ld\n", wakeups);
+   // A 50 ms tick gives ~80; the idle tick (2 s) about 2
+   CHECK_MSG(wakeups <= 10, std::to_string(wakeups));
+   // Commands still answer at once and bring the fast tick back
+   const auto t0 = std::chrono::steady_clock::now();
+   CHECK(Ok(Call("project.info")));
+   CHECK(std::chrono::steady_clock::now() - t0 < 1s);
 }
 
 void TestNewProject(Sink &sink)
@@ -1002,8 +1204,22 @@ void TestRealtimeEntryPoints()
 
 int main(int argc, char **argv)
 {
-   if (argc >= 3 && std::string(argv[1]) == "--crash-child")
-      return CrashChild(argv[2]);
+   if (argc >= 3 && std::string(argv[1]) == "--full-disk-child") {
+      const int rc = FullDiskChild(argv[2]);
+      std::fflush(nullptr);
+      std::_Exit(rc);
+   }
+   if (argc >= 3 && std::string(argv[1]) == "--low-space-child") {
+      const int rc = LowSpaceChild(argv[2]);
+      std::fflush(nullptr);
+      std::_Exit(rc);
+   }
+   if (argc >= 4 && std::string(argv[1]) == "--crash-child") {
+      // Also on failure: no Stop(), so no static destructors either
+      const int rc = CrashChild(argv[2], argv[3]);
+      std::fflush(nullptr);
+      std::_Exit(rc);
+   }
 
    // Before Start
    CHECK(!aubridge::IsReady());
@@ -1012,15 +1228,43 @@ int main(int argc, char **argv)
    TempDirs dirs;
    std::fprintf(stderr, "test root: %s\n", dirs.root.c_str());
 
-   // 1. Crash in a child process (leaves an unsaved project behind)
+   char exe[4096] = {};
+   const auto exeLength = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
+   const std::string self =
+      exeLength > 0 ? std::string(exe, size_t(exeLength)) : argv[0];
+
+   // 0. Optional: low storage (see LowSpaceChild)
+   if (const char *small = std::getenv("BRIDGE_TEST_SMALL_TMP")) {
+      TempDirs smallDirs{ std::string(small) + "/aubridge-low-space" };
+      smallDirs.keep = false;
+      MakeDirs(smallDirs.root);
+      const std::string cmd = "'" + self + "' --low-space-child '" +
+         smallDirs.root + "'";
+      int rc = std::system(cmd.c_str());
+      CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0, "low-space child failed: " +
+         std::to_string(WIFEXITED(rc) ? WEXITSTATUS(rc) : rc));
+      const auto filler = FillFileSystem(small, 300 * 1024);
+      CHECK_MSG(!filler.empty(), "cannot fill " + std::string(small));
+      if (!filler.empty()) {
+         rc = std::system(("'" + self + "' --full-disk-child '" +
+            smallDirs.root + "'").c_str());
+         ::unlink(filler.c_str());
+         CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0, "full-disk child failed: " +
+            std::to_string(WIFEXITED(rc) ? WEXITSTATUS(rc) : rc));
+      }
+   }
+
+   // 1. Crashes in child processes; only the last leaves something to
+   // recover (an unsaved project with a track)
    {
-      char exe[4096] = {};
-      const auto n = ::readlink("/proc/self/exe", exe, sizeof exe - 1);
-      const std::string self = n > 0 ? std::string(exe, size_t(n)) : argv[0];
-      const std::string cmd = "'" + self + "' --crash-child '" + dirs.root + "'";
-      const int rc = std::system(cmd.c_str());
-      CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
-         "crash child failed: " + std::to_string(rc));
+      for (const char *mode : kCrashModes) {
+         const std::string cmd = "'" + self + "' --crash-child '" + dirs.root +
+            "' " + mode;
+         const int rc = std::system(cmd.c_str());
+         CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
+            std::string("crash child ") + mode + " failed: " +
+               std::to_string(WIFEXITED(rc) ? WEXITSTATUS(rc) : rc));
+      }
    }
 
    auto sink = std::make_shared<Sink>();
@@ -1045,6 +1289,21 @@ int main(int argc, char **argv)
    }
    CHECK_MSG(ready->value("recoverable", 0) == 1, ready->dump());
    CHECK(FileExists(dirs.filesDir + "/audacity/audacity.cfg"));
+   {
+      // Only the project with a track is left in SessionData (the empty
+      // ones were deleted with their -wal/-shm files); the clean saved
+      // project still exists but is not offered (TestRecovery)
+      const auto sessionDir = dirs.noBackupDir + "/SessionData";
+      const auto unsaved = FilesEndingWith(sessionDir, ".aup3unsaved");
+      CHECK_MSG(unsaved.size() == 1, std::to_string(unsaved.size()));
+      const auto wal = FilesEndingWith(sessionDir, ".aup3unsaved-wal");
+      CHECK_MSG(wal.size() <= 1, std::to_string(wal.size()));
+      const auto clean = dirs.filesDir + "/Projects/Clean.aup3";
+      CHECK(FileExists(clean));
+      // The later tests expect one project in files/Projects
+      for (const char *suffix : { "", "-wal", "-shm" })
+         ::unlink((clean + suffix).c_str());
+   }
 
    TestNoProjectErrors();
    TestAppInfo();
@@ -1065,6 +1324,7 @@ int main(int argc, char **argv)
    TestDialogs(*sink);
    TestMultiChoice(*sink);
    TestProgress(*sink);
+   TestIdleWakeups();
 
    // Stop while the engine thread waits for an unanswered question: Stop()
    // answers it (-1) and the pending Invoke returns

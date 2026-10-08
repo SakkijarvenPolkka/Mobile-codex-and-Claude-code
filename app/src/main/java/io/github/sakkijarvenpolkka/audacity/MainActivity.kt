@@ -70,21 +70,24 @@ class MainActivity : ComponentActivity() {
             if (resultCode == RESULT_OK) intent?.data else null
     }
 
+    /**
+     * The purpose of each launch is handed to the view model first (it keeps
+     * it in its SavedStateHandle): a result can be delivered to a new process
+     * when this one was killed while the picker was on top.
+     */
     @Composable
     private fun HostRequests(vm: AppViewModel) {
         val openMany = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-            vm.onDocumentsPicked(vm.pendingOpenPurpose, uris)
+            vm.onDocumentsPicked(uris)
         }
         val openOne = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            vm.onDocumentsPicked(vm.pendingOpenPurpose, listOfNotNull(uri))
+            vm.onDocumentsPicked(listOfNotNull(uri))
         }
         val create = rememberLauncherForActivityResult(CreateDocumentContract()) { uri ->
-            val purpose = vm.pendingCreatePurpose
-            vm.pendingCreatePurpose = null
-            if (purpose != null) vm.onDocumentCreated(purpose, uri)
+            vm.onDocumentCreated(uri)
         }
         val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            vm.onRecordPermissionResult(granted, vm.pendingRecordNewTrack)
+            vm.onRecordPermissionResult(granted)
         }
         // Optional: without it the service still runs, its notification is just not shown
         val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -93,15 +96,15 @@ class MainActivity : ComponentActivity() {
                 try {
                     when (r) {
                         is HostRequest.OpenDocuments -> {
-                            vm.pendingOpenPurpose = r.purpose
+                            vm.beginOpenDocuments(r.purpose)
                             if (r.multiple) openMany.launch(r.mimeTypes.toTypedArray()) else openOne.launch(r.mimeTypes.toTypedArray())
                         }
                         is HostRequest.CreateDocument -> {
-                            vm.pendingCreatePurpose = r.purpose
+                            vm.beginCreateDocument(r.purpose)
                             create.launch(r.suggestedName to r.mimeType)
                         }
                         is HostRequest.RecordPermission -> {
-                            vm.pendingRecordNewTrack = r.newTrack
+                            vm.beginRecordPermission(r.newTrack)
                             permission.launch(Manifest.permission.RECORD_AUDIO)
                         }
                         HostRequest.NotificationPermission -> if (Build.VERSION.SDK_INT >= 33) {

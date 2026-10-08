@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.audacity
 
+import android.os.Bundle
 import io.github.sakkijarvenpolkka.audacity.editor.ContextTarget
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
 import io.github.sakkijarvenpolkka.audacity.util.UiText
@@ -57,8 +58,9 @@ sealed interface AppDialog {
     /** "Save changes to %s?" — Yes / No / Cancel. */
     class SaveChanges(val projectName: String, val result: CompletableDeferred<SaveChoice> = CompletableDeferred()) : AppDialog
 
-    /** Automatic crash recovery (AutoRecoveryDialog). */
-    data class Recovery(val projects: List<ProjectFileEntry>) : AppDialog
+    /** Automatic crash recovery (AutoRecoveryDialog). [startup]: offered when
+     *  the engine started; file flows wait until it is answered. */
+    data class Recovery(val projects: List<ProjectFileEntry>, val startup: Boolean = false) : AppDialog
 
     data class Effect(val effectId: String) : AppDialog
     data object PlotSpectrum : AppDialog
@@ -96,6 +98,52 @@ sealed interface CreatePurpose {
     data object BackupProject : CreatePurpose
     /** Export Labels: `labels.export` writes [format] to a staging file that is copied to the document. */
     data class ExportLabels(val format: String, val fileName: String) : CreatePurpose
+}
+
+/**
+ * [CreatePurpose] in a Bundle, so that a CREATE_DOCUMENT result delivered
+ * after the process was killed (the picker was on top) still says what the
+ * document was for (SavedStateHandle).
+ */
+internal object PurposeCodec {
+    fun encode(p: CreatePurpose): Bundle = Bundle().apply {
+        when (p) {
+            is CreatePurpose.ExportAudio -> {
+                putString("kind", "audio")
+                putString("format", p.job.formatKey)
+                putString("fileName", p.job.fileName)
+                putString("range", p.job.range)
+                putInt("channels", p.job.channels)
+                putInt("rate", p.job.rate)
+                putBoolean("skipSilence", p.job.skipSilenceAtStart)
+            }
+            CreatePurpose.BackupProject -> putString("kind", "backup")
+            is CreatePurpose.ExportLabels -> {
+                putString("kind", "labels")
+                putString("format", p.format)
+                putString("fileName", p.fileName)
+            }
+        }
+    }
+
+    fun decode(b: Bundle?): CreatePurpose? {
+        b ?: return null
+        return when (b.getString("kind")) {
+            "audio" -> CreatePurpose.ExportAudio(
+                ExportJob(
+                    formatKey = b.getString("format") ?: return null,
+                    fileName = b.getString("fileName") ?: return null,
+                    range = b.getString("range") ?: return null,
+                    channels = b.getInt("channels"),
+                    rate = b.getInt("rate"),
+                    skipSilenceAtStart = b.getBoolean("skipSilence"),
+                ),
+            )
+            "backup" -> CreatePurpose.BackupProject
+            "labels" -> CreatePurpose.ExportLabels(b.getString("format") ?: return null, b.getString("fileName") ?: return null)
+            else -> null
+        }
+    }
 }
 
 /** Requests the Activity fulfils with activity-result launchers / intents. */

@@ -62,7 +62,9 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.Tag
 import io.github.sakkijarvenpolkka.audacity.engine.model.TagList
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportSample
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,7 +89,10 @@ class NativeAudacityEngine internal constructor(
      *  process-wide instance (the native engine can be started only once). */
     constructor(context: Context) : this(NativeBridgeApi, contextStarter(context.applicationContext))
 
-    private val hub = EngineEventHub(if (bridge.isLoaded) EngineStatus.Starting else EngineStatus.Unavailable)
+    // Starting until start() loaded the library: constructing the engine
+    // must not load it (that maps ~75 libraries; Engines.create runs on the
+    // main thread)
+    private val hub = EngineEventHub(EngineStatus.Starting)
 
     private val invokeExecutor: ExecutorService = Executors.newSingleThreadExecutor(daemon("audacity-invoke"))
     private val invokeDispatcher = invokeExecutor.asCoroutineDispatcher()
@@ -102,6 +107,9 @@ class NativeAudacityEngine internal constructor(
 
     private val startMutex = Mutex()
     @Volatile private var started = false
+    /** The library is loaded (set by [start], off the main thread); until
+     *  then nothing touches [BridgeApi.isLoaded] or a JNI function. */
+    @Volatile private var loaded = false
 
     private val transportBuffer = ThreadLocal.withInitial { DoubleArray(TransportSample.SIZE) }
     private val meterBuffer = ThreadLocal.withInitial { FloatArray(MeterSample.SIZE) }
@@ -120,42 +128,70 @@ class NativeAudacityEngine internal constructor(
     val readyInfo: StateFlow<EngineReady?> get() = hub.readyInfo
 
     // ----- lifecycle -----------------------------------------------------
-    override suspend fun start() {
-        startMutex.withLock {
-            if (started) return
-            if (!bridge.isLoaded) {
-                hub.setStatus(EngineStatus.Unavailable)
-                return
+    /**
+     * Loads the library (on [Dispatchers.IO]), extracts the assets and starts
+     * the engine thread; the outcome is [status]. Not cancellable once begun
+     * (the caller's scope, e.g. a view model closed during the first-run
+     * extraction, must not leave a started engine marked as not started).
+     */
+    override suspend fun start() = withContext(NonCancellable) {
+        startMutex.withLock { startLocked() }
+    }
+
+    private suspend fun startLocked() {
+        if (started) return
+        hub.setStatus(EngineStatus.Starting)
+        if (!withContext(Dispatchers.IO) { bridge.isLoaded }) {
+            // BuildConfig.NATIVE_ENGINE builds never fall back to the fake
+            // engine (it would only simulate audio and keep saves in memory)
+            val error = bridge.loadError
+            fail("the native engine library could not be loaded: ${error ?: "unknown error"}", error)
+            return
+        }
+        loaded = true
+        val config = try {
+            withContext(Dispatchers.IO) { prepareStart { hub.log(LogEvent("warning", it)) } }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            fail("cannot prepare the engine start: ${e.message}", e)
+            return
+        }
+        val json = EngineJson.json.encodeToString(StartConfig.serializer(), config).encodeToByteArray()
+        val ok = try {
+            withContext(invokeDispatcher) {
+                // Marked at once: the engine thread runs from here on
+                bridge.start(json, listener).also { if (it) started = true }
             }
-            hub.setStatus(EngineStatus.Starting)
-            val config = try {
-                withContext(Dispatchers.IO) { prepareStart { hub.log(LogEvent("warning", it)) } }
-            } catch (e: Exception) {
-                hub.setStatus(EngineStatus.Failed("cannot prepare the engine start: ${e.message}"))
-                return
-            }
-            val json = EngineJson.json.encodeToString(StartConfig.serializer(), config).encodeToByteArray()
-            val ok = try {
-                withContext(invokeDispatcher) { bridge.start(json, listener) }
-            } catch (e: LinkageError) {
-                // The library loaded but lacks the JNI entry points (API.md §2)
-                hub.setStatus(EngineStatus.Failed("JNI entry point missing: ${e.message}"))
-                return
-            }
-            started = true
-            if (!ok) hub.setStatus(EngineStatus.Failed("the engine thread could not be started (already started in this process?)"))
+        } catch (e: LinkageError) {
+            // The library loaded but lacks the JNI entry points (API.md §2)
+            fail("JNI entry point missing: ${e.message}", e)
+            return
+        }
+        started = true
+        if (!ok) fail("the engine thread could not be started (already started in this process?)", null)
+    }
+
+    /** Failed status + an error line in [logs] and in logcat (with the stack). */
+    private fun fail(message: String, cause: Throwable?) {
+        hub.setStatus(EngineStatus.Failed(message))
+        hub.log(LogEvent("error", if (cause != null) "$message\n${cause.stackTraceToString()}" else message))
+        try {
+            android.util.Log.e(TAG, message, cause)
+        } catch (_: RuntimeException) {
+            // JVM unit tests: android.jar stubs
         }
     }
 
     override fun replyDialog(dialogId: Int, button: Int) {
         val dialog = hub.resolveDialog(dialogId)
         // Unknown ids are forwarded too: the native side ignores ids it does not wait for
-        if ((dialog == null || dialog.blocking) && bridge.isLoaded) bridge.replyDialog(dialogId, button)
+        if ((dialog == null || dialog.blocking) && loaded) bridge.replyDialog(dialogId, button)
     }
 
     override fun replyDialogChoices(dialogId: Int, indices: List<Int>) {
         val dialog = hub.resolveDialog(dialogId)
-        if ((dialog == null || dialog.blocking) && bridge.isLoaded) {
+        if ((dialog == null || dialog.blocking) && loaded) {
             try {
                 bridge.replyDialogChoices(dialogId, indices.toIntArray())
             } catch (e: LinkageError) {
@@ -166,11 +202,11 @@ class NativeAudacityEngine internal constructor(
     }
 
     override fun cancelProgress(progressId: Int, stop: Boolean) {
-        if (bridge.isLoaded) bridge.cancelProgress(progressId, stop)
+        if (loaded) bridge.cancelProgress(progressId, stop)
     }
 
     override fun readTransport(): TransportSample {
-        if (!bridge.isLoaded) return TransportSample.IDLE
+        if (!loaded) return TransportSample.IDLE
         val a = transportBuffer.get()!!
         return try {
             if (bridge.readTransport(a)) TransportSample.decode(a) else TransportSample.IDLE
@@ -180,7 +216,7 @@ class NativeAudacityEngine internal constructor(
     }
 
     override fun readMeters(): MeterSample? {
-        if (!bridge.isLoaded) return null
+        if (!loaded) return null
         val a = meterBuffer.get()!!
         return try {
             if (bridge.readMeters(a)) MeterSample.decode(a) else null
@@ -191,7 +227,7 @@ class NativeAudacityEngine internal constructor(
 
     // ----- command plumbing ------------------------------------------------
     private suspend fun callJson(command: String, args: JsonObject): JsonElement {
-        if (!bridge.isLoaded) throw EngineException(ErrorCodes.NOT_READY, "the native engine is not available")
+        if (!loaded) throw EngineException(ErrorCodes.NOT_READY, "the native engine is not available")
         val commandBytes = command.encodeToByteArray()
         val argBytes = EngineProtocol.encodeArgs(args)
         val response = try {
@@ -383,7 +419,7 @@ class NativeAudacityEngine internal constructor(
     override suspend fun trimDisplayCaches(budgetBytes: Long) { call("display.trimCaches", "budgetBytes" to budgetBytes) }
 
     override suspend fun waveColumns(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int): WaveTile? {
-        if (!bridge.isLoaded || count <= 0) return null
+        if (!loaded || count <= 0) return null
         return display(null) {
             val out = FloatArray(3 * count)
             val r = bridge.waveColumns(trackId, channel, zoomLevel, firstColumn, count, out)
@@ -392,13 +428,13 @@ class NativeAudacityEngine internal constructor(
     }
 
     override suspend fun waveColumnsInto(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, out: FloatArray): Long {
-        if (!bridge.isLoaded) return DisplayStatus.NOT_READY
+        if (!loaded) return DisplayStatus.NOT_READY
         require(count >= 0 && out.size >= 3 * count) { "out must hold 3 * count floats" }
         return display(DisplayStatus.NOT_READY) { bridge.waveColumns(trackId, channel, zoomLevel, firstColumn, count, out) }
     }
 
     override suspend fun envelopeColumns(trackId: Long, zoomLevel: Int, firstColumn: Long, count: Int): FloatArray? {
-        if (!bridge.isLoaded || count <= 0) return null
+        if (!loaded || count <= 0) return null
         return display(null) {
             val out = FloatArray(count)
             if (bridge.envelopeColumns(trackId, zoomLevel, firstColumn, count, out) < 0) null else out
@@ -406,19 +442,19 @@ class NativeAudacityEngine internal constructor(
     }
 
     override suspend fun envelopeColumnsInto(trackId: Long, zoomLevel: Int, firstColumn: Long, count: Int, out: FloatArray): Long {
-        if (!bridge.isLoaded) return DisplayStatus.NOT_READY
+        if (!loaded) return DisplayStatus.NOT_READY
         require(count >= 0 && out.size >= count) { "out must hold count floats" }
         return display(DisplayStatus.NOT_READY) { bridge.envelopeColumns(trackId, zoomLevel, firstColumn, count, out) }
     }
 
     override suspend fun waveSamples(trackId: Long, channel: Int, t0: Double, t1: Double): List<SampleRun>? {
-        if (!bridge.isLoaded) return null
+        if (!loaded) return null
         val bytes = display(null) { bridge.waveSamples(trackId, channel, t0, t1) } ?: return null
         return EngineProtocol.decodeWaveSamples(bytes)
     }
 
     override suspend fun spectrogramColumns(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, rows: Int): ByteArray? {
-        if (!bridge.isLoaded || count <= 0 || rows <= 0) return null
+        if (!loaded || count <= 0 || rows <= 0) return null
         return display(null) {
             val out = ByteArray(count * rows)
             if (bridge.spectrogramColumns(trackId, channel, zoomLevel, firstColumn, count, rows, out) < 0) null else out
@@ -435,6 +471,8 @@ class NativeAudacityEngine internal constructor(
     }
 
     private companion object {
+        const val TAG = "AudacityEngine"
+
         fun daemon(name: String) = ThreadFactory { r -> Thread(r, name).apply { isDaemon = true } }
 
         fun contextStarter(context: Context): suspend ((String) -> Unit) -> StartConfig = { warn ->

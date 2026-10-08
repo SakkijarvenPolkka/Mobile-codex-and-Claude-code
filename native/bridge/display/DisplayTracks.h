@@ -49,17 +49,23 @@ struct DisplayTrack {
    //! append buffer): it may grow by Sequence::Append on the audio thread
    //! until the recording is committed
    bool recording = false;
+   //! AudioIO captures into this track right now (it is one of
+   //! AudioIO::mCaptureSequences): the AudioIO thread notifies its clips
+   //! (WaveClip::MarkChanged iterates their attachments), so nothing may be
+   //! attached to them (ClipDisplayCache::ForRequest).  Implies `recording`.
+   bool liveCapture = false;
 };
 
 //! Resolves `id` (real or synthetic); {nullptr} when there is no such wave
 //! track (also for -1 and for synthetic ids while nothing is recorded)
 DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id);
 
-//! Optional hook for the audio module: call after the pending tracks of a
-//! recording were registered and BEFORE AudioIO::StartStream.  Creates the
-//! display caches of the recording targets' clips on the engine thread so
-//! that no clip attachment is created lazily while the audio thread
-//! notifies the same clip (WaveClip::MarkChanged).
+//! Creates the display caches (clip attachments) of the recording targets'
+//! clips: the pending changed tracks and the pending new tracks.  Used by
+//! debug.recording.  Not needed for safety: while AudioIO captures, the
+//! display requests never attach anything to a capture target's clips
+//! (DisplayTrack::liveCapture), whether or not this ran before
+//! AudioIO::StartStream.
 void PrepareForRecording(AudacityProject &project);
 
 } // namespace aubridge::display

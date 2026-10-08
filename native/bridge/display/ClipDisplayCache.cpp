@@ -17,6 +17,7 @@
 #include <mutex>
 #include <utility>
 
+#include "DisplayInternal.h"   // CaptureRunning
 #include "Sequence.h"
 #include "waveform/WaveDataCache.h"
 
@@ -60,6 +61,57 @@ ClipDisplayCache &ClipDisplayCache::Get(const WaveClip &clip)
    // Display data is "mutable" state of the clip, like in 3.7.9
    return const_cast<WaveClip &>(clip)
       .Attachments::Get<ClipDisplayCache>(sKey);
+}
+
+namespace {
+//! Caches of clips of live capture targets (ForRequest).  Engine thread.
+//! Leaked on purpose, like the registry
+struct DetachedCache {
+   std::weak_ptr<const WaveClip> clip;
+   std::unique_ptr<ClipDisplayCache> cache;
+};
+std::vector<DetachedCache> &Detached()
+{
+   static auto *detached = new std::vector<DetachedCache>;
+   return *detached;
+}
+}
+
+ClipDisplayCache &ClipDisplayCache::ForRequest(
+   const std::shared_ptr<const WaveClip> &clip, bool liveCapture)
+{
+   auto &detached = Detached();
+   // Forget the caches of destroyed clips
+   detached.erase(std::remove_if(detached.begin(), detached.end(),
+      [](const DetachedCache &d) { return d.clip.expired(); }),
+      detached.end());
+   const auto same = [&clip](const DetachedCache &d) {
+      return d.clip.lock() == clip;
+   };
+   if (liveCapture) {
+      // Not ClipDisplayCache::Get, and not even Attachments::Find: both
+      // resize the attachment vector when it has no slot for sKey yet
+      const auto it = std::find_if(detached.begin(), detached.end(), same);
+      if (it != detached.end())
+         return *it->cache;
+      detached.push_back(
+         DetachedCache{ clip, std::make_unique<ClipDisplayCache>() });
+      return *detached.back().cache;
+   }
+   // The capture is over (or never concerned this clip): the clip's own
+   // attachment from now on.  Its stand-in is dropped (its data is redone
+   // once; a committed recording changes waveVersion anyway).
+   if (!CaptureRunning())
+      detached.clear();
+   else
+      detached.erase(std::remove_if(detached.begin(), detached.end(), same),
+         detached.end());
+   return Get(*clip);
+}
+
+size_t DetachedCacheCount()
+{
+   return Detached().size();
 }
 
 ClipDisplayCache::ClipDisplayCache() = default;
@@ -308,6 +360,7 @@ size_t TrimDisplayCaches(size_t budgetBytes, const ClipDisplayCache *keep)
 
 void ReleaseAllDisplayCaches()
 {
+   Detached().clear();
    TrimDisplayCaches(0, nullptr);
 }
 

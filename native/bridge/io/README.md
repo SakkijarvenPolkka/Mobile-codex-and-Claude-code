@@ -36,7 +36,16 @@ README); they register themselves and need nothing from this directory.
   undo entry restores them.
 * The first import into an empty project sets the project rate to the first
   imported track's rate (not in 3.7.9's `AddImportedTracks`; Audacity ≤ 3.3
-  did it) and names a temporary project after the file.
+  did it) and names a temporary project after the file. Only rates that
+  `project.setRate` accepts (1000 – 768000 Hz) are adopted: a header may
+  claim 1 Hz or 2 GHz; such a track keeps its rate and is resampled.
+* Channel limit: the listener refuses a file that libsndfile opens with more
+  than 64 channels (`FAILED`, "… N channels; at most 64 …") before the
+  importer runs. mod-pcm's read buffer is `maxBlockSize` frames × channels
+  and every channel gets a 1 MiB append buffer, so a 20 KB WAV declaring
+  1024 channels would touch about 1 GB. The MediaCodec importer has the
+  same limit. (A vendored cap of `ImportPCM.cpp`'s `maxBlock` in bytes
+  would shrink the per-channel cost further; not done.)
 * `newProject`: imports into a fresh `ProjectSession`, which replaces the
   current project only when something was imported.
 * lib-app-services `ProjectFileManager::SetImportHandler`: mod-aup's

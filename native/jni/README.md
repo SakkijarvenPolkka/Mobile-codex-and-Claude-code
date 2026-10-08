@@ -27,7 +27,9 @@ libaudacity-jni.so ──DT_NEEDED──► libaudacity-bridge.so ──► lib-
   `onEvent(Ljava/lang/String;[B)V` method id, and binds every external of
   `NativeBridge` with `RegisterNatives` (one by one; `stop` is optional, the
   others are required — a mismatch makes the load fail with
-  `UnsatisfiedLinkError`, and the app falls back to the fake engine).
+  `UnsatisfiedLinkError`; `NativeAudacityEngine.start()` then reports
+  `EngineStatus.Failed` with `NativeBridge.loadError` -- a native build never
+  falls back to the fake engine).
   ProGuard/R8: `engine/consumer-rules.pro` keeps `NativeBridge`,
   `EngineListener` and its implementations (names are looked up at load
   time).

@@ -38,12 +38,13 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- Open audio files ("Open" = import into a new project). -->
+            <!-- Open audio files ("Open" = import into a new project). content:// only:
+                 file:// Uris are refused (Android 7+ senders use content://; a file Uri
+                 could name a device such as /dev/zero). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:scheme="file" />
                 <data android:mimeType="audio/*" />
             </intent-filter>
 
@@ -52,7 +53,6 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" />
-                <data android:scheme="file" />
                 <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="application/x-sqlite3" />
                 <data android:mimeType="application/vnd.sqlite3" />
@@ -60,14 +60,6 @@
                 <data android:pathPattern=".*\\.aup3" />
                 <data android:pathPattern=".*\\..*\\.aup3" />
                 <data android:pathPattern=".*\\..*\\..*\\.aup3" />
-            </intent-filter>
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:scheme="file" />
-                <data android:host="*" />
-                <data android:pathPattern=".*\\.aup3" />
-                <data android:pathPattern=".*\\..*\\.aup3" />
             </intent-filter>
 
             <!-- Share audio files (or a project) to the app. -->

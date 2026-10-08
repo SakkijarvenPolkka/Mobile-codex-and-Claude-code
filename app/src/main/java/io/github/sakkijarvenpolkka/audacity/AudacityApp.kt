@@ -13,11 +13,11 @@ import io.github.sakkijarvenpolkka.audacity.audio.TransportForeground
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.EngineStatus
 import io.github.sakkijarvenpolkka.audacity.engine.Engines
-import io.github.sakkijarvenpolkka.audacity.engine.awaitStarted
 import io.github.sakkijarvenpolkka.audacity.prefs.UiPrefs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.io.File
 
@@ -49,7 +49,10 @@ class AudacityApp : Application() {
         engineServices = engine
         TransportForeground.follow(this, engine, appScope)
         appScope.launch(Dispatchers.Main) {
-            if (engine.awaitStarted() is EngineStatus.Ready) {
+            // Whenever it becomes ready (not only the first start outcome: a
+            // start interrupted by a closed activity is finished by the next one)
+            engine.status.first { it is EngineStatus.Ready }
+            if (deviceMonitor == null) {
                 deviceMonitor = AudioDeviceMonitor(this@AudacityApp, engine, appScope).also { it.start() }
             }
         }

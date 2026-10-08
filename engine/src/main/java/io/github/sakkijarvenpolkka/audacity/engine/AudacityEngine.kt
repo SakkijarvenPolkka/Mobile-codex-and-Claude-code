@@ -64,7 +64,8 @@ sealed interface EngineStatus {
     data object Starting : EngineStatus
     data class Ready(val recoverableProjects: Int) : EngineStatus
     data class Failed(val message: String) : EngineStatus
-    /** Built with -Paudacity.buildNative=false or the library failed to load. */
+    /** The native engine is not part of this build. (A native build whose
+     *  library fails to load reports [Failed] with the reason.) */
     data object Unavailable : EngineStatus
 }
 

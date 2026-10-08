@@ -228,7 +228,7 @@ snapshot (3.7.9 treats mute/solo this way).
 | `project.info` | – | `ProjectInfo` (§5.2) | I |
 | `project.snapshot` | – | `Snapshot` (§4.2) — also re-emits the `snapshot` event | I |
 | `project.setRate` | `{rate}` | `{}` | S (project rate is not an undoable state in 3.7.9; it updates the current undo state so autosave keeps it) |
-| `project.recoverable` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` | I. Autosaved projects left by a previous process. |
+| `project.recoverable` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` | I. Autosaved projects left by a previous process. Only projects with something to recover: temporary projects without autosave or whose autosave has no track are deleted silently, saved projects without autosave (unmodified) are forgotten (the file is kept). Same rule for `recoverable` in `engine.ready`. |
 | `project.recover` | `{path}` | `{}` | L Opens the recovered project (it stays temporary/dirty: `dirty` is true for a recovered unsaved project until it is saved). |
 | `project.discardRecoverable` | `{paths:[..]}` | `{}` | – |
 | `project.tags.get` | – | `{tags:[{name,value}]}` | I |
@@ -440,7 +440,11 @@ Label references with a `generation` older than the current one fail with
 
 After `engine.ready` the engine has an empty project open (or none, if Kotlin
 should first offer recovery: the ready payload has `"recoverable": n`; when
-`n > 0` no project is opened automatically). A `snapshot` event follows
+`n > 0` no project is opened automatically; or none when it could not be
+created: self-check `initialProject` failed, `project.new` reports why).
+Android ends an app by killing its process, so the previous launch's empty
+project and the projects it had open are always left behind: only those with
+something to recover count (see `project.recoverable`). A `snapshot` event follows
 `engine.ready`. `selfChecks` names: `sampleBlockFactory`, `importers`,
 `exporters`, `effects`, `nyquistRuntime`, `tempDir`, `configDir`,
 `projectAttachments` (and `initialProject` when the empty project could not be

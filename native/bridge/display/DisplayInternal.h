@@ -81,6 +81,12 @@ void ResetSpectrogram();
 //! sample counts only (the same function as the audio module's snapshot)
 int64_t DisplayWaveVersion(const WaveTrack &track);
 
+//! AudioIO is capturing: between StartStream with capture sequences and the
+//! end of StopStream, the AudioIO thread may append to the capture targets
+//! (AudioIO::mCaptureSequences, which only the engine thread changes).
+//! DisplayTracks.cpp
+bool CaptureRunning();
+
 //! debug.addEnvelopePoint, debug.stretchClip, debug.recording
 void RegisterDebugCommands(ModuleRegistry &registry);
 

@@ -228,17 +228,18 @@ fun RecoveryDialog(d: AppDialog.Recovery, vm: AppViewModel) {
                 }
             }
         },
+        // Disabled while one of them runs (it may ask "Save changes?" first)
         confirmButton = {
-            TextButton(onClick = { vm.recover(d, checked.toList()) }, enabled = checked.isNotEmpty()) {
+            TextButton(onClick = { vm.recover(d, checked.toList()) }, enabled = checked.isNotEmpty() && !vm.recoveryBusy) {
                 Text(stringResource(R.string.recovery_recover))
             }
         },
         dismissButton = {
             Row {
-                TextButton(onClick = { vm.discardRecoverable(d, checked.toList()) }, enabled = checked.isNotEmpty()) {
+                TextButton(onClick = { vm.discardRecoverable(d, checked.toList()) }, enabled = checked.isNotEmpty() && !vm.recoveryBusy) {
                     Text(stringResource(R.string.recovery_discard))
                 }
-                TextButton(onClick = { vm.skipRecovery(d) }) { Text(stringResource(R.string.recovery_skip)) }
+                TextButton(onClick = { vm.skipRecovery(d) }, enabled = !vm.recoveryBusy) { Text(stringResource(R.string.recovery_skip)) }
             }
         },
     )

@@ -267,6 +267,8 @@
     <string name="msg_mic_denied">마이크 권한이 거부되어 녹음할 수 없습니다.</string>
     <string name="msg_not_a_project">\"%1$s\"은(는) 오다시티 프로젝트(.aup3)가 아닙니다.</string>
     <string name="msg_no_space">이 파일들을 가져올 저장 공간이 부족합니다.</string>
+    <string name="msg_no_space_copy">이 파일을 오다시티로 복사할 저장 공간이 부족합니다.</string>
+    <string name="msg_save_interrupted">저장 위치를 고르는 동안 오다시티가 종료되어 아무것도 저장하지 않았습니다. 다시 시도하세요.</string>
     <string name="msg_no_labels_in_file">이 파일에서 레이블을 찾지 못했습니다.</string>
     <string name="msg_labels_imported">레이블 %1$d개를 가져왔습니다.</string>
     <string name="msg_exported">\"%1$s\"(으)로 내보냈습니다.</string>

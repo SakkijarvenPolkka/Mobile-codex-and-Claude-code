@@ -15,6 +15,7 @@
 #include "ProjectSession.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -24,6 +25,7 @@
 #include "ActiveProjects.h"
 #include "AudioIO.h"
 #include "BasicUI.h"
+#include "BufferedStreamReader.h"
 #include "Clipboard.h"
 #include "CodeConversions.h"
 #include "Edit.h"
@@ -31,6 +33,8 @@
 #include "Events.h"
 #include "FileException.h"
 #include "FileNames.h"
+#include "Json.h"
+#include "MemoryX.h"
 #include "ModuleRegistry.h"
 #include "PendingTracks.h"
 #include "Project.h"
@@ -39,6 +43,7 @@
 #include "ProjectFileIOExtension.h"
 #include "ProjectFileManager.h"   // lib-app-services: upstream FixTracks
 #include "ProjectHistory.h"
+#include "ProjectSerializer.h"
 #include "ProjectTimeSignature.h"
 #include "Session.h"
 #include "TempDirectory.h"
@@ -50,6 +55,8 @@
 #include "UndoTracks.h"
 #include "WaveTrack.h"
 #include "WaveTrackUtilities.h"
+#include "XMLTagHandler.h"
+#include "sqlite3.h"
 
 namespace aubridge {
 
@@ -114,6 +121,169 @@ bool CheckDiskSpace(const FilePath &target, const FilePath &current,
    return true;
 }
 
+// ---------------------------------------------------------------------------
+// What a previous process left in a project database.  Android ends an app by
+// killing its process, so every launch finds the temporary project of the
+// previous one and the ActiveProjects entry of every project that was open.
+// Desktop's AutoRecoveryDialog lists them all (a desktop exit closes them);
+// here only databases with something to recover are offered.  Read with plain
+// SQLite: a ProjectFileIO would adopt the file (and delete a temporary one
+// when it closes).
+// ---------------------------------------------------------------------------
+
+//! BufferedStreamReader over bytes in memory (the dict + doc blobs)
+class MemoryStreamReader final : public BufferedStreamReader {
+public:
+   explicit MemoryStreamReader(std::string data)
+      : BufferedStreamReader(32 * 1024), mData{ std::move(data) } {}
+
+protected:
+   bool HasMoreData() const override { return mOffset < mData.size(); }
+   size_t ReadData(void *buffer, size_t maxBytes) override
+   {
+      const auto n = std::min(maxBytes, mData.size() - mOffset);
+      std::memcpy(buffer, mData.data() + mOffset, n);
+      mOffset += n;
+      return n;
+   }
+
+private:
+   std::string mData;
+   size_t mOffset = 0;
+};
+
+//! Counts the tracks of a project document: the children of <project> whose
+//! tag ends in "track" (wavetrack, labeltrack, notetrack, timetrack)
+class TrackCounter final : public XMLTagHandler {
+public:
+   size_t tracks = 0;
+
+   bool HandleXMLTag(const std::string_view &, const AttributesList &) override
+   {
+      return true;
+   }
+   XMLTagHandler *HandleXMLChild(const std::string_view &tag) override
+   {
+      constexpr std::string_view suffix = "track";
+      if (tag.size() >= suffix.size() &&
+          tag.substr(tag.size() - suffix.size()) == suffix)
+         ++tracks;
+      return nullptr;   // skip the subtree
+   }
+};
+
+struct DatabaseContents {
+   bool readable = false;      //!< the queries below succeeded
+   bool hasProject = false;    //!< a saved document (a saved project)
+   bool hasAutosave = false;   //!< an autosave document (unsaved changes)
+   bool autosaveDecoded = false;
+   size_t autosaveTracks = 0;  //!< tracks in the autosave document
+};
+
+DatabaseContents InspectDatabase(const FilePath &path)
+{
+   DatabaseContents result;
+   sqlite3 *db = nullptr;
+   const auto utf8 = ToUtf8(path);
+   // Never create: a vanished file is not "empty"
+   const int rc =
+      sqlite3_open_v2(utf8.c_str(), &db, SQLITE_OPEN_READWRITE, nullptr);
+   auto cleanup = finally([&db] {
+      if (db)
+         sqlite3_close(db);
+   });
+   if (rc != SQLITE_OK || !db)
+      return result;
+#ifdef SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE
+   // Leave a -wal file as it is: only ProjectFileIO writes these databases
+   sqlite3_db_config(db, SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, 1, nullptr);
+#endif
+   sqlite3_busy_timeout(db, 1000);
+
+   sqlite3_stmt *stmt = nullptr;
+   auto finalize = finally([&stmt] {
+      if (stmt)
+         sqlite3_finalize(stmt);
+   });
+   if (sqlite3_prepare_v2(db, "SELECT COUNT(1) FROM project;", -1, &stmt,
+          nullptr) != SQLITE_OK ||
+       sqlite3_step(stmt) != SQLITE_ROW)
+      return result;
+   result.hasProject = sqlite3_column_int64(stmt, 0) > 0;
+   sqlite3_finalize(stmt);
+   stmt = nullptr;
+
+   if (sqlite3_prepare_v2(db, "SELECT dict, doc FROM autosave WHERE id = 1;",
+          -1, &stmt, nullptr) != SQLITE_OK)
+      return result;
+   const int step = sqlite3_step(stmt);
+   if (step == SQLITE_ROW) {
+      result.hasAutosave = true;
+      std::string bytes;
+      for (int column = 0; column < 2; ++column) {
+         const auto data =
+            static_cast<const char *>(sqlite3_column_blob(stmt, column));
+         const int size = sqlite3_column_bytes(stmt, column);
+         if (data && size > 0)
+            bytes.append(data, size_t(size));
+      }
+      try {
+         MemoryStreamReader reader{ std::move(bytes) };
+         TrackCounter counter;
+         result.autosaveDecoded = ProjectSerializer::Decode(reader, &counter);
+         result.autosaveTracks = counter.tracks;
+      }
+      catch (...) {
+         result.autosaveDecoded = false;
+      }
+   }
+   else if (step != SQLITE_DONE)
+      return result;
+   result.readable = true;
+   return result;
+}
+
+//! A temporary project of TempDir (not a saved file elsewhere)
+bool IsTemporaryProjectFile(const FilePath &fileName)
+{
+   wxFileName file(fileName);
+   if (!file.GetExt().IsSameAs(FileNames::UnsavedProjectExtension()))
+      return false;
+   file.SetFullName(wxT(""));
+   return file == wxFileName(TempDirectory::TempDir(), wxT(""));
+}
+
+//! false when recovering `fileName` would bring nothing back; then forgets
+//! it (and deletes it when it is a temporary project).  Unreadable files
+//! stay listed: the user decides
+bool KeepRecoverable(const FilePath &fileName)
+{
+   const auto contents = InspectDatabase(fileName);
+   if (!contents.readable)
+      return true;
+   if (IsTemporaryProjectFile(fileName)) {
+      // Nothing to recover: killed before the first autosave (a new project
+      // nobody touched), or the last autosave has no track (everything was
+      // undone or deleted).  The undo history is never recovered anyway.
+      const bool empty = !contents.hasProject &&
+         (!contents.hasAutosave ||
+          (contents.autosaveDecoded && contents.autosaveTracks == 0));
+      if (!empty)
+         return true;
+      ProjectFileIO::RemoveProject(fileName);
+      ActiveProjects::Remove(fileName);
+      wxLogMessage("Removed the empty temporary project %s", fileName);
+      return false;
+   }
+   // A saved project without autosave was not modified after its last save
+   if (contents.hasAutosave)
+      return true;
+   ActiveProjects::Remove(fileName);
+   wxLogMessage("%s has no unsaved changes: not offered for recovery",
+      fileName);
+   return false;
+}
+
 } // namespace
 
 ProjectSession::ProjectSession(std::shared_ptr<AudacityProject> project)
@@ -154,7 +324,17 @@ void ProjectSession::Abandon()
    auto &project = *mProject;
    auto &fileIO = ProjectFileIO::Get(project);
    fileIO.SetBypass();
-   UndoManager::Get(project).ClearStates();
+   // Abandon() follows a failed OpenProject() (e.g. storage full): there is
+   // no undo state yet, and UndoManager::RemoveStates would still open a
+   // TransactionScope, whose Commit() dereferences the missing connection
+   auto &undoManager = UndoManager::Get(project);
+   if (undoManager.GetNumStates() > 0 && fileIO.HasConnection()) {
+      try {
+         undoManager.ClearStates();
+      }
+      catch (...) {
+      }
+   }
    TrackList::Get(project).Clear();
    fileIO.CloseProject();
    WaveTrackFactory::Destroy(project);
@@ -739,7 +919,7 @@ void ProjectSession::DiscardAutosave(const FilePath &filename)
    // closes the temporary project properly
 }
 
-// AutoRecoveryDialog::PopulateList
+// AutoRecoveryDialog::PopulateList (+ KeepRecoverable)
 std::vector<FilePath> ProjectSession::ScanRecoverable(const FilePath &exclude)
 {
    wxString tempdir = TempDirectory::TempDir();
@@ -775,7 +955,11 @@ std::vector<FilePath> ProjectSession::ScanRecoverable(const FilePath &exclude)
    for (auto file : files)
    {
       wxFileName fn = file;
-      if (exclude.empty() || !fn.SameAs(excluded))
+      if (!exclude.empty() && fn.SameAs(excluded))
+         continue;
+      // Android: process death is the normal exit, so drop what has nothing
+      // to recover (see KeepRecoverable)
+      if (KeepRecoverable(fn.GetFullPath()))
          result.push_back(fn.GetFullPath());
    }
    return result;

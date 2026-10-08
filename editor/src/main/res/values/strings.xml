@@ -78,5 +78,9 @@
     <string name="aued_timeline">Timeline</string>
     <string name="aued_timeline_options">Timeline Options</string>
     <string name="aued_waveform_area">Track panel</string>
+    <string name="aued_a11y_select_all">Select all</string>
+    <string name="aued_a11y_prev_clip">Select previous clip</string>
+    <string name="aued_a11y_next_clip">Select next clip</string>
+    <string name="aued_a11y_clip_menu">Menu of the clip at the cursor</string>
     <string name="aued_no_tracks">No tracks. Import audio, record, or add a track to begin.</string>
 </resources>

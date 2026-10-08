@@ -92,7 +92,12 @@ public:
    static void DiscardAutosave(const FilePath &fileName);
 
    //! port of AutoRecoveryDialog::PopulateList: unsaved projects in the
-   //! temp dir + ActiveProjects entries; excludes `exclude` (the open one)
+   //! temp dir + ActiveProjects entries; excludes `exclude` (the open one).
+   //! Android: process death is the normal exit, so entries with nothing to
+   //! recover are dropped silently: temporary projects without autosave or
+   //! whose autosave has no track are deleted (with -wal/-shm), saved
+   //! projects without autosave are removed from ActiveProjects (the file
+   //! is kept).  Unreadable databases stay listed.
    static std::vector<FilePath> ScanRecoverable(const FilePath &exclude = {});
    //! port of AutoRecoveryDialog's discard: remove temporary projects,
    //! discard the autosave of saved ones; forget them in ActiveProjects

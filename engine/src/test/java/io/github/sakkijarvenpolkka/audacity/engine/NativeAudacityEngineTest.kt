@@ -8,8 +8,12 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.EngineJson
 import io.github.sakkijarvenpolkka.audacity.engine.model.ErrorCodes
 import io.github.sakkijarvenpolkka.audacity.engine.model.StartConfig
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportSample
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
@@ -20,10 +24,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.util.Collections
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 class NativeAudacityEngineTest {
 
-    private class FakeBridge(override val isLoaded: Boolean = true) : BridgeApi {
+    private class FakeBridge(private val loadable: Boolean = true) : BridgeApi {
+        var isLoadedReads = 0
+        val isLoadedThreads: MutableList<String> = Collections.synchronizedList(mutableListOf())
+        override val isLoaded: Boolean
+            get() {
+                isLoadedReads++
+                isLoadedThreads += Thread.currentThread().name
+                return loadable
+            }
+        var loadErrorValue: Throwable? = null
+        override val loadError: Throwable? get() = loadErrorValue
+        var startCalls = 0
+        /** Runs inside start() (on the invoke thread) before it returns. */
+        var onStart: () -> Unit = {}
         var config: String? = null
         var listener: EngineListener? = null
         val calls: MutableList<Triple<String, String, String>> = Collections.synchronizedList(mutableListOf())
@@ -35,8 +54,11 @@ class NativeAudacityEngineTest {
         var missingJni = false
 
         override fun start(config: ByteArray, listener: EngineListener): Boolean {
+            startCalls++
+            if (startCalls > 1) return false // the native engine starts once per process
             this.config = config.decodeToString()
             this.listener = listener
+            onStart()
             return true
         }
 
@@ -81,11 +103,20 @@ class NativeAudacityEngineTest {
     private fun engine(bridge: FakeBridge) = NativeAudacityEngine(bridge) { config }
 
     @Test
-    fun unavailableWithoutLibrary() = runBlocking {
-        val e = engine(FakeBridge(isLoaded = false))
-        assertEquals(EngineStatus.Unavailable, e.status.value)
+    fun failsWithTheLoadErrorWithoutLibrary() = runBlocking {
+        val bridge = FakeBridge(loadable = false).apply { loadErrorValue = UnsatisfiedLinkError("dlopen failed: libfoo.so") }
+        val e = engine(bridge)
+        // Constructing the engine does not load the library (Engines.create runs on the main thread)
+        assertEquals(0, bridge.isLoadedReads)
+        assertEquals(EngineStatus.Starting, e.status.value)
+        assertEquals(TransportSample.IDLE, e.readTransport())
+        assertEquals(0, bridge.isLoadedReads)
         e.start()
-        assertEquals(EngineStatus.Unavailable, e.status.value)
+        val status = e.status.value
+        assertTrue("$status", status is EngineStatus.Failed && "dlopen failed: libfoo.so" in status.message)
+        // ... and only on Dispatchers.IO
+        assertTrue("${bridge.isLoadedThreads}", bridge.isLoadedThreads.all { it.startsWith("DefaultDispatcher") })
+        assertNull(bridge.config)
         try {
             e.undo()
             fail("expected NOT_READY")
@@ -116,9 +147,69 @@ class NativeAudacityEngineTest {
     }
 
     @Test
+    fun cancellingTheCallerDuringTheAssetExtractionDoesNotFailTheStart() = runBlocking {
+        val bridge = FakeBridge()
+        val extracting = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val e = NativeAudacityEngine(bridge) {
+            extracting.complete(Unit)
+            release.await()
+            config
+        }
+        // The view model's scope is cancelled (activity closed) during the first-run extraction
+        val job = launch(Dispatchers.Default) { e.start() }
+        withTimeout(5000) { extracting.await() }
+        job.cancel()
+        release.complete(Unit)
+        withTimeout(5000) { job.join() }
+        assertEquals(1, bridge.startCalls)
+        assertEquals(EngineStatus.Starting, e.status.value)
+        // The next view model's start() is a no-op; the ready event still arrives
+        e.start()
+        assertEquals(1, bridge.startCalls)
+        bridge.listener!!.onEvent("engine.ready", """{"audacityVersion":"3.7.9","selfChecks":[],"recoverable":0}""".encodeToByteArray())
+        assertEquals(EngineStatus.Ready(0), withTimeout(5000) { e.awaitStarted() })
+    }
+
+    @Test
+    fun cancellingTheCallerDuringNativeStartKeepsTheEngineStarted() = runBlocking {
+        val bridge = FakeBridge()
+        val inStart = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        bridge.onStart = {
+            inStart.countDown()
+            release.await(5, TimeUnit.SECONDS)
+        }
+        val e = engine(bridge)
+        val job = launch(Dispatchers.Default) { e.start() }
+        assertTrue(withContext(Dispatchers.IO) { inStart.await(5, TimeUnit.SECONDS) })
+        job.cancel()
+        release.countDown()
+        withTimeout(5000) { job.join() }
+        bridge.listener!!.onEvent("engine.ready", """{"audacityVersion":"3.7.9","selfChecks":[],"recoverable":2}""".encodeToByteArray())
+        assertEquals(EngineStatus.Ready(2), withTimeout(5000) { e.awaitStarted() })
+        // A second start() must not call the native start again (it would
+        // answer false and overwrite Ready with Failed)
+        e.start()
+        assertEquals(1, bridge.startCalls)
+        assertEquals(EngineStatus.Ready(2), e.status.value)
+    }
+
+    @Test
+    fun aFailedPreparationIsReportedWithItsReason() = runBlocking {
+        val bridge = FakeBridge()
+        val e = NativeAudacityEngine(bridge) { throw java.io.IOException("disk full") }
+        e.start()
+        val status = e.status.value
+        assertTrue("$status", status is EngineStatus.Failed && "disk full" in status.message)
+        assertEquals(0, bridge.startCalls)
+    }
+
+    @Test
     fun commandsAreSerializedOnTheInvokeThreadWithExactArguments() = runBlocking {
         val bridge = FakeBridge()
         val e = engine(bridge)
+        e.start()
         e.select(1.0, 2.5)
         e.setView(hpos = 3.0)
         e.selectTracks(listOf(3L, 7L), "add")
@@ -161,6 +252,7 @@ class NativeAudacityEngineTest {
     fun errorEnvelopesAndTypedResults() = runBlocking {
         val bridge = FakeBridge()
         val e = engine(bridge)
+        e.start()
         bridge.respond = { cmd, _ ->
             when (cmd) {
                 "tracks.add" -> """{"ok":true,"result":{"id":12},"generation":2}"""
@@ -219,6 +311,7 @@ class NativeAudacityEngineTest {
     fun revisedContractCommandsSendTheirArguments() = runBlocking {
         val bridge = FakeBridge()
         val e = engine(bridge)
+        e.start()
         bridge.respond = { cmd, _ ->
             when (cmd) {
                 "project.rename" -> """{"ok":true,"result":{"path":"/files/Projects/B.aup3"},"generation":1}"""
@@ -276,6 +369,7 @@ class NativeAudacityEngineTest {
     fun realtimeAndDisplayCalls() = runBlocking {
         val bridge = FakeBridge()
         val e = engine(bridge)
+        e.start()
         assertEquals(TransportSample.IDLE, e.readTransport())
         bridge.transport = DoubleArray(16).also { it[0] = 1.0; it[2] = 4.5 }
         assertTrue(e.readTransport().isPlaying)
@@ -304,6 +398,7 @@ class NativeAudacityEngineTest {
     fun missingJniEntryPointsDoNotCrash() = runBlocking {
         val bridge = FakeBridge().apply { missingJni = true; transport = DoubleArray(16) }
         val e = engine(bridge)
+        e.start()
         try {
             e.undo()
             fail("expected INTERNAL")

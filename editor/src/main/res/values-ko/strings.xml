@@ -72,5 +72,9 @@
     <string name="aued_timeline">타임라인</string>
     <string name="aued_timeline_options">타임라인 옵션</string>
     <string name="aued_waveform_area">트랙 패널</string>
+    <string name="aued_a11y_select_all">모두 선택</string>
+    <string name="aued_a11y_prev_clip">이전 클립 선택</string>
+    <string name="aued_a11y_next_clip">다음 클립 선택</string>
+    <string name="aued_a11y_clip_menu">커서 위치 클립의 메뉴</string>
     <string name="aued_no_tracks">트랙이 없습니다. 오디오를 가져오거나 녹음하거나 트랙을 추가하세요.</string>
 </resources>

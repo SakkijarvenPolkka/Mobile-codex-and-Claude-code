@@ -49,7 +49,10 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -61,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.Zoom
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -144,9 +148,9 @@ private fun TimelineCorner(snapshot: Snapshot, callbacks: EditorCallbacks, modif
     Box(modifier.background(pal.medium), contentAlignment = Alignment.CenterEnd) {
         Box(
             Modifier
-                .padding(end = 4.dp)
-                .size(28.dp)
-                .clickable { callbacks.onContextMenu(ContextTarget.Timeline(snapshot.selection.t0)) }
+                .fillMaxHeight()
+                .width(48.dp)
+                .clickable(role = Role.Button) { callbacks.onContextMenu(ContextTarget.Timeline(snapshot.selection.t0)) }
                 .semantics { contentDescription = desc },
             contentAlignment = Alignment.Center,
         ) {
@@ -210,6 +214,13 @@ private fun TrackPanel(
     val pal = LocalAudacityColors.current
     val density = LocalDensity.current.density
     val panelDescription = stringResource(R.string.aued_waveform_area)
+    val actionLabels = PanelActionLabels(
+        selectAll = stringResource(R.string.aued_a11y_select_all),
+        prevClip = stringResource(R.string.aued_a11y_prev_clip),
+        nextClip = stringResource(R.string.aued_a11y_next_clip),
+        clipMenu = stringResource(R.string.aued_a11y_clip_menu),
+    )
+    val scope = rememberCoroutineScope()
     val currentLayout by rememberUpdatedState(layout)
     val currentSnapshot by rememberUpdatedState(snapshot)
 
@@ -265,7 +276,12 @@ private fun TrackPanel(
             .testTag(EditorTags.TRACK_PANEL)
             .clipToBounds()
             .onSizeChanged { state.viewportHeightDp = it.height / density }
-            .semantics { contentDescription = panelDescription }
+            .semantics {
+                contentDescription = panelDescription
+                // The gestures have no TalkBack equivalent: selection and the
+                // clip menu as custom actions
+                customActions = panelActions(engine, scope, callbacks, actionLabels) { currentSnapshot }
+            }
             .pointerInput(controller) { panelGestures(controller) }
             .pointerInput(controller) { panelWheel(controller) },
     ) {
@@ -489,4 +505,38 @@ internal fun prefetch(
         }
     }
     cache.trim(level)
+}
+
+private class PanelActionLabels(val selectAll: String, val prevClip: String, val nextClip: String, val clipMenu: String)
+
+/** Accessibility actions of the track panel (TalkBack: actions menu). */
+private fun panelActions(
+    engine: AudacityEngine,
+    scope: CoroutineScope,
+    callbacks: EditorCallbacks,
+    labels: PanelActionLabels,
+    snapshot: () -> Snapshot,
+): List<CustomAccessibilityAction> {
+    fun call(block: suspend () -> Unit): Boolean {
+        scope.engineCall({ e -> callbacks.onMessage(e.message ?: e.toString()) }, block)
+        return true
+    }
+    return listOf(
+        CustomAccessibilityAction(labels.selectAll) { call { engine.selectAll() } },
+        CustomAccessibilityAction(labels.prevClip) { call { engine.selectCommand("select.prevClip") } },
+        CustomAccessibilityAction(labels.nextClip) { call { engine.selectCommand("select.nextClip") } },
+        CustomAccessibilityAction(labels.clipMenu) {
+            callbacks.onContextMenu(contextTargetAtCursor(snapshot()))
+            true
+        },
+    )
+}
+
+/** The clip at the cursor in the focused (else first selected) track, else that track. */
+internal fun contextTargetAtCursor(s: Snapshot): ContextTarget {
+    val track = s.tracks.firstOrNull { it.focused } ?: s.tracks.firstOrNull { it.selected } ?: s.tracks.firstOrNull()
+        ?: return ContextTarget.Empty
+    val t = s.selection.t0
+    val clip = track.clips.firstOrNull { t >= it.start && t < it.end }
+    return if (clip != null) ContextTarget.Clip(track.id, clip.index, s.generation) else ContextTarget.Track(track.id)
 }

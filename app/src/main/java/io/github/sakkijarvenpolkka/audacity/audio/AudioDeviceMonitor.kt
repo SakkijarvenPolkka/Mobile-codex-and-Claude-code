@@ -85,7 +85,8 @@ class AudioDeviceMonitor(
         lister?.let { return it() }
         val am = audioManager ?: return null
         return try {
-            am.getDevices(AudioManager.GET_DEVICES_ALL).mapNotNull { specOf(it) }
+            // = GET_DEVICES_ALL (whose lint annotation lists only the two flags)
+            am.getDevices(AudioManager.GET_DEVICES_INPUTS or AudioManager.GET_DEVICES_OUTPUTS).mapNotNull { specOf(it) }
         } catch (e: RuntimeException) {
             Log.w(TAG, "cannot list the audio devices: $e")
             null

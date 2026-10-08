@@ -212,20 +212,27 @@ internal fun AudacitySlider(
 
 /** Mute / Solo button face (UpButtonExpand / DownButtonExpand). */
 @Composable
-internal fun ToggleFace(text: String, checked: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun ToggleFace(text: String, checked: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, face: Modifier? = null) {
     val pal = LocalAudacityColors.current
-    Box(
-        modifier
-            .background(if (checked) pal.toggleOn else pal.toggleOff, RoundedCornerShape(3.dp))
-            .border(1.dp, pal.dark, RoundedCornerShape(3.dp))
-            .clickable(role = Role.Checkbox, onClick = onClick)
-            .semantics { toggleableState = if (checked) ToggleableState.On else ToggleableState.Off },
-        contentAlignment = Alignment.Center,
-    ) {
+    val look = Modifier
+        .background(if (checked) pal.toggleOn else pal.toggleOff, RoundedCornerShape(3.dp))
+        .border(1.dp, pal.dark, RoundedCornerShape(3.dp))
+    val label: @Composable () -> Unit = {
         Text(
             text, color = if (checked) pal.toggleOnText else pal.text, fontSize = 11.sp, maxLines = 1,
             overflow = TextOverflow.Clip,
         )
+    }
+    val touch = Modifier
+        .clickable(role = Role.Checkbox, onClick = onClick)
+        .semantics { toggleableState = if (checked) ToggleableState.On else ToggleableState.Off }
+    if (face == null) {
+        Box(modifier.then(look).then(touch), contentAlignment = Alignment.Center) { label() }
+    } else {
+        // [modifier] is the touch area, larger than the drawn [face]
+        Box(modifier.then(touch), contentAlignment = Alignment.Center) {
+            Box(face.then(look), contentAlignment = Alignment.Center) { label() }
+        }
     }
 }
 
@@ -437,13 +444,15 @@ internal fun TrackHeaderRow(
             if (track.isWave) {
                 val muteLabel = stringResource(R.string.aued_mute)
                 val soloLabel = stringResource(R.string.aued_solo)
+                // Touch areas span the row height and meet (no dead gap between M and S)
                 ToggleFace(muteLabel.take(1).uppercase(), track.mute,
-                    { actions.mute(track.id, !track.mute) }, Modifier.size(width = 32.dp, height = 24.dp)
-                        .semantics { contentDescription = muteLabel })
-                Box(Modifier.width(4.dp))
+                    { actions.mute(track.id, !track.mute) }, Modifier.size(width = 40.dp, height = 32.dp)
+                        .semantics { contentDescription = muteLabel },
+                    face = Modifier.size(width = 32.dp, height = 24.dp))
                 ToggleFace(soloLabel.take(1).uppercase(), track.solo,
-                    { actions.solo(track.id, !track.solo) }, Modifier.size(width = 32.dp, height = 24.dp)
-                        .semantics { contentDescription = soloLabel })
+                    { actions.solo(track.id, !track.solo) }, Modifier.size(width = 40.dp, height = 32.dp)
+                        .semantics { contentDescription = soloLabel },
+                    face = Modifier.size(width = 32.dp, height = 24.dp))
                 TcpIconButton(AudacityIcons.Mixer, stringResource(R.string.aued_show_mixer), { state.toggleMixer(track.id) }, size = 32)
             }
             TcpIconButton(

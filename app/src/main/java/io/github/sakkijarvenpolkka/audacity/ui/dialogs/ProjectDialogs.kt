@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -61,6 +63,7 @@ import io.github.sakkijarvenpolkka.audacity.ui.AppDialogFrame
 import io.github.sakkijarvenpolkka.audacity.ui.Dropdown
 import io.github.sakkijarvenpolkka.audacity.util.TimeCodec
 import io.github.sakkijarvenpolkka.audacity.util.UiText
+import kotlinx.coroutines.CancellationException
 import kotlin.math.roundToInt
 
 /** Standard tags in TagsEditor order (lib-tags/Tags.h). */
@@ -86,6 +89,8 @@ fun TagsDialog(d: AppDialog, vm: AppViewModel) {
             STANDARD_TAGS.forEach { (k, _) -> rows += TagRow(k, tags.firstOrNull { it.name.equals(k, true) }?.value ?: "") }
             tags.filter { t -> STANDARD_TAGS.none { it.first.equals(t.name, true) } }.forEach { rows += TagRow(it.name, it.value) }
             loaded = true
+        } catch (e: CancellationException) {
+            throw e   // the composition went away: keep the dialog
         } catch (e: Exception) {
             vm.reportError(e)
             vm.dismiss(d)
@@ -140,10 +145,12 @@ fun HistoryDialog(d: AppDialog, vm: AppViewModel) {
         }
     }
     val l = list
+    // Lazy list: a long session has thousands of undo states
     AppDialogFrame(
         title = stringResource(R.string.hist_title),
         onDismiss = { vm.dismiss(d) },
         buttons = { TextButton(onClick = { vm.dismiss(d) }) { Text(stringResource(R.string.btn_close)) } },
+        scrollable = false,
     ) {
         if (l == null) return@AppDialogFrame
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
@@ -151,22 +158,24 @@ fun HistoryDialog(d: AppDialog, vm: AppViewModel) {
             Text(stringResource(R.string.hist_space), fontWeight = FontWeight.Bold)
         }
         HorizontalDivider()
-        l.states.forEach { s ->
-            val current = s.index == l.current
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 40.dp)
-                    .background(if (current) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
-                    .clickable { vm.launchAction { vm.engine.historyGoto(s.index) } }
-                    .padding(horizontal = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    s.description.ifEmpty { s.shortDescription }, Modifier.weight(1f),
-                    fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 2, overflow = TextOverflow.Ellipsis,
-                )
-                Text(TimeCodec.formatBytes(s.sizeBytes), style = MaterialTheme.typography.bodySmall)
+        LazyColumn(Modifier.weight(1f, fill = false)) {
+            items(l.states, key = { it.index }) { s ->
+                val current = s.index == l.current
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 40.dp)
+                        .background(if (current) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
+                        .clickable { vm.launchAction { vm.engine.historyGoto(s.index) } }
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        s.description.ifEmpty { s.shortDescription }, Modifier.weight(1f),
+                        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(TimeCodec.formatBytes(s.sizeBytes), style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         HorizontalDivider()
@@ -263,7 +272,9 @@ fun DeviceInfoDialog(d: AppDialog, vm: AppViewModel) {
 @Composable
 fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
     val snapshot by vm.engine.snapshot.collectAsState()
-    val labels = snapshot.tracks.filter { it.isLabel }.flatMap { t -> t.labels.map { t to it } }
+    val tracks = snapshot.tracks
+    val labels = remember(tracks) { tracks.filter { it.isLabel }.flatMap { t -> t.labels.map { t to it } } }
+    // Lazy list: Label Sounds / Silence Finder can create thousands of labels
     AppDialogFrame(
         title = stringResource(R.string.m_label_editor),
         onDismiss = { vm.dismiss(d) },
@@ -271,31 +282,34 @@ fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
             TextButton(onClick = { vm.launchAction { vm.engine.addLabel("") } }) { Text(stringResource(R.string.tags_add)) }
             TextButton(onClick = { vm.dismiss(d) }) { Text(stringResource(R.string.btn_close)) }
         },
+        scrollable = false,
     ) {
         if (labels.isEmpty()) Text(stringResource(R.string.le_empty))
-        labels.forEach { (track, l) ->
-            Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(l.title.ifEmpty { "—" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        "${track.name} · ${TimeCodec.format(l.t0)} – ${TimeCodec.format(l.t1)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.clickable {
-                            // The reference shown now (STALE when the labels change meanwhile)
-                            val gen = snapshot.generation
-                            vm.launchAction {
-                                val t0 = askTime(vm, R.string.le_start, l.t0) ?: return@launchAction
-                                val t1 = askTime(vm, R.string.le_end, maxOf(l.t1, t0)) ?: return@launchAction
-                                vm.engine.editLabel(track.id, l.index, t0 = minOf(t0, t1), t1 = maxOf(t0, t1), generation = gen)
-                            }
-                        },
-                    )
-                }
-                IconButton(onClick = { vm.launchAction { ContextMenus.editLabelText(vm, track.id, l.index) } }) {
-                    Icon(Icons.Filled.Edit, stringResource(R.string.cm_edit_label), Modifier.size(20.dp))
-                }
-                IconButton(onClick = { vm.launchAction { vm.engine.removeLabel(track.id, l.index, snapshot.generation) } }) {
-                    Icon(Icons.Filled.Delete, stringResource(R.string.cm_delete_label), Modifier.size(20.dp))
+        LazyColumn(Modifier.weight(1f, fill = false)) {
+            items(labels, key = { (track, l) -> "${track.id}:${l.index}" }) { (track, l) ->
+                Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(l.title.ifEmpty { "—" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${track.name} · ${TimeCodec.format(l.t0)} – ${TimeCodec.format(l.t1)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.clickable {
+                                // The reference shown now (STALE when the labels change meanwhile)
+                                val gen = snapshot.generation
+                                vm.launchAction {
+                                    val t0 = askTime(vm, R.string.le_start, l.t0) ?: return@launchAction
+                                    val t1 = askTime(vm, R.string.le_end, maxOf(l.t1, t0)) ?: return@launchAction
+                                    vm.engine.editLabel(track.id, l.index, t0 = minOf(t0, t1), t1 = maxOf(t0, t1), generation = gen)
+                                }
+                            },
+                        )
+                    }
+                    IconButton(onClick = { vm.launchAction { ContextMenus.editLabelText(vm, track.id, l.index) } }) {
+                        Icon(Icons.Filled.Edit, stringResource(R.string.cm_edit_label), Modifier.size(20.dp))
+                    }
+                    IconButton(onClick = { vm.launchAction { vm.engine.removeLabel(track.id, l.index, snapshot.generation) } }) {
+                        Icon(Icons.Filled.Delete, stringResource(R.string.cm_delete_label), Modifier.size(20.dp))
+                    }
                 }
             }
         }

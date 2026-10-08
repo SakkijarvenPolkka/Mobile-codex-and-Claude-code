@@ -267,6 +267,8 @@
     <string name="msg_mic_denied">Microphone permission was denied; recording is not possible.</string>
     <string name="msg_not_a_project">\"%1$s\" is not an Audacity project (.aup3).</string>
     <string name="msg_no_space">Not enough free storage to import these files.</string>
+    <string name="msg_no_space_copy">Not enough free storage to copy this file into Audacity.</string>
+    <string name="msg_save_interrupted">Audacity was closed while the destination was being chosen, so nothing was saved. Please try again.</string>
     <string name="msg_no_labels_in_file">No labels found in this file.</string>
     <string name="msg_labels_imported">Imported %1$d labels.</string>
     <string name="msg_exported">Exported \"%1$s\".</string>

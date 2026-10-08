@@ -116,6 +116,16 @@ internal class TrackPainter(
     var clipNameStyle: TextStyle = TextStyle.Default
     var labelStyle: TextStyle = TextStyle.Default
 
+    /**
+     * Laid-out label texts by (text, max height), so that a frame (playback
+     * follow, pinch zoom) does not lay out every visible label again: with
+     * hundreds of labels the measurer's small LRU cache never hits. Cleared
+     * when the style or the density changes.
+     */
+    private val labelLayouts = LinkedHashMap<LabelTextKey, TextLayoutResult>(64, 0.75f, true)
+    private var labelLayoutStyle: TextStyle? = null
+    private var labelLayoutDensity = 0f
+
     // Per-paint scalars (set at the start of paint()).
     private var d = 1f
     private var pxPerSec = 1.0
@@ -594,8 +604,7 @@ internal class TrackPainter(
             s.drawCircle(if (inSel) pal.labelBarSelected else pal.labelBarUnselected, 3f * d, Offset(x0, barY + barH / 2f))
             if (x1 > x0) s.drawCircle(if (inSel) pal.labelBarSelected else pal.labelBarUnselected, 3f * d, Offset(x1, barY + barH / 2f))
             // Text box, placed in the first row where it does not overlap.
-            val text = label.title.ifEmpty { " " }
-            val layout = measure(text, labelStyle, (240f * d).toInt(), maxTextH.toInt())
+            val layout = labelLayout(label.title.ifEmpty { " " }, maxTextH.toInt())
             val bw = layout.size.width + 2 * pad
             val bh = layout.size.height + 2 * pad
             val bx = x0 + 2f * d
@@ -615,6 +624,29 @@ internal class TrackPainter(
                 boxes[li * 4 + 3] = boxY + bh
             }
         }
+    }
+
+    private data class LabelTextKey(val text: String, val maxHeight: Int)
+
+    internal val labelLayoutCount: Int get() = labelLayouts.size
+
+    private fun labelLayout(text: String, maxHeight: Int): TextLayoutResult {
+        if (labelStyle != labelLayoutStyle || d != labelLayoutDensity) {
+            labelLayouts.clear()
+            labelLayoutStyle = labelStyle
+            labelLayoutDensity = d
+        }
+        val key = LabelTextKey(text, maxHeight)
+        labelLayouts[key]?.let { return it }
+        val layout = measure(text, labelStyle, (240f * d).toInt(), maxHeight)
+        labelLayouts[key] = layout
+        // LRU bound (a TextLayoutResult holds a platform layout)
+        if (labelLayouts.size > MAX_LABEL_LAYOUTS) {
+            val it = labelLayouts.entries.iterator()
+            it.next()
+            it.remove()
+        }
+        return layout
     }
 
     // ------------------------------------------------------------------
@@ -657,6 +689,7 @@ internal class TrackPainter(
         private const val FALLBACK_LEVELS = 12
         private val SPECTRO_SELECTION = Color(0x55FFFFFF)
         private const val MAX_LABEL_ROWS = 8
+        private const val MAX_LABEL_LAYOUTS = 1024
 
         /** WaveBitmapCache row math with zMin = −1, zMax = 1 (relative to the channel top). */
         fun rowOf(v: Float, h: Float): Float = floor((1f - v) / 2f * (h - 1f) + 0.5f)

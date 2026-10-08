@@ -13,8 +13,11 @@
    * command  -- Invoke() closures from JNI / tests
    * display  -- waveform/spectrogram requests; drained ONLY by the
                  outermost loop when the other two are empty
-  plus a tick every ~50 ms (idle work, module tick handlers, deferred
-  snapshots).
+  plus a tick (idle work, module tick handlers, deferred snapshots): every
+  ~50 ms while something is going on (a task ran in the last 2 s, or the
+  activity probe -- audio stream, pending snapshot -- says so), else every
+  2 s, so that an idle engine in a backgrounded app does not keep waking
+  the CPU 20 times a second.
 
   Nested loops (BasicUI::Yield, blocking dialogs via WaitModal) drain the
   internal queue only, so a command never runs inside another command.
@@ -73,10 +76,15 @@ public:
       return future.get();
    }
 
-   //! Engine thread.  Handlers run every ~50 ms on the outermost loop.
+   //! Engine thread.  Handlers run on the outermost loop every ~50 ms while
+   //! the engine is active, else every ~2 s (see SetActivityProbe).
    //! @return an id for RemoveTickHandler
    int AddTickHandler(std::function<void()> handler);
    void RemoveTickHandler(int id);
+   //! Engine thread.  Asked after each tick: true keeps the fast tick
+   //! (an open audio stream, a pending snapshot, ...).  Tasks always do,
+   //! for 2 s after they ran.  Cleared when the thread exits.
+   void SetActivityProbe(std::function<bool()> probe);
 
    //! Runs a task, catching everything (AudacityException: rollback of the
    //! current project + DelayedHandlerAction, like
@@ -94,6 +102,7 @@ private:
    std::condition_variable mCv;
    std::deque<Task> mInternal, mCommands, mDisplay;
    std::vector<std::pair<int, std::function<void()>>> mTickHandlers;
+   std::function<bool()> mActivityProbe;
    int mNextTickId = 1;
    Task mBootstrap, mShutdown;
    bool mRunning = false;

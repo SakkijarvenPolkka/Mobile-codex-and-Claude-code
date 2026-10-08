@@ -63,6 +63,7 @@ import io.github.sakkijarvenpolkka.audacity.ui.AppDialogFrame
 import io.github.sakkijarvenpolkka.audacity.ui.Dropdown
 import io.github.sakkijarvenpolkka.audacity.ui.SwitchRow
 import io.github.sakkijarvenpolkka.audacity.util.UiText
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
 
 private val EQ_SPECIALS = setOf("equalization", "graphicEq")
@@ -94,6 +95,8 @@ fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
     LaunchedEffect(d) {
         try {
             adopt(engine.describeEffect(d.effectId))
+        } catch (e: CancellationException) {
+            throw e   // the composition went away (e.g. Activity recreated): the dialog stays in the stack
         } catch (e: Exception) {
             vm.reportError(e)
             vm.dismiss(d)

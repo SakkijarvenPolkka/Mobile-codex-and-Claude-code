@@ -344,7 +344,8 @@ bool RegisterBridgeNatives(JNIEnv *env)
 //! The only exported symbol of libaudacity-jni.so. Runs on the thread that
 //! calls System.loadLibrary/System.load from NativeBridge, so FindClass uses
 //! the app's class loader. Returning JNI_ERR makes the load throw
-//! UnsatisfiedLinkError (NativeBridge.isLoaded = false: fake engine).
+//! UnsatisfiedLinkError (NativeBridge.isLoaded = false, loadError says why:
+//! NativeAudacityEngine.start reports EngineStatus.Failed with it).
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *)
 {
    try {

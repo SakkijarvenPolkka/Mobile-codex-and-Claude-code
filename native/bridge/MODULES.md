@@ -75,7 +75,9 @@ The spine calls them once, on the engine thread, during bootstrap. Through
 * add project hooks: `AddProjectOpened(fn(AudacityProject&))` (after the
   session is current), `AddProjectClosing(fn(AudacityProject&))` (still fully
   usable; stop streams here).
-* add a tick handler (called every ~50 ms on the engine thread).
+* add a tick handler (called on the engine thread every ~50 ms while the
+  engine is active -- a task in the last 2 s, an open audio stream, a pending
+  snapshot -- else every ~2 s).
 * contribute to the snapshot: `SnapshotContributor(json &snapshot,
   AudacityProject&)` (e.g. effects sets `lastEffect`).
 

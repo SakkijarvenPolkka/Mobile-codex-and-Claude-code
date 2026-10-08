@@ -14,6 +14,7 @@
 
 #include <cstring>
 
+#include "AudioIO.h"
 #include "ClipDisplayCache.h"
 #include "DisplayInternal.h"
 #include "Edit.h"            // TrackIdValue
@@ -64,6 +65,33 @@ bool IsGrowing(const WaveTrack &track)
 }
 }
 
+bool CaptureRunning()
+{
+   const auto audioIO = AudioIO::Get();
+   return audioIO && !audioIO->mCaptureSequences.empty();
+}
+
+namespace {
+//! `track` is one of the sequences AudioIO captures into right now
+bool IsLiveCaptureTarget(const WaveTrack &track)
+{
+   const auto audioIO = AudioIO::Get();
+   if (!audioIO)
+      return false;
+   const RecordableSequence *const sequence = &track;
+   for (const auto &pSequence : audioIO->mCaptureSequences)
+      if (pSequence.get() == sequence)
+         return true;
+   return false;
+}
+
+DisplayTrack Resolved(const WaveTrack &track, bool recording)
+{
+   const bool live = IsLiveCaptureTarget(track);
+   return { &track, recording || live, live };
+}
+}
+
 DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id)
 {
    auto &tracks = TrackList::Get(project);
@@ -76,7 +104,7 @@ DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id)
       auto wave = dynamic_cast<const WaveTrack *>(&drawn);
       if (!wave)
          return {};
-      return { wave, &drawn != track || IsGrowing(*wave) };
+      return Resolved(*wave, &drawn != track || IsGrowing(*wave));
    }
    if (id <= kFirstSyntheticId) {
       const int64_t k = kFirstSyntheticId - id;
@@ -88,7 +116,7 @@ DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id)
             auto wave = dynamic_cast<const WaveTrack *>(t);
             if (!wave)
                return {};
-            return { wave, true };
+            return Resolved(*wave, true);
          }
       }
    }
@@ -97,6 +125,9 @@ DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id)
 
 void PrepareForRecording(AudacityProject &project)
 {
+   // Too late once AudioIO captures (see DisplayTrack::liveCapture)
+   if (CaptureRunning())
+      return;
    auto &tracks = TrackList::Get(project);
    const auto &pending = PendingTracks::Get(project);
    for (Track *track : tracks) {
@@ -114,7 +145,7 @@ namespace {
 
 bool IsRecordingTarget(const WaveTrack &track)
 {
-   if (IsGrowing(track))
+   if (IsGrowing(track) || IsLiveCaptureTarget(track))
       return true;
    auto *project = Session::Get().Project();
    if (!project)

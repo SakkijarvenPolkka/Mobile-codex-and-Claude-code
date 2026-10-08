@@ -28,6 +28,10 @@
   estimated size fits the budget (display.trimCaches, plus a standing
   budget enforced after every display request).
 
+  Recording: nothing is attached to a clip of a track AudioIO captures into
+  while the capture runs (the AudioIO thread iterates that clip's
+  attachments); ForRequest hands out a cache kept beside the clip instead.
+
   Everything except the WaveClipListener notifications is engine thread
   only.
 
@@ -83,8 +87,20 @@ struct SpectroKey {
 
 class ClipDisplayCache final : public WaveClipListener {
 public:
-   //! The clip's cache, created on first use.  Engine thread only.
+   //! The clip's cache, created on first use.  Engine thread only.  Never
+   //! for a clip of a live capture target (see ForRequest).
    static ClipDisplayCache &Get(const WaveClip &clip);
+
+   //! The cache a display request uses for `clip`.  Engine thread only.
+   //! Normally the clip's attachment (Get).  `liveCapture`: AudioIO captures
+   //! into the clip's track (DisplayTrack::liveCapture), so the AudioIO
+   //! thread iterates the clip's attachments (WaveTrack::Append ->
+   //! WaveClip::MarkChanged); creating one now would resize that vector
+   //! under it.  Such a clip uses a cache kept beside it instead (it only
+   //! misses MarkChanged, which Sync ignores for recording targets), until
+   //! the capture ends; then the clip gets its attachment.
+   static ClipDisplayCache &ForRequest(
+      const std::shared_ptr<const WaveClip> &clip, bool liveCapture);
 
    ClipDisplayCache();
    ~ClipDisplayCache() override;
@@ -154,6 +170,8 @@ int64_t ViewportWidth();
 size_t DisplayCacheBytes();
 //! Releases every cache (shutdown)
 void ReleaseAllDisplayCaches();
+//! Number of caches kept beside clips of live capture targets (tests)
+size_t DetachedCacheCount();
 
 //! Standing budget enforced after every display request
 constexpr size_t kStandingBudgetBytes = size_t(32) << 20;

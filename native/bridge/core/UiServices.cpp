@@ -44,6 +44,20 @@ std::string Tr(const wxChar *msgid)
 {
    return ToUtf8(wxGetTranslation(msgid));
 }
+
+//! The warning of every ProjectFileIO constructor (lib-project-file-io
+//! ProjectFileIO.cpp) when TempDir has less than 100 MB free.  It fires for
+//! each project object, the bootstrap self-check probe included, and points
+//! to a desktop preference (Directories) the port does not have
+bool IsLowTempSpaceWarning(const TranslatableString &message,
+   const ManualPageID &helpPage)
+{
+   return helpPage.GET() == wxT("Error:_Disk_full_or_not_writable") &&
+      message.MSGID().GET().StartsWith(
+         wxT("There is very little free disk space left on"));
+}
+
+std::atomic<bool> sLowTempSpaceWarned{ false };
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -521,6 +535,17 @@ public:
       const BasicUI::ErrorDialogOptions &options) override
    {
       auto text = Translated(message);
+      if (IsLowTempSpaceWarning(message, helpPage)) {
+         // Once per process, with advice that applies on Android
+         if (sLowTempSpaceWarned.exchange(true)) {
+            Events::Log(Events::LogLevel::Warning,
+               "Very little free storage space left for project data");
+            return;
+         }
+         text = Translated(XO(
+"There is very little free storage space left on this device (less than 100 MB).\n"
+"Recording, editing and saving may fail. Please free up some space."));
+      }
       if (!options.log.empty())
          Events::Log(Events::LogLevel::Error,
             text + "\n" + ToUtf8(wxString(options.log)));

@@ -27,7 +27,10 @@
    * the first import into an empty project adopts the rate of the first
      imported track as the project rate (Audacity 2.x / early 3.x
      AddImportedTracks behaviour; 3.7.9's AddImportedTracks no longer does
-     it), so that recording and playback run at the material's rate;
+     it), so that recording and playback run at the material's rate, if
+     that rate is one project.setRate accepts (1000 - 768000 Hz);
+   * files that libsndfile reads with more than 64 channels are refused
+     (the PCM importer needs about 1 MiB of memory per channel);
    * imports nested in another import (mod-aup <import>, mod-lof) add their
      tracks without an undo state of their own: every file named in
      import.files is exactly one undo state.
@@ -42,6 +45,8 @@
 
 #include <wx/filename.h>
 #include <wx/log.h>
+
+#include <sndfile.h>
 
 #include "AcidizerTags.h"
 #include "AudacityException.h"
@@ -93,11 +98,34 @@ struct DepthGuard {
 ProjectFileManager::ImportHandler sPreviousHandler;
 bool sHandlerInstalled = false;
 
+//! The project rates project.setRate accepts (ProjectCommands.cpp)
+constexpr double kMinProjectRate = 1000;
+constexpr double kMaxProjectRate = 768000;
+
+//! Most channels a file may have.  The PCM importer (libsndfile accepts up
+//! to 1024) touches maxBlockSize frames x channels samples of read buffer
+//! plus a 1 MiB append buffer per channel: about 1 MiB per channel however
+//! short the file is.  64 is also the MediaCodec importer's limit
+//! (android/AndroidMediaImport.cpp kMaxChannels).
+constexpr int kMaxImportChannels = 64;
+
 std::string Lower(std::string s)
 {
    std::transform(s.begin(), s.end(), s.begin(),
       [](unsigned char c) { return char(std::tolower(c)); });
    return s;
+}
+
+//! Channels of `path` as libsndfile (the PCM importer, mod-pcm) reads its
+//! header; 0 when libsndfile cannot open it (another importer's format)
+int SndfileChannels(const FilePath &path)
+{
+   SF_INFO info{};
+   SNDFILE *file = sf_open(path.utf8_str(), SFM_READ, &info);
+   if (!file)
+      return 0;
+   sf_close(file);
+   return std::max(info.channels, 0);
 }
 
 std::set<int64_t> TrackIds(AudacityProject &project)
@@ -145,6 +173,14 @@ public:
       mHandle = &handle;
       mScope.reset();
       mLinkFilter.reset();
+
+      // Refuse a file with very many channels before its importer allocates
+      // buffers for every channel (kMaxImportChannels)
+      if (const int channels = SndfileChannels(handle.GetFilename());
+          channels > kMaxImportChannels) {
+         mTooManyChannels = channels;
+         return false;
+      }
 
       // Refuse a file that cannot fit into the project's database (a lower
       // bound: the project may store wider samples than the file)
@@ -257,6 +293,8 @@ public:
 
    bool UserCancelled() const { return mUserCancelled; }
    bool NoSpace() const { return mNoSpace; }
+   //! The channel count of a file refused for having too many, else 0
+   int TooManyChannels() const { return mTooManyChannels; }
    const std::vector<TranslatableString> &Errors() const { return mErrors; }
 
 private:
@@ -307,6 +345,7 @@ private:
    std::optional<LinkFilter> mLinkFilter;
    bool mUserCancelled = false;
    bool mNoSpace = false;
+   int mTooManyChannels = 0;
 };
 
 //! The message of a failed import: the importers' own error messages, then
@@ -317,6 +356,10 @@ std::string FailureMessage(const BridgeImportListener &listener,
 {
    if (listener.NoSpace())
       return Translated(XO("Insufficient Disk Space"));
+   if (const int channels = listener.TooManyChannels(); channels > 0)
+      return ToUtf8(displayName) + ": " + std::to_string(channels) +
+         " channels; at most " + std::to_string(kMaxImportChannels) +
+         " channels can be imported.";
    wxString text;
    for (const auto &error : listener.Errors()) {
       if (!text.empty())
@@ -412,11 +455,14 @@ void AddImportedTracks(AudacityProject &project, const FilePath &fileName,
    // rate to the rate of the imported audio ("Automatically assign rate of
    // imported file to whole project, if this is the first file that is
    // imported" -- Audacity 2.x AddImportedTracks; 3.7.9 dropped it).  The
-   // rate is saved with the undo state's autosave below.
+   // rate is saved with the undo state's autosave below.  Only a rate that
+   // project.setRate would accept: a file header may claim anything (1 Hz,
+   // 2 GHz); the track keeps its own rate and is resampled on playback.
    if (initiallyEmpty && !results.empty()) {
       const double newRate = results.front()->GetRate();
       auto &projectRate = ProjectRate::Get(project);
-      if (newRate > 0 && newRate != projectRate.GetRate())
+      if (newRate >= kMinProjectRate && newRate <= kMaxProjectRate &&
+          newRate != projectRate.GetRate())
          projectRate.SetRate(newRate);
    }
 

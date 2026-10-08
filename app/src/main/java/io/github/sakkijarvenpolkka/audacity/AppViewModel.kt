@@ -12,12 +12,13 @@ package io.github.sakkijarvenpolkka.audacity
 import android.Manifest
 import android.app.Application
 import android.content.ClipboardManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.StatFs
+import android.os.Bundle
 import androidx.annotation.StringRes
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -27,6 +28,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import io.github.sakkijarvenpolkka.audacity.editor.EditorState
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
@@ -42,6 +44,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.LogEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
+import io.github.sakkijarvenpolkka.audacity.files.InsufficientSpaceException
 import io.github.sakkijarvenpolkka.audacity.files.SafFiles
 import io.github.sakkijarvenpolkka.audacity.menu.Disallowed
 import io.github.sakkijarvenpolkka.audacity.menu.MenuHost
@@ -62,14 +65,20 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.Collections
+import java.util.WeakHashMap
 import kotlin.coroutines.coroutineContext
 
-class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
+class AppViewModel(app: Application, private val savedState: SavedStateHandle) : AndroidViewModel(app), MenuHost {
+
+    /** Without saved state (tests, previews). */
+    constructor(app: Application) : this(app, SavedStateHandle())
 
     private val audacity = app as AudacityApp
     override val engine: AudacityEngine = audacity.engine
@@ -108,10 +117,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
     private var ready = false
     private var pendingOpen: List<Uri> = emptyList()
 
-    // Purposes of activity-result launches in flight (kept here so they survive Activity recreation).
-    var pendingOpenPurpose: OpenPurpose = OpenPurpose.OPEN
-    var pendingCreatePurpose: CreatePurpose? = null
-    var pendingRecordNewTrack: Boolean = false
+    /**
+     * Open once the engine is ready and the start-up recovery prompt (if
+     * any) is answered: documents from intents and activity results are
+     * processed only then (before, the engine refuses commands, and a file
+     * imported into a new project would be replaced by a recovery).
+     */
+    private val startupGate = MutableStateFlow(false)
+
+    /** A Recover/Discard/Skip of the recovery dialog is running (its buttons are disabled). */
+    var recoveryBusy by mutableStateOf(false)
+        private set
+
+    /**
+     * Identifies requests launched by this view model. Purposes of activity
+     * results in flight are kept in [savedState]: the process may be killed
+     * while a picker or the permission dialog is on top, and the result is
+     * then delivered to a new process (and view model).
+     */
+    private val requestToken = java.util.UUID.randomUUID().toString()
 
     val projectsDir: File get() = File(context.filesDir, "Projects")
 
@@ -169,15 +193,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         quietly { settings.value = engine.getSettings() }
         quietly { appInfo.value = engine.appInfo() }
         refreshRecent()
-        if (recoverable > 0) {
-            val list = runCatching { engine.recoverableProjects() }.getOrDefault(emptyList())
-            if (list.isNotEmpty()) open(AppDialog.Recovery(list)) else quietly { ensureProject() }
+        // [recoverable] is the count of the process's engine start: a later view
+        // model (new Activity in a process kept alive) must not offer it again
+        val offer = recoverable > 0 && shouldOfferRecovery()
+        val list = if (offer) runCatching { engine.recoverableProjects() }.getOrDefault(emptyList()) else emptyList()
+        if (list.isNotEmpty()) {
+            open(AppDialog.Recovery(list, startup = true))
+        } else {
+            // The engine opens an empty project unless something is recoverable;
+            // when that failed (e.g. storage full: self-check initialProject),
+            // try again and say why
+            try {
+                ensureProject()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: EngineException) {
+                open(AppDialog.Info(UiText.Res(R.string.engine_failed_title), UiText.Raw(e.message?.takeIf { it.isNotBlank() } ?: e.code)))
+            } catch (e: Exception) {
+                reportError(e)
+            }
         }
-        if (pendingOpen.isNotEmpty()) {
-            val uris = pendingOpen
-            pendingOpen = emptyList()
-            openUris(uris)
-        }
+        // With the recovery prompt up, files wait for its answer (recoveryAnswered)
+        if (list.isEmpty()) openStartupGate()
+    }
+
+    /** Recovery is offered once per engine (process), and never over an open project. */
+    private fun shouldOfferRecovery(): Boolean =
+        synchronized(answeredEngines) { engine !in answeredEngines } && !engine.snapshot.value.project.open
+
+    /** The start-up recovery prompt was answered (Recover, Discard all, Skip). */
+    private fun recoveryAnswered() {
+        synchronized(answeredEngines) { answeredEngines += engine }
+        openStartupGate()
+    }
+
+    private fun openStartupGate() {
+        if (startupGate.value) return
+        startupGate.value = true
+        val uris = pendingOpen
+        pendingOpen = emptyList()
+        if (uris.isNotEmpty()) openUris(uris)
+    }
+
+    private suspend fun awaitStartup() {
+        startupGate.first { it }
     }
 
     /** Opens an empty project when none is open (after recovery was skipped). */
@@ -243,6 +302,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
             e is EngineException && e.code == ErrorCodes.AUDIO_BUSY -> message(UiText.Res(R.string.why_audio_busy))
             e is EngineException && e.code == ErrorCodes.STALE -> message(UiText.Res(R.string.msg_stale))
             e is EngineException -> message(UiText.Raw(e.message?.takeIf { it.isNotBlank() } ?: e.code))
+            e is InsufficientSpaceException -> message(UiText.Res(R.string.msg_no_space_copy))
             e is IOException -> message(UiText.Res(R.string.msg_io_error, listOf(e.message ?: e.toString())))
             else -> message(UiText.Raw(e.message ?: e.toString()))
         }
@@ -444,27 +504,60 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
 
     // ----- crash recovery (AutoRecoveryDialog) ---------------------------------
 
-    fun recover(dialog: AppDialog.Recovery, paths: List<String>) = launchAction {
-        val path = paths.firstOrNull() ?: return@launchAction
-        dismiss(dialog)
-        engine.recoverProject(path)
-        show(AppScreen.EDITOR)
-        if (paths.size > 1) message(R.string.msg_recover_one_at_a_time)
+    /**
+     * Recover Selected. The recovered project replaces the open one, so this
+     * asks "Save changes?" first like every other flow that replaces the
+     * project (closing a never-saved project deletes its file). The dialog
+     * stays up, its buttons disabled, until the recovery succeeded.
+     */
+    fun recover(dialog: AppDialog.Recovery, paths: List<String>) {
+        val path = paths.firstOrNull() ?: return
+        recoveryAction {
+            if (!confirmDiscard()) return@recoveryAction
+            engine.recoverProject(path)
+            dismiss(dialog)
+            if (dialog.startup) recoveryAnswered()
+            show(AppScreen.EDITOR)
+            if (paths.size > 1) message(R.string.msg_recover_one_at_a_time)
+        }
     }
 
-    fun discardRecoverable(dialog: AppDialog.Recovery, paths: List<String>) = launchAction {
-        if (paths.isEmpty()) return@launchAction
-        val ok = askConfirm(UiText.Res(R.string.recovery_title), UiText.Res(R.string.recovery_discard_confirm), UiText.Res(R.string.btn_yes))
-        if (!ok) return@launchAction
-        engine.discardRecoverable(paths)
-        val left = engine.recoverableProjects()
-        dismiss(dialog)
-        if (left.isNotEmpty()) open(AppDialog.Recovery(left)) else ensureProject()
+    fun discardRecoverable(dialog: AppDialog.Recovery, paths: List<String>) {
+        if (paths.isEmpty()) return
+        recoveryAction {
+            val ok = askConfirm(UiText.Res(R.string.recovery_title), UiText.Res(R.string.recovery_discard_confirm), UiText.Res(R.string.btn_yes))
+            if (!ok) return@recoveryAction
+            engine.discardRecoverable(paths)
+            val left = engine.recoverableProjects()
+            dismiss(dialog)
+            if (left.isNotEmpty()) open(dialog.copy(projects = left)) else finishRecovery(dialog)
+        }
     }
 
-    fun skipRecovery(dialog: AppDialog.Recovery) = launchAction {
+    fun skipRecovery(dialog: AppDialog.Recovery) = recoveryAction {
         dismiss(dialog)
-        ensureProject()
+        finishRecovery(dialog)
+    }
+
+    private suspend fun finishRecovery(dialog: AppDialog.Recovery) {
+        try {
+            ensureProject()
+        } finally {
+            if (dialog.startup) recoveryAnswered()
+        }
+    }
+
+    /** Runs one Recover/Discard/Skip at a time (double taps are ignored). */
+    private fun recoveryAction(block: suspend () -> Unit) {
+        if (recoveryBusy) return
+        recoveryBusy = true
+        launchAction {
+            try {
+                block()
+            } finally {
+                recoveryBusy = false
+            }
+        }
     }
 
     fun showRecovery() = launchAction {
@@ -487,10 +580,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         }
     }
 
-    /** Result of the RECORD_AUDIO runtime permission request (API.md §6.6). */
-    fun onRecordPermissionResult(granted: Boolean, newTrack: Boolean) = launchAction {
-        engine.setRecordPermission(granted)
-        if (granted) engine.record(newTrack) else message(R.string.msg_mic_denied)
+    /** The Activity is about to ask for RECORD_AUDIO for a recording ([newTrack]). */
+    fun beginRecordPermission(newTrack: Boolean) {
+        savedState[K_RECORD] = Bundle().apply {
+            putBoolean("newTrack", newTrack)
+            putString(K_TOKEN, requestToken)
+        }
+    }
+
+    /**
+     * Result of the RECORD_AUDIO runtime permission request (API.md §6.6).
+     * Records only when the request came from this process: after a process
+     * death the project it was for has changed (it is offered for recovery).
+     */
+    fun onRecordPermissionResult(granted: Boolean) {
+        val req = savedState.remove<Bundle>(K_RECORD)?.takeIf { it.getString(K_TOKEN) == requestToken }
+        launchAction {
+            awaitStartup()
+            engine.setRecordPermission(granted)
+            if (!granted) message(R.string.msg_mic_denied) else if (req != null) engine.record(req.getBoolean("newTrack"))
+        }
     }
 
     override suspend fun runEffect(effectId: String) {
@@ -525,9 +634,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
     fun handleIntent(intent: Intent?) {
         val uris = urisOf(intent ?: return)
         if (uris.isEmpty()) return
-        if (ready) openUris(uris) else pendingOpen = uris
+        if (startupGate.value) openUris(uris) else pendingOpen = uris
     }
 
+    /**
+     * The documents of an intent; content Uris only. A file:// Uri (also in an
+     * explicit intent, which bypasses the manifest filters) could name a
+     * device such as /dev/zero, or a private file of this app.
+     */
     @Suppress("DEPRECATION")
     private fun urisOf(intent: Intent): List<Uri> = when (intent.action) {
         Intent.ACTION_VIEW -> listOfNotNull(intent.data)
@@ -539,6 +653,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
             (if (Build.VERSION.SDK_INT >= 33) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
             else intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)).orEmpty()
         else -> emptyList()
+    }.filter { it.scheme == ContentResolver.SCHEME_CONTENT }
+
+    // ----- activity results (purposes survive process death: savedState) -------
+
+    /** The Activity is about to launch ACTION_OPEN_DOCUMENT for [purpose]. */
+    fun beginOpenDocuments(purpose: OpenPurpose) {
+        savedState[K_OPEN] = purpose.name
+    }
+
+    /** Result of ACTION_OPEN_DOCUMENT (one or several documents). */
+    fun onDocumentsPicked(uris: List<Uri>) {
+        val name = savedState.remove<String>(K_OPEN)
+        onDocumentsPicked(OpenPurpose.entries.firstOrNull { it.name == name } ?: OpenPurpose.OPEN, uris)
     }
 
     fun onDocumentsPicked(purpose: OpenPurpose, uris: List<Uri>) {
@@ -546,11 +673,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         when (purpose) {
             OpenPurpose.OPEN -> openUris(uris)
             OpenPurpose.IMPORT_AUDIO -> launchAction {
-                val staged = stageForImport(uris) ?: return@launchAction
+                awaitStartup()
+                val staged = stageForImport(uris, SafFiles.describe(context.contentResolver, uris)) ?: return@launchAction
                 importStaged(staged, newProject = false)
             }
             OpenPurpose.IMPORT_LABELS -> launchAction {
-                val staged = stageForImport(uris.take(1)) ?: return@launchAction
+                awaitStartup()
+                val one = uris.take(1)
+                val staged = stageForImport(one, SafFiles.describe(context.contentResolver, one)) ?: return@launchAction
                 importLabels(staged.single())
             }
         }
@@ -558,24 +688,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
 
     /** File ▸ Open: an .aup3 opens as the project; audio files import into a new (or the empty current) project. */
     fun openUris(uris: List<Uri>) = launchAction {
-        val cr = context.contentResolver
-        val named = uris.map { it to (SafFiles.displayName(cr, it) ?: "") }
-        val project = named.firstOrNull { it.second.endsWith(".aup3", ignoreCase = true) }
-        if (project != null) {
-            openProjectUri(project.first, project.second)
+        awaitStartup()
+        val docs = SafFiles.describe(context.contentResolver, uris)
+        val project = docs.indexOfFirst { it.name.orEmpty().endsWith(".aup3", ignoreCase = true) }
+        if (project >= 0) {
+            openProjectUri(uris[project], docs[project])
             return@launchAction
         }
         val snap = engine.snapshot.value
         val intoCurrent = snap.project.open && snap.tracks.isEmpty()
         if (!intoCurrent && !confirmDiscard()) return@launchAction
-        val staged = stageForImport(uris) ?: return@launchAction
+        val staged = stageForImport(uris, docs) ?: return@launchAction
         importStaged(staged, newProject = !intoCurrent)
         show(AppScreen.EDITOR)
     }
 
     /** Copies an .aup3 from SAF into `filesDir/Projects` and opens it (§5.4). */
-    private suspend fun openProjectUri(uri: Uri, displayName: String) {
+    private suspend fun openProjectUri(uri: Uri, doc: SafFiles.DocInfo) {
         val cr = context.contentResolver
+        val displayName = doc.name.orEmpty()
         val isDb = withContext(Dispatchers.IO) {
             runCatching { cr.openInputStream(uri)?.use { SafFiles.isSqlite(it) } ?: false }.getOrDefault(false)
         }
@@ -584,9 +715,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
             return
         }
         if (!confirmDiscard()) return
+        val dir = projectsDir.apply { mkdirs() }
+        if (doc.size > SafFiles.writableBytes(dir)) {
+            message(R.string.msg_no_space_copy)
+            return
+        }
         val base = SafFiles.sanitizeBaseName(displayName.removeSuffix(".aup3").removeSuffix(".AUP3"))
-        val dest = SafFiles.uniqueFile(projectsDir.apply { mkdirs() }, base, "aup3")
+        val dest = SafFiles.uniqueFile(dir, base, "aup3")
         withLocalProgress(UiText.Res(R.string.progress_copying, listOf(displayName))) { report ->
+            // Capped by the free space: the reported size may be missing or wrong
             SafFiles.copyUriToFile(cr, uri, dest) { done, total -> if (total > 0) report(done.toDouble() / total) }
         }
         engine.openProject(dest.absolutePath)
@@ -594,31 +731,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         refreshRecent()
     }
 
-    /** Copies picked documents to `cacheDir/import/<uuid>/<name>` (§5.2); null when cancelled. */
-    private suspend fun stageForImport(uris: List<Uri>): List<File>? {
+    /** Copies picked documents to `cacheDir/import/<uuid>/<name>` (§5.2); null when there is no room. */
+    private suspend fun stageForImport(uris: List<Uri>, docs: List<SafFiles.DocInfo>): List<File>? {
         val cr = context.contentResolver
-        val staged = ArrayList<File>()
+        val dirs = ArrayList<File>()
         try {
-            val total = uris.sumOf { SafFiles.size(cr, it).coerceAtLeast(0) }
-            val free = runCatching { StatFs(context.cacheDir.path).availableBytes }.getOrDefault(Long.MAX_VALUE)
-            if (total > 0 && free < total + (64L shl 20)) {
+            val total = docs.sumOf { it.size.coerceAtLeast(0) }
+            if (total > SafFiles.writableBytes(context.cacheDir)) {
                 message(R.string.msg_no_space)
                 return null
             }
+            val staged = ArrayList<File>()
             for ((i, uri) in uris.withIndex()) {
-                val name = SafFiles.sanitizeFileName(SafFiles.displayName(cr, uri), cr.getType(uri))
-                val dest = File(SafFiles.stagingDir(context.cacheDir, "import"), name)
+                val name = SafFiles.sanitizeFileName(docs[i].name, docs[i].mime)
+                val dir = SafFiles.stagingDir(context.cacheDir, "import")
+                dirs += dir
+                val dest = File(dir, name)
                 withLocalProgress(UiText.Res(R.string.progress_copying_n, listOf(name, i + 1, uris.size))) { report ->
+                    // Capped by the free space: a source of unknown size can be endless
                     SafFiles.copyUriToFile(cr, uri, dest) { done, size -> if (size > 0) report(done.toDouble() / size) }
                 }
                 staged += dest
             }
             return staged
-        } catch (e: CancellationException) {
-            staged.forEach { it.parentFile?.deleteRecursively() }
-            throw e
-        } catch (e: Exception) {
-            staged.forEach { it.parentFile?.deleteRecursively() }
+        } catch (e: Throwable) {
+            dirs.forEach { SafFiles.deleteStaging(it) }
             throw e
         }
     }
@@ -630,7 +767,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
                 open(AppDialog.Info(UiText.Res(R.string.m_import), UiText.Raw(r.messages.joinToString("\n\n"))))
             }
         } finally {
-            withContext(Dispatchers.IO) { files.forEach { it.parentFile?.deleteRecursively() } }
+            files.forEach { SafFiles.deleteStaging(it.parentFile) }
         }
     }
 
@@ -641,7 +778,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
             val n = engine.snapshot.value.track(id)?.labels?.size ?: 0
             if (n == 0) message(R.string.msg_no_labels_in_file) else message(R.string.msg_labels_imported, n)
         } finally {
-            withContext(Dispatchers.IO) { staged.parentFile?.deleteRecursively() }
+            SafFiles.deleteStaging(staged.parentFile)
         }
     }
 
@@ -650,7 +787,32 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         request(HostRequest.CreateDocument(CreatePurpose.ExportAudio(job), job.fileName, mime))
     }
 
-    /** Result of ACTION_CREATE_DOCUMENT. */
+    /** The Activity is about to launch ACTION_CREATE_DOCUMENT for [purpose]. */
+    fun beginCreateDocument(purpose: CreatePurpose) {
+        savedState[K_CREATE] = PurposeCodec.encode(purpose).apply { putString(K_TOKEN, requestToken) }
+    }
+
+    /**
+     * Result of ACTION_CREATE_DOCUMENT. When the request came from a process
+     * that was killed while the picker was on top, the project and selection
+     * it was for are gone: the empty document the picker created is removed
+     * and the user is told to try again (nothing is written silently).
+     */
+    fun onDocumentCreated(uri: Uri?) {
+        val saved = savedState.remove<Bundle>(K_CREATE)
+        uri ?: return
+        val purpose = PurposeCodec.decode(saved)
+        if (purpose == null || saved?.getString(K_TOKEN) != requestToken) {
+            launchAction {
+                SafFiles.deleteDocument(context.contentResolver, uri)
+                message(R.string.msg_save_interrupted)
+            }
+            return
+        }
+        onDocumentCreated(purpose, uri)
+    }
+
+    /** Writes the document [uri] created for [purpose]. */
     fun onDocumentCreated(purpose: CreatePurpose, uri: Uri?) {
         if (uri == null) return
         val cr = context.contentResolver
@@ -658,19 +820,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
             is CreatePurpose.ExportAudio -> launchAction {
                 val job = purpose.job
                 val dir = SafFiles.stagingDir(context.cacheDir, "export")
-                val staged = File(dir, SafFiles.sanitizeBaseName(job.fileName))
+                val staged = File(dir, SafFiles.sanitizeFileName(job.fileName, null))
                 try {
                     engine.export(staged.absolutePath, job.formatKey, job.range, job.channels, job.rate, job.skipSilenceAtStart)
                     withLocalProgress(UiText.Res(R.string.progress_saving, listOf(job.fileName))) { report ->
                         SafFiles.copyFileToUri(cr, staged, uri) { done, total -> if (total > 0) report(done.toDouble() / total) }
                     }
                     uiPrefs.update { it.copy(lastExportFormat = job.formatKey, exportSkipSilence = job.skipSilenceAtStart) }
-                    message(R.string.msg_exported, SafFiles.displayName(cr, uri) ?: job.fileName)
+                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: job.fileName)
                 } catch (e: Throwable) {
                     SafFiles.deleteDocument(cr, uri)
                     throw e
                 } finally {
-                    withContext(Dispatchers.IO) { dir.deleteRecursively() }
+                    SafFiles.deleteStaging(dir)
                 }
             }
             CreatePurpose.BackupProject -> launchAction {
@@ -682,27 +844,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
                     withLocalProgress(UiText.Res(R.string.progress_saving, listOf(staged.name))) { report ->
                         SafFiles.copyFileToUri(cr, staged, uri) { done, total -> if (total > 0) report(done.toDouble() / total) }
                     }
-                    message(R.string.msg_exported, SafFiles.displayName(cr, uri) ?: staged.name)
+                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: staged.name)
                 } catch (e: Throwable) {
                     SafFiles.deleteDocument(cr, uri)
                     throw e
                 } finally {
-                    withContext(Dispatchers.IO) { dir.deleteRecursively() }
+                    SafFiles.deleteStaging(dir)
                 }
             }
             is CreatePurpose.ExportLabels -> launchAction {
                 // labels.export writes a staging file in the chosen format; then it is copied to the document
                 val dir = SafFiles.stagingDir(context.cacheDir, "export")
-                val staged = File(dir, SafFiles.sanitizeBaseName(purpose.fileName))
+                val staged = File(dir, SafFiles.sanitizeFileName(purpose.fileName, null))
                 try {
                     engine.exportLabels(staged.absolutePath, purpose.format)
                     SafFiles.copyFileToUri(cr, staged, uri)
-                    message(R.string.msg_exported, SafFiles.displayName(cr, uri) ?: purpose.fileName)
+                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: purpose.fileName)
                 } catch (e: Throwable) {
                     SafFiles.deleteDocument(cr, uri)
                     throw e
                 } finally {
-                    withContext(Dispatchers.IO) { dir.deleteRecursively() }
+                    SafFiles.deleteStaging(dir)
                 }
             }
         }
@@ -711,6 +873,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
     private companion object {
         const val PREFS = "audacity_ui"
         const val K_ASKED_NOTIFICATIONS = "askedNotificationPermission"
+        const val K_OPEN = "request.openPurpose"
+        const val K_CREATE = "request.createPurpose"
+        const val K_RECORD = "request.recordPermission"
+        const val K_TOKEN = "token"
+
+        /**
+         * Engines whose start-up recovery prompt was answered. Process-wide:
+         * the engine (and its start-up recoverable count) outlives view
+         * models, and a new Activity must not offer the same projects again.
+         */
+        val answeredEngines: MutableSet<AudacityEngine> = Collections.newSetFromMap(WeakHashMap())
     }
 
     /** Runs [block] with a cancellable app-side progress dialog. */

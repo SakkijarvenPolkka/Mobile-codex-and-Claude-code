@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.click
@@ -324,5 +325,45 @@ class EditorScreenTest {
         rule.waitUntil(5_000) { engine.lastSelect == (2.0 to 5.5) }
         rule.waitUntil(5_000) { engine.snapshot.value.selection.t1 == 5.5 }
         rule.onNodeWithText("00 h 00 m 05.500 s", substring = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun trackPanelOffersAccessibilityActions() {
+        setEditor()
+        val actions = rule.onNodeWithTag(EditorTags.TRACK_PANEL).fetchSemanticsNode().config[SemanticsActions.CustomActions]
+        assertEquals(
+            listOf("Select all", "Select previous clip", "Select next clip", "Menu of the clip at the cursor"),
+            actions.map { it.label },
+        )
+        rule.runOnIdle { actions.last().action() }
+        rule.waitUntil(5_000) { callbacks.targets.isNotEmpty() }
+        assertTrue(callbacks.targets.single() !is ContextTarget.Empty)
+        rule.runOnIdle { actions.first().action() }
+        rule.waitUntil(5_000) { engine.snapshot.value.tracks.all { it.selected } }
+    }
+
+    @Test
+    fun clipAtTheCursorIsTheContextTarget() {
+        val audio = engine.snapshot.value.tracks[0]
+        val clip = audio.clips[0]
+        val t = (clip.start + clip.end) / 2
+        kotlinx.coroutines.runBlocking {
+            engine.select(t, t, listOf(audio.id), focus = audio.id)
+        }
+        val s = engine.snapshot.value
+        assertEquals(ContextTarget.Clip(audio.id, clip.index, s.generation), contextTargetAtCursor(s))
+        kotlinx.coroutines.runBlocking { engine.select(clip.end + 1000.0, clip.end + 1000.0, listOf(audio.id), focus = audio.id) }
+        assertEquals(ContextTarget.Track(audio.id), contextTargetAtCursor(engine.snapshot.value))
+    }
+
+    @Test
+    fun compactMuteAndSoloHaveRowHighTouchAreas() {
+        setEditor()
+        val mute = rule.onAllNodesWithContentDescription("Mute")[0].fetchSemanticsNode().boundsInRoot
+        val solo = rule.onAllNodesWithContentDescription("Solo")[0].fetchSemanticsNode().boundsInRoot
+        assertEquals(32f, mute.height, 0.5f)
+        assertEquals(40f, mute.width, 0.5f)
+        // Adjacent: no dead gap between the two targets
+        assertEquals(mute.right, solo.left, 0.5f)
     }
 }

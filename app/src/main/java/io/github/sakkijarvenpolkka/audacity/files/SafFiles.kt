@@ -8,6 +8,11 @@
  * Exports are staged in `cacheDir/export/<uuid>/` and copied to the Uri
  * picked with ACTION_CREATE_DOCUMENT (opened with mode "wt").
  *
+ * Provider calls (query, getType, deleteDocument) are binder round trips
+ * that cloud providers may serve over the network: the suspend variants run
+ * them on Dispatchers.IO. Copies into app storage are capped by the free
+ * space (a source can be endless, or not report its size).
+ *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 package io.github.sakkijarvenpolkka.audacity.files
@@ -17,7 +22,9 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
+import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -27,9 +34,45 @@ import java.io.OutputStream
 import java.util.UUID
 import kotlin.coroutines.coroutineContext
 
+/** A copy into app storage would leave less than the reserved free space. */
+class InsufficientSpaceException(message: String) : IOException(message)
+
 object SafFiles {
 
-    /** Display name of a content Uri (or the last path segment). */
+    /** Free space kept when copying into app storage (the engine's autosave and other apps need it). */
+    const val RESERVED_BYTES: Long = 64L shl 20
+
+    /** Longest file name stem in app storage, in UTF-8 bytes: room for an
+     *  extension and SQLite's "-wal"/"-shm"/"-journal" companions within NAME_MAX (255). */
+    const val MAX_STEM_BYTES: Int = 200
+
+    /** Name, size (-1 = unknown) and MIME type of a picked document. */
+    data class DocInfo(val name: String?, val size: Long, val mime: String?)
+
+    /** [DocInfo] of each of [uris], queried on Dispatchers.IO. */
+    suspend fun describe(cr: ContentResolver, uris: List<Uri>): List<DocInfo> = withContext(Dispatchers.IO) {
+        uris.map { uri ->
+            coroutineContext.ensureActive()
+            DocInfo(displayName(cr, uri), size(cr, uri), runCatching { cr.getType(uri) }.getOrNull())
+        }
+    }
+
+    /** [displayName] on Dispatchers.IO. */
+    suspend fun displayNameIo(cr: ContentResolver, uri: Uri): String? = withContext(Dispatchers.IO) { displayName(cr, uri) }
+
+    /** Free bytes of the file system of an existing directory (statvfs f_bavail, like StatFs.availableBytes). */
+    @VisibleForTesting
+    internal var freeSpace: (File) -> Long = { it.usableSpace }
+
+    /** Bytes that may be written below [dir] while keeping [reserve] free. */
+    fun writableBytes(dir: File, reserve: Long = RESERVED_BYTES): Long {
+        var d: File? = dir
+        while (d != null && !d.exists()) d = d.parentFile
+        val free = d?.let(freeSpace) ?: 0L
+        return (free - reserve).coerceAtLeast(0)
+    }
+
+    /** Display name of a content Uri (or the last path segment). Blocking: prefer [describe] / [displayNameIo]. */
     fun displayName(cr: ContentResolver, uri: Uri): String? {
         if (uri.scheme == ContentResolver.SCHEME_CONTENT) {
             runCatching {
@@ -44,9 +87,9 @@ object SafFiles {
         return uri.lastPathSegment?.substringAfterLast('/')
     }
 
-    /** Size in bytes, or -1 when unknown. */
+    /** Size in bytes, or -1 when unknown. Blocking: prefer [describe]. */
     fun size(cr: ContentResolver, uri: Uri): Long {
-        if (uri.scheme == ContentResolver.SCHEME_FILE) return uri.path?.let { File(it).length() } ?: -1
+        if (uri.scheme == ContentResolver.SCHEME_FILE) return -1   // not accepted (character devices report 0)
         return runCatching {
             cr.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use { c ->
                 if (c.moveToFirst()) {
@@ -92,29 +135,68 @@ object SafFiles {
 
     fun extensionOf(name: String): String = name.substringAfterLast('.', "").lowercase()
 
-    /** A base name (no directories) safe for a file in app storage. */
-    fun sanitizeBaseName(name: String): String {
+    /**
+     * A base name (no directories) safe for a file in app storage, at most
+     * [maxBytes] UTF-8 bytes (file names are limited to 255 bytes: a long
+     * Korean or emoji name would otherwise fail with ENAMETOOLONG).
+     */
+    fun sanitizeBaseName(name: String, maxBytes: Int = MAX_STEM_BYTES): String {
         val cleaned = name.map { c -> if (c == '/' || c == '\\' || c == '\u0000' || c.code < 32 || c in ":*?\"<>|") '_' else c }
             .joinToString("").trim().trimStart('.')
-        return cleaned.ifEmpty { "Untitled" }
+        return truncateUtf8(cleaned, maxBytes).trimEnd().ifEmpty { "Untitled" }
     }
 
     /**
-     * Sanitises a picked document name (§5.2 step 3): no `/` or NUL, at most
-     * 200 bytes, extension kept; a missing extension is derived from [mime].
+     * Sanitises a document name (§5.2 step 3): no `/` or NUL, at most
+     * [maxBytes] UTF-8 bytes, extension kept; a missing extension is derived from [mime].
      */
-    fun sanitizeFileName(name: String?, mime: String?): String {
-        var base = sanitizeBaseName(name ?: "audio")
+    fun sanitizeFileName(name: String?, mime: String?, maxBytes: Int = MAX_STEM_BYTES): String {
+        var base = sanitizeBaseName(name ?: "audio", Int.MAX_VALUE)
         var ext = extensionOf(base)
         if (ext.isEmpty()) {
             extensionForMime(mime)?.let { ext = it; base = "$base.$it" }
         }
-        while (base.toByteArray(Charsets.UTF_8).size > 200) {
-            val stem = base.substringBeforeLast('.', base)
-            if (stem.length <= 1) break
-            base = stem.dropLast(1) + (if (ext.isNotEmpty()) ".$ext" else "")
+        if (utf8Length(base) <= maxBytes) return base
+        // An extension longer than a few characters is not one: truncate the whole name
+        if (ext.isEmpty() || ext.length > 16) return truncateUtf8(base, maxBytes)
+        val stem = base.substring(0, base.length - ext.length - 1)
+        return truncateUtf8(stem, maxBytes - ext.length - 1).trimEnd().ifEmpty { "audio" } + "." + ext
+    }
+
+    /** UTF-8 length of [s] in bytes. */
+    fun utf8Length(s: String): Int {
+        var n = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            n += when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            i += Character.charCount(cp)
         }
-        return base
+        return n
+    }
+
+    /** The longest prefix of [s] of at most [maxBytes] UTF-8 bytes (whole code points). */
+    fun truncateUtf8(s: String, maxBytes: Int): String {
+        var n = 0
+        var i = 0
+        while (i < s.length) {
+            val cp = s.codePointAt(i)
+            val len = when {
+                cp < 0x80 -> 1
+                cp < 0x800 -> 2
+                cp < 0x10000 -> 3
+                else -> 4
+            }
+            if (n + len > maxBytes) return s.substring(0, i)
+            n += len
+            i += Character.charCount(cp)
+        }
+        return s
     }
 
     /** `dir/base.ext`, or `dir/base (2).ext`, … when taken. */
@@ -148,25 +230,37 @@ object SafFiles {
         return read == 16 && String(header, 0, 15, Charsets.US_ASCII) == "SQLite format 3" && header[15] == 0.toByte()
     }
 
-    /** Copies [uri] to [dest] on Dispatchers.IO; cancellable; [onProgress] gets (done, total or -1). */
-    suspend fun copyUriToFile(cr: ContentResolver, uri: Uri, dest: File, onProgress: (Long, Long) -> Unit = { _, _ -> }) =
-        withContext(Dispatchers.IO) {
-            val total = size(cr, uri)
-            dest.parentFile?.mkdirs()
-            val input = cr.openInputStream(uri) ?: throw IOException("Cannot open $uri")
-            try {
-                input.use { i -> dest.outputStream().use { o -> pump(i, o, total, onProgress) } }
-            } catch (t: Throwable) {
-                dest.delete()
-                throw t
-            }
+    /**
+     * Copies [uri] to [dest] on Dispatchers.IO; cancellable; [onProgress] gets
+     * (done, total or -1). At most [maxBytes] are written (default: what
+     * [writableBytes] allows in dest's directory): a longer source fails with
+     * [InsufficientSpaceException] instead of filling the storage.
+     */
+    suspend fun copyUriToFile(
+        cr: ContentResolver,
+        uri: Uri,
+        dest: File,
+        maxBytes: Long = -1,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ) = withContext(Dispatchers.IO) {
+        val total = size(cr, uri)
+        dest.parentFile?.mkdirs()
+        val limit = if (maxBytes >= 0) maxBytes else writableBytes(dest.parentFile ?: dest)
+        if (total > limit) throw InsufficientSpaceException("$total bytes do not fit in ${dest.parent}")
+        val input = cr.openInputStream(uri) ?: throw IOException("Cannot open $uri")
+        try {
+            input.use { i -> dest.outputStream().use { o -> pump(i, o, total, limit, onProgress) } }
+        } catch (t: Throwable) {
+            dest.delete()
+            throw t
         }
+    }
 
     /** Copies [src] to the document [uri] (mode "wt": some providers do not truncate with "w"). */
     suspend fun copyFileToUri(cr: ContentResolver, src: File, uri: Uri, onProgress: (Long, Long) -> Unit = { _, _ -> }) =
         withContext(Dispatchers.IO) {
             val out = cr.openOutputStream(uri, "wt") ?: throw IOException("Cannot write $uri")
-            out.use { o -> src.inputStream().use { i -> pump(i, o, src.length(), onProgress) } }
+            out.use { o -> src.inputStream().use { i -> pump(i, o, src.length(), Long.MAX_VALUE, onProgress) } }
         }
 
     suspend fun writeTextToUri(cr: ContentResolver, uri: Uri, text: String) = withContext(Dispatchers.IO) {
@@ -193,12 +287,23 @@ object SafFiles {
         return buf.toByteArray()
     }
 
-    /** Removes a document created for an export that failed or was cancelled (§5.3 step 4). */
-    fun deleteDocument(cr: ContentResolver, uri: Uri) {
-        runCatching { DocumentsContract.deleteDocument(cr, uri) }
+    /**
+     * Removes a document created for an export that failed or was cancelled
+     * (§5.3 step 4), on Dispatchers.IO. Runs also in a cancelled coroutine
+     * (it is called from the clean-up of a cancelled export).
+     */
+    suspend fun deleteDocument(cr: ContentResolver, uri: Uri) {
+        withContext(NonCancellable + Dispatchers.IO) { runCatching { DocumentsContract.deleteDocument(cr, uri) } }
     }
 
-    private suspend fun pump(input: InputStream, output: OutputStream, total: Long, onProgress: (Long, Long) -> Unit) {
+    /** Deletes [dir] recursively on Dispatchers.IO, also in a cancelled coroutine (finally blocks). */
+    suspend fun deleteStaging(dir: File?) {
+        if (dir == null) return
+        withContext(NonCancellable + Dispatchers.IO) { dir.deleteRecursively() }
+    }
+
+    /** Copies [input] to [output]; more than [limit] bytes fail with [InsufficientSpaceException]. */
+    internal suspend fun pump(input: InputStream, output: OutputStream, total: Long, limit: Long, onProgress: (Long, Long) -> Unit) {
         val buf = ByteArray(256 * 1024)
         var done = 0L
         var lastReport = 0L
@@ -206,6 +311,7 @@ object SafFiles {
             coroutineContext.ensureActive()
             val n = input.read(buf)
             if (n < 0) break
+            if (n > limit - done) throw InsufficientSpaceException("more than $limit bytes")
             output.write(buf, 0, n)
             done += n
             if (done - lastReport >= 1 shl 20) {
