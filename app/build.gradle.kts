@@ -11,6 +11,9 @@ val nativeAbis = (project.findProperty("audacity.abis") as String? ?: "arm64-v8a
 android {
     namespace = "io.github.sakkijarvenpolkka.audacity"
     compileSdk = 36
+    // Needed here too: the app module strips the debug symbols of the
+    // native libraries it packages (without it they ship unstripped).
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "io.github.sakkijarvenpolkka.audacity"
@@ -24,7 +27,8 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
