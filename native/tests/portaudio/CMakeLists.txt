@@ -26,6 +26,9 @@ foreach(_t IN LISTS _pa_tests)
    add_test(NAME portaudio.${_t} COMMAND portaudio-null-test ${_t})
    set_tests_properties(portaudio.${_t} PROPERTIES TIMEOUT 60 LABELS portaudio)
 endforeach()
+# Timing-sensitive (clock drift, callback periods): they fail when other
+# tests load the CPUs, so ctest -j runs them alone
+set_tests_properties(portaudio.drift portaudio.fixed_buffer PROPERTIES RUN_SERIAL TRUE)
 
 # Integration: Audacity's AudioIO (lib-audio-io) on the simulated device
 add_executable(portaudio-audioio-test audioio_monitor_test.cpp)
@@ -33,4 +36,5 @@ target_link_libraries(portaudio-audioio-test PRIVATE audacity-core portaudio::an
 set_target_properties(portaudio-audioio-test PROPERTIES
    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME portaudio.audioio_monitor COMMAND portaudio-audioio-test)
-set_tests_properties(portaudio.audioio_monitor PROPERTIES TIMEOUT 60 LABELS portaudio)
+set_tests_properties(portaudio.audioio_monitor PROPERTIES TIMEOUT 60 LABELS portaudio
+   RUN_SERIAL TRUE)

@@ -13,8 +13,8 @@
    * Yield         -> drain the internal queue (nested, bounded)
    * error dialogs and OK-only message boxes -> non-blocking `dialog` events
    * questions (Yes/No, Cancel button, multi-choice) -> blocking `dialog`
-     events answered with ReplyDialog(); the engine thread waits in a nested
-     loop that drains internal work only
+     events answered with ReplyDialog() (multiChoice: ReplyDialogChoices());
+     the engine thread waits in a nested loop that drains internal work only
    * progress dialogs -> `progress` events; cancel/stop arrive through
      atomics set by CancelProgress(); never null
 
@@ -25,6 +25,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -90,11 +91,26 @@ int Choose(const std::string &title, const std::string &message,
    const std::vector<std::string> &choices, int defaultChoice = 0,
    const std::string &helpPage = {});
 
+//! Blocking multiple choice (`kind:"multiChoice"`, API.md §4.4), e.g. the
+//! streams of a multi-stream file on import.  `defaultChecked[i]` pre-checks
+//! choice i (missing entries are unchecked).
+//! @return the checked indices (ascending, without duplicates; may be
+//!   empty), or std::nullopt when cancelled (replyDialog(id, -1)), when no UI
+//!   is attached, or when the engine is stopping.  replyDialog(id, b >= 0)
+//!   accepts the default checks.
+std::optional<std::vector<int>> ChooseMany(const std::string &title,
+   const std::string &message, const std::vector<std::string> &choices,
+   const std::vector<bool> &defaultChecked = {},
+   const std::string &helpPage = {});
+
 //! Manual page id -> URL (port of HelpSystem::ShowHelp's name mangling)
 std::string HelpUrl(const std::string &pageId);
 
 // ---- spine internals --------------------------------------------------
 void Reply(int dialogId, int button);
+//! ReplyDialogChoices(): answers a multiChoice dialog (for other blocking
+//! dialogs a single index is taken as the button/choice, else -1)
+void ReplyChoices(int dialogId, const std::vector<int> &indices);
 //! Answers every pending blocking dialog with -1 (Stop())
 void CancelAll();
 

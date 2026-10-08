@@ -133,6 +133,11 @@ void ReplyDialog(int dialogId, int button)
    Dialogs::Reply(dialogId, button);
 }
 
+void ReplyDialogChoices(int dialogId, const std::vector<int> &indices)
+{
+   Dialogs::ReplyChoices(dialogId, indices);
+}
+
 void CancelProgress(int progressId, bool stop)
 {
    UiServices::CancelProgress(progressId, stop);

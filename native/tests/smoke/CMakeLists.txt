@@ -11,3 +11,4 @@ target_compile_definitions(audacity-smoke PRIVATE
 set_target_properties(audacity-smoke PROPERTIES
    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 add_test(NAME smoke COMMAND audacity-smoke)
+set_tests_properties(smoke PROPERTIES LABELS smoke)

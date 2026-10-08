@@ -23,6 +23,7 @@
 #include "ExportPluginRegistry.h"
 #include "Edit.h"
 #include "Import.h"
+#include "Language.h"
 #include "PluginManager.h"
 #include "Project.h"
 #include "ProjectRate.h"
@@ -64,6 +65,12 @@ json AppInfo(const json &)
       (void)plugin;
       ++effects;
    }
+   // English is built in; the others are the installed catalogs
+   json languages = json::array({ "en" });
+   for (const auto &code : Language::Installed())
+      if (code != "en")
+         languages.push_back(code);
+
    const bool nyquist = wxFileName::FileExists(
       FromUtf8(Session::Get().GetPaths().nyquistDir + "/nyquist.lsp"));
 
@@ -77,7 +84,9 @@ json AppInfo(const json &)
       { "importers", std::move(importers) },
       { "exporters", std::move(exporters) },
       { "effectsCount", effects },
-      { "nyquist", nyquist } };
+      { "nyquist", nyquist },
+      { "language", Language::Current() },
+      { "languages", std::move(languages) } };
 }
 
 json ViewSet(const json &args)
@@ -138,11 +147,30 @@ json MakeTestTrack(const json &args)
 }
 
 //! Asks a question through BasicUI (blocking `dialog` event): for tests and
-//! UI development.  {message, title?, cancel?:bool, choices?:[..]}
+//! UI development.  {message, title?, cancel?:bool, choices?:[..]}; with
+//! multiChoice:true (+ defaultChecked?:[bool]) it asks through
+//! Dialogs::ChooseMany -> {choices:[int]} or {result:"cancel"}
 json DebugAsk(const json &args)
 {
    const auto message = FromUtf8(OptString(args, "message").value_or("?"));
    const auto title = FromUtf8(OptString(args, "title").value_or("Audacity"));
+   if (OptBool(args, "multiChoice").value_or(false)) {
+      std::vector<bool> defaultChecked;
+      if (auto d = args.find("defaultChecked"); d != args.end() && !d->is_null()) {
+         if (!d->is_array())
+            Fail(ErrorCode::INVALID_ARGS, "argument 'defaultChecked' must be an array");
+         for (const auto &b : *d) {
+            if (!b.is_boolean())
+               Fail(ErrorCode::INVALID_ARGS, "defaultChecked must hold booleans");
+            defaultChecked.push_back(b.get<bool>());
+         }
+      }
+      auto chosen = Dialogs::ChooseMany(ToUtf8(title), ToUtf8(message),
+         ArgStringArray(args, "choices"), defaultChecked);
+      if (!chosen)
+         return json{ { "result", "cancel" } };
+      return json{ { "choices", *chosen } };
+   }
    auto it = args.find("choices");
    if (it != args.end() && it->is_array()) {
       TranslatableStrings choices;

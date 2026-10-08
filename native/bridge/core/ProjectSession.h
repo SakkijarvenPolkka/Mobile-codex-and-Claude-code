@@ -8,7 +8,7 @@
   Lifecycle of one AudacityProject without project windows: the non-GUI
   parts of Audacity 3.7.9 src/ProjectManager.cpp (New, OnCloseWindow),
   src/ProjectFileManager.cpp (ReadProjectFile, OpenProjectFile, Save,
-  DoSave, SaveAs, SaveCopy, CompactProjectOnClose, CloseProject,
+  DoSave, SaveAs, SaveCopy, Compact, CompactProjectOnClose, CloseProject,
   DiscardAutosave) and src/AutoRecoveryDialog.cpp (recovery scan and
   discard).  See init-and-project.md §7.
 
@@ -17,6 +17,7 @@
 **********************************************************************/
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -63,6 +64,21 @@ public:
    //! port of the non-interactive part of ProjectFileManager::SaveCopy
    bool SaveCopy(const FilePath &fileName, std::string &error);
 
+   //! The numbers of the desktop's "Compact Project" question
+   struct CompactInfo {
+      int64_t totalBytes = 0;  //!< all sample blocks in the database
+      int64_t usedBytes = 0;   //!< blocks that compaction keeps
+      int64_t fileBytes = 0;   //!< the .aup3 file + its -wal file
+      int64_t freeBytes = -1;  //!< free space on its file system (-1: unknown)
+   };
+   CompactInfo GetCompactInfo();
+   //! port of ProjectFileManager::Compact without the question (Kotlin asks
+   //! with GetCompactInfo first): discards the undo states other than the
+   //! current and the saved one, clears the clipboard if it holds this
+   //! project's audio, vacuums the database and renames the current state
+   //! "Compacted project file".  @return the freed bytes (>= 0)
+   int64_t Compact();
+
    //! port of the non-GUI part of ProjectManager::OnCloseWindow (no save
    //! prompt: Kotlin asks first).  Idempotent.
    void Close();
@@ -88,6 +104,11 @@ private:
       std::shared_ptr<TrackList> &lastSavedTracks, const FilePath &fileName,
       bool discardAutosave);
    bool DoSave(const FilePath &fileName, bool fromSaveAs, std::string &error);
+   //! The track lists whose sample blocks a compaction keeps; sets the
+   //! range of undo states it keeps ([least] and [greatest]).  `live`: also
+   //! the project's TrackList (not while recording appends to it)
+   std::vector<const TrackList *> CompactionTrackLists(
+      size_t &least, size_t &greatest, bool live);
    void Subscribe();
    void Abandon();
 

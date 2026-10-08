@@ -95,10 +95,14 @@ unsaved/temporary projects and autosave in `noBackupDir/SessionData`, SQLite
 temp files and staging for import/export in `cacheDir/tmp`, `cacheDir/import`,
 `cacheDir/export`.
 
-Kotlin extracts `assets/audacity/{nyquist,plug-ins}` to `filesDir/audacity/`
-before calling `start` (re-extract when the app version changes; replace only
-`nyquist/` and `plug-ins/`, never the whole `filesDir/audacity`, which also
-holds the preferences). `nyquistDir`/`pluginsDir` are optional (defaults
+Kotlin extracts `assets/audacity/{nyquist,plug-ins,locale}` to
+`filesDir/audacity/` before calling `start` (re-extract when the app version
+changes; replace only `nyquist/`, `plug-ins/` and `locale/`, never the whole
+`filesDir/audacity`, which also holds the preferences). `locale/` holds the
+engine's gettext catalogs, `locale/<lang>/LC_MESSAGES/audacity.mo` (packaged
+from `native/audacity/locale/<lang>/LC_MESSAGES/audacity.mo`; v1: `ko`); the
+engine picks the catalog from `locale` and the `language` setting (§5.1).
+`nyquistDir`/`pluginsDir` are optional (defaults
 `filesDir/audacity/nyquist` and `.../plug-ins`); the engine searches
 `<parent>/nyquist/nyquist.lsp` and `<parent>/plug-ins/*.ny`, so the last path
 components must be `nyquist` and `plug-ins`. The engine creates the
@@ -120,8 +124,12 @@ Response (always a JSON object):
 
 ```json
 { "ok": true,  "result": { ... }, "generation": 42 }
-{ "ok": false, "error": { "code": "AUDIO_BUSY", "message": "human readable (English)" }, "generation": 42 }
+{ "ok": false, "error": { "code": "AUDIO_BUSY", "message": "human readable" }, "generation": 42 }
 ```
+
+`message` is English, or in the engine language (§5.1 `language`) when it
+comes from the libraries' translated strings; Kotlin shows it but never
+parses it (use `code`).
 
 * `generation` is the project-model generation after the command (0 when no
   project is open). It increases after every mutation, undo, redo, rollback and
@@ -184,7 +192,7 @@ snapshot (3.7.9 treats mute/solo this way).
 
 | command | args | result | flags |
 |---|---|---|---|
-| `app.info` | – | `{audacityVersion:"3.7.9", engineVersion, wxVersion, sqliteVersion, abi, libraries:[...], importers:[...], exporters:[...], effectsCount, nyquist:bool}` | I |
+| `app.info` | – | `{audacityVersion:"3.7.9", engineVersion, wxVersion, sqliteVersion, abi, libraries:[...], importers:[...], exporters:[...], effectsCount, nyquist:bool, language, languages:[..]}` — `language`: the language of the engine's strings now (`"en"`, `"ko"`); `languages`: `"en"` + the installed catalogs (valid `language` setting values besides `"system"`) | I |
 | `settings.get` | – | `{settings: Settings}` (§5.1) | I |
 | `settings.set` | `{settings: {partial Settings}}` | `{settings: Settings}` | I (device changes apply on next stream) |
 
@@ -208,9 +216,9 @@ snapshot (3.7.9 treats mute/solo this way).
 | `project.tags.set` | `{tags:[{name,value}]}` | `{}` | M |
 | `project.list` | – | `{projects:[{path,name,modifiedMs,sizeBytes}]}` in `filesDir/Projects` (safety backups `*~.aup3` hidden; `sizeBytes` includes the `-wal` file) | I |
 | `project.delete` | `{path}` | `{}` | – (not the open one; also deletes `-wal`/`-shm`) |
-| `project.rename` | `{path, newName}` | `{path}` (new path) | – Renames `<name>.aup3` (+ `-wal`/`-shm`) in `filesDir/Projects`; `FAILED` for the open project or when the target exists. |
-| `project.compact` | – | `{freedBytes}` | M, L. Port of `ProjectFileManager::Compact`: discards undo history and vacuums the database (desktop *File ▸ Compact Project*). |
-| `project.compactInfo` | – | `{totalBytes, usedBytes, fileBytes, freeBytes}` | I |
+| `project.rename` | `{path, newName}` | `{path}` (new path) | – Renames `<name>.aup3` (+ `-wal`/`-shm`) in `filesDir/Projects`; `FAILED` for the open project or when the target exists. `newName` is trimmed and a trailing `.aup3` dropped; `INVALID_ARGS` when it is empty, contains `/`, `\` or control characters, starts with `.` or ends with `~` (hidden by `project.list`); `NOT_FOUND` for a missing `path`. Same name = no-op. |
+| `project.compact` | – | `{freedBytes}` | M, L. Port of `ProjectFileManager::Compact`: discards the undo states except the current and the last saved one (the current one is renamed "Compacted project file"), clears the clipboard if it holds this project's audio, and vacuums the database (desktop *File ▸ Compact Project*; Kotlin asks first with `compactInfo`). `dirty` is unchanged. `freedBytes` ≥ 0 (file + `-wal`). |
+| `project.compactInfo` | – | `{totalBytes, usedBytes, fileBytes, freeBytes}` | I. The numbers of the desktop's question: `totalBytes` = all sample blocks in the database, `usedBytes` = the blocks compaction keeps (≈ `totalBytes − usedBytes` can be recovered), `fileBytes` = `.aup3` + `-wal` size, `freeBytes` = free space on its file system (`-1` unknown). |
 
 #### history (spine)
 
@@ -233,7 +241,7 @@ snapshot (3.7.9 treats mute/solo this way).
 | command | args | result | flags |
 |---|---|---|---|
 | `debug.makeTestTrack` | `{seconds?=1, frequency?=440, channels?=1, rate?=project rate, amplitude?=0.5}` | `{id}` | M. Appends a sine-tone WaveTrack ("Test Tone N"), one undo state. |
-| `debug.ask` | `{message?, title?, cancel?:bool, choices?:[..]}` | `{result:"yes"\|"no"\|"cancel"\|"none"}` or `{choice}` | I. Asks through BasicUI (blocking `dialog`). |
+| `debug.ask` | `{message?, title?, cancel?:bool, choices?:[..], multiChoice?:bool, defaultChecked?:[bool]}` | `{result:"yes"\|"no"\|"cancel"\|"none"}` or `{choice}`; with `multiChoice:true` (+ `choices`) `{choices:[int]}` or `{result:"cancel"}` | I. Asks through BasicUI (blocking `dialog`), or `kind:"multiChoice"` through the spine's `Dialogs::ChooseMany`. |
 | `debug.progress` | `{seconds?=1}` | `{stopped:bool}` | I, L. Runs a BasicUI progress; `CANCELLED` when cancelled. |
 
 #### select / playRegion (edit module)
@@ -260,6 +268,23 @@ snapshot (3.7.9 treats mute/solo this way).
 | `playRegion.clear` | – | S, I |
 | `playRegion.toggle` | – | S, I |
 
+Notes (edit module): every selection command ends with
+`ProjectHistory::ModifyState(false)` (the selection is part of the undo
+state; `select.trackHeader` too, where 3.7.9 autosaves); `select.focus` and
+`playRegion.*` do not touch the undo state. Commands whose 3.7.9 menu item
+needs `EditableTracksSelected` (`select.cursorToTrackStart/End`,
+`select.zeroCrossing`) fail with `NO_SELECTION` (with `selectAllOnNone`
+they first select all audio, like the edit commands); the always-enabled ones
+(`select.startToCursor`, `cursorToEnd`, `trackStartToEnd`, the clip
+navigation) silently do nothing when there is nothing to do. Clip navigation
+searches the selected wave tracks, or all wave tracks when none is selected.
+`select.clip` = a tap on a clip's title bar: only that track selected and
+focused, the time selection = the clip's play region. `select.zeroCrossing`
+fails with `FAILED` when a stretched clip lies in a search window (3.7.9
+message). `select.set`/`playRegion.set` order `t0`/`t1`; `playRegion.set`
+rejects `t0 < 0` (`INVALID_ARGS`); unknown ids are `NOT_FOUND` (nothing is
+changed).
+
 #### edit (edit module) — all **M**, no args, results `{}`
 
 `edit.cut`, `edit.copy` (**S**: no undo entry, no generation bump; the clipboard is in the snapshot), `edit.paste`, `edit.delete`,
@@ -269,41 +294,58 @@ snapshot (3.7.9 treats mute/solo this way).
 
 `edit.clipboardInfo` → `{empty, t0, t1, trackCount}` (I).
 
+Preconditions are the 3.7.9 menu flags; when they are missing the command
+fails with `NO_SELECTION`: cut, delete, copy, duplicate, splitCut,
+splitDelete, detachAtSilences need a time selection and selected editable
+tracks; silence, trim, splitNew a time selection and selected wave tracks;
+split selected wave tracks; join a time selection that intersects ≥ 2 clips
+of a selected wave track. With `selectAllOnNone` (`/GUI/SelectAllOnNone`)
+every command except cut, delete and join first selects all audio (3.7.9
+`DoSelectAllAudio`) instead. `edit.paste`: `FAILED` when the clipboard is
+empty, when the clipboard has more tracks than the selected tracks (3.7.9
+message), and when `editClipsCanMove` is off and there is no room after the
+clip at the cursor (3.7.9 "There is not enough room available to paste the
+selection", rolled back); with no track selected it pastes into new tracks
+at 0 (selected, the first one focused). Undo descriptions are the 3.7.9
+strings ("Cut", "Paste", "Delete", "Cut and leave gap", "Split Delete",
+"Silence", "Trim Audio", "Duplicate", "Split", "Split New", "Join",
+"Detach").
+
 #### tracks (edit module)
 
 | command | args | flags |
 |---|---|---|
 | `tracks.add` | `{kind:"mono"\|"stereo"\|"label"}` → `{id}` | M |
-| `tracks.remove` | `{ids:[..]}` | M |
-| `tracks.mixAndRender` | `{toNewTrack:bool}` | M, L |
-| `tracks.resample` | `{rate}` (selected wave tracks) | M, L |
-| `tracks.setGain` | `{id, gain, final:bool}` | I. `final:false` (while dragging): model change only, snapshot throttled ≤ 10 Hz, no history entry; `final:true`: `PushState("Moved volume slider", "Volume", CONSOLIDATE)` (M). |
-| `tracks.setPan` | `{id, pan, final:bool}` | I, same as setGain ("Moved pan slider", "Pan"). |
-| `tracks.setMute` | `{id, mute}` | U, I |
-| `tracks.setSolo` | `{id, solo}` (semantics from the `/GUI/Solo` pref, `soloMode`) | U, I |
+| `tracks.remove` | `{ids:[..]}` | M. One id: "Removed track '%s'." / "Track Remove" (focus moves to the next track), several: "Removed audio track(s)" / "Remove Track". `NOT_FOUND` for an unknown id, `INVALID_ARGS` for `[]`. |
+| `tracks.mixAndRender` | `{toNewTrack:bool}` → `{id}` (the new track) | M, L. Selected wave tracks (`NO_SELECTION` without); `CANCELLED` when the progress is cancelled. |
+| `tracks.resample` | `{rate}` (selected wave tracks; 1 … 1000000) | M, L. One consolidated history entry for all tracks. |
+| `tracks.setGain` | `{id, gain, final:bool}` (gain 0 … 63.1 = the ±36 dB slider; `final` defaults to true) | I. `final:false` (while dragging): model change only, snapshot throttled ≤ 10 Hz (a trailing snapshot follows), no history entry, no generation bump; `final:true`: `PushState("Moved volume slider", "Volume", CONSOLIDATE)` (M). `NOT_FOUND` for a non-wave track. |
+| `tracks.setPan` | `{id, pan, final:bool}` (pan −1 … 1) | I, same as setGain ("Moved pan slider", "Pan"). |
+| `tracks.setMute` | `{id, mute}` (sets the value; when it changes, 3.7.9's mute button logic runs: with `soloMode` Simple the solo indicators follow) | U, I |
+| `tracks.setSolo` | `{id, solo}` (semantics from the `/GUI/Solo` pref, `soloMode`: Simple = radio buttons that mute the others, Multi = independent; nothing happens when the value does not change) | U, I |
 | `tracks.muteAll` | `{mute:bool}` (Tracks ▸ Mute/Unmute ▸ Mute/Unmute All Tracks) | U, I |
-| `tracks.rename` | `{id, name}` | M |
-| `tracks.move` | `{id, to:"up"\|"down"\|"top"\|"bottom"}` | M |
-| `tracks.makeStereo` | `{id}` (with the track below) | M |
-| `tracks.splitStereo` | `{id}` | M |
-| `tracks.splitStereoToMono` | `{id}` | M |
-| `tracks.swapChannels` | `{id}` | M |
-| `tracks.setRate` | `{id, rate}` (no resampling, like the track menu "Rate") | M |
-| `tracks.setFormat` | `{id, format}` | M, L |
-| `tracks.align` | `{mode:"startToZero"\|"startToCursor"\|"startToSelEnd"\|"endToCursor"\|"endToSelEnd"\|"endToEnd"\|"together", moveSelection?:bool}` (`moveSelection` default = pref `/GUI/MoveSelectionWithTracks`) | M |
+| `tracks.rename` | `{id, name}` | M (no history entry when the name is unchanged) |
+| `tracks.move` | `{id, to:"up"\|"down"\|"top"\|"bottom"}` | M (no history entry when the track cannot move) |
+| `tracks.makeStereo` | `{id}` (with the track directly below; both mono wave tracks, else `INVALID_ARGS`) → `{id}` (the stereo track keeps the upper track's id) | M. When the clips do not match (or realtime effects exist) the engine asks first (blocking Yes/No `dialog`, 3.7.9 text); "No" → `CANCELLED`. |
+| `tracks.splitStereo` | `{id}` (stereo, else `INVALID_ARGS`) → `{ids:[left, right]}` (left keeps the id; pans −1/+1) | M |
+| `tracks.splitStereoToMono` | `{id}` → `{ids:[left, right]}` (pans unchanged) | M |
+| `tracks.swapChannels` | `{id}` (stereo, else `INVALID_ARGS`) | M |
+| `tracks.setRate` | `{id, rate}` (no resampling, like the track menu "Rate"; 1 … 1000000) | M |
+| `tracks.setFormat` | `{id, format}` | M, L (no history entry when unchanged) |
+| `tracks.align` | `{mode:"startToZero"\|"startToCursor"\|"startToSelEnd"\|"endToCursor"\|"endToSelEnd"\|"endToEnd"\|"together", moveSelection?:bool}` (`moveSelection` default = pref `/GUI/MoveSelectionWithTracks`; `endToEnd`/`together` never move the selection, like 3.7.9's `OnAlignNoSync`) | M. Selected audio tracks (`NO_SELECTION` without). |
 | `tracks.sort` | `{by:"time"\|"name"}` | M |
 
 #### clips / labels (edit module)
 
 | command | args | flags |
 |---|---|---|
-| `clips.move` | `{trackId, clipIndex, generation, newStart, toTrackId?}` | M (time shift; snaps nothing) |
-| `clips.rename` | `{trackId, clipIndex, generation, name}` | M |
-| `labels.add` | `{title?:string}` at the selection (first selected label track, or a new label track) → `{trackId, index}` | M, I |
-| `labels.edit` | `{trackId, index, generation?, title?, t0?, t1?}` → `{index}` (new position: time edits re-sort with `LabelTrack::SortLabels`) | M |
-| `labels.remove` | `{trackId, index, generation?}` | M |
-| `labels.import` | `{path}` (text/SRT/WebVTT file in app storage) → `{trackId}` | M. Port of *File ▸ Import ▸ Labels* (new label track named after the file). |
-| `labels.export` | `{path, format:"text"\|"subrip"\|"webvtt"}` | – Port of *File ▸ Export ▸ Export Labels* (all label tracks). |
+| `clips.move` | `{trackId, clipIndex, generation, newStart, toTrackId?}` → `{trackId, clipIndex, start}` (where the clip ended up) | M (time shift; snaps nothing). Port of 3.7.9's clip drag for one clip: the offset is a whole number of samples; in the same track the clip stops at its neighbours (`start` tells where; no history entry when it cannot move); into another wave track with the same channel count (else `INVALID_ARGS`) it fits within a 20 px tolerance at the current zoom or fails with `FAILED`, and is resampled to that track's rate. "Time shifted tracks/clips right/left %.02f seconds" / "Moved clips to another track", "Move Clip". |
+| `clips.rename` | `{trackId, clipIndex, generation, name}` | M ("Modified Clip Name" / "Clip Name Edit"; nothing when unchanged) |
+| `labels.add` | `{title?:string}` at the selection — at the play position while this project plays or records (3.7.9 *Add Label at Playback Position*) — in the focused label track, else the first selected label track, else a new label track (selected and focused) → `{trackId, index}` | M, I |
+| `labels.edit` | `{trackId, index, generation?, title?, t0?, t1?}` → `{index}` (new position: time edits re-sort with `LabelTrack::SortLabels`) | M ("Modified Label" / "Label Edit"; no entry when nothing changes; `t1 < t0` → `INVALID_ARGS`) |
+| `labels.remove` | `{trackId, index, generation?}` | M ("Deleted Label" / "Label Edit") |
+| `labels.import` | `{path}` (text or SubRip `.srt` file in app storage) → `{trackId}` | M. Port of *File ▸ Import ▸ Labels* (new label track named after the file, the only selected track). `NOT_FOUND` for a missing file; `.vtt`/`.json` → `UNSUPPORTED` (3.7.9's `LabelTrack::Import` cannot read them); unreadable lines are skipped with a non-blocking `dialog`. |
+| `labels.export` | `{path, format:"text"\|"subrip"\|"webvtt"\|"podcastChapters"}` → `{path, labels}` (label count) | – Port of *File ▸ Export ▸ Export Labels* (all label tracks; an existing file is replaced; UTF-8). `FAILED` without label tracks or when the file cannot be written. |
 
 Label references with a `generation` older than the current one fail with
 `STALE` (indices shift on every add/sort).
@@ -490,8 +532,12 @@ Cancel (and Stop when `stoppable`) calling `NativeBridge.cancelProgress`.
   dismissed/cancel). `kind:"choice"` dialogs (BasicUI multi-dialog) carry
   `choices:[..]` and the reply is the chosen index.
 * `kind:"multiChoice"` (e.g. choosing the streams of a multi-stream file on
-  import) carries `choices:[..]` and `defaultChecked:[bool]`; Kotlin answers
+  import) carries `choices:[..]` and `defaultChecked:[bool]` (same length)
+  and `buttons:["OK","Cancel"]` (translated); Kotlin answers
   with `replyDialogChoices(id, indices)` or cancels with `replyDialog(id, -1)`.
+  The engine sorts the indices and drops duplicates and out-of-range values;
+  an empty array is a valid answer ("none"). `replyDialog(id, b ≥ 0)` accepts
+  the `defaultChecked` choices.
 
 ### 4.5 `transport`
 
@@ -534,11 +580,20 @@ lines (wxLog), for a debug screen. Rate limited.
   "selectAllOnNone": false,           // /GUI/SelectAllOnNone
   "syncLock": false,                  // /GUI/SyncLockTracks
   "pasteAsNewClips": false,           // /GUI/PasteAsNewClips
-  "moveSelectionWithTracks": true,    // /GUI/MoveSelectionWithTracks
+  "moveSelectionWithTracks": false,   // /GUI/MoveSelectionWithTracks (desktop default false)
   "preferNewTrackRecord": false,      // /GUI/PreferNewTrackRecord (R behaves like Shift+R)
-  "dropoutDetection": true            // /Warnings/DropoutDetected
+  "dropoutDetection": true,           // /Warnings/DropoutDetected
+  "language": "system"                // /Android/Language: "system" | "en" | "ko" (or another code of
+                                      // app.info.languages); language of the engine's strings
+                                      // (effect names, history labels, messages); "system" = the
+                                      // start config's locale ("ko_KR" -> "ko"), English when no
+                                      // catalog matches. Applied immediately (snapshot re-emitted).
 }
 ```
+
+`settings.set` validates every key first and writes nothing when one is
+invalid (`INVALID_ARGS`). `syncLock` also switches the open project
+(snapshot flags `SL`/`NSL`).
 
 ### 5.2 ProjectInfo
 

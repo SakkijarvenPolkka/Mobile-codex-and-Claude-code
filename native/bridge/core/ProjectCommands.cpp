@@ -7,7 +7,9 @@
 
   project.* commands (API.md §3.3 "project").  Pre-checks of
   project.open follow Audacity 3.7.9 ProjectFileManager::OpenFile; the
-  metadata edit follows TagsEditorDialog::EditProjectMetadata.
+  metadata edit follows TagsEditorDialog::EditProjectMetadata; the rename
+  follows ProjectFileIO::MoveProject; project.compact is
+  ProjectSession::Compact (ProjectFileManager::Compact).
 
 **********************************************************************/
 #include "SpineCommands.h"
@@ -138,12 +140,9 @@ void OpenInto(const FilePath &fileName)
    Session::Get().SetCurrent(std::move(fresh));
 }
 
-json ProjectNew(const json &args)
+json ProjectNew(const json &)
 {
    auto &session = Session::Get();
-   const bool closeCurrent = OptBool(args, "closeCurrent").value_or(true);
-   if (!closeCurrent && session.Project())
-      Fail(ErrorCode::UNSUPPORTED, "only one project can be open at a time");
    session.CloseCurrent();
    session.SetCurrent(ProjectSession::CreateNew());
    return json::object();
@@ -330,6 +329,109 @@ json ProjectDelete(const json &args)
    return json::object();
 }
 
+//! A file name for project.rename: trimmed, without ".aup3"; rejects what
+//! the file system or project.list cannot handle
+wxString RequireProjectName(const json &args)
+{
+   auto name = FromUtf8(ArgString(args, "newName"));
+   name.Trim(true).Trim(false);
+   if (EndsWithNoCase(name, wxT(".aup3")))
+      name.RemoveLast(5);
+   if (name.empty())
+      Fail(ErrorCode::INVALID_ARGS, "the new name is empty");
+   for (size_t i = 0; i < name.length(); ++i) {
+      const auto c = name[i].GetValue();
+      if (c < 0x20 || c == 0x7f || c == '/' || c == '\\')
+         Fail(ErrorCode::INVALID_ARGS,
+            "the new name contains a character not allowed in file names");
+   }
+   // Hidden files and safety backups ("<name>~.aup3") are not listed
+   if (name[0] == wxT('.') || name.Last() == wxT('~'))
+      Fail(ErrorCode::INVALID_ARGS,
+         "the new name must not start with '.' or end with '~'");
+   // NAME_MAX for "<name>.aup3-journal"
+   if (ToUtf8(name).size() + 13 > 255)
+      Fail(ErrorCode::INVALID_ARGS, "the new name is too long");
+   return name;
+}
+
+//! Database files that belong to a project file (ProjectFileIO's
+//! AuxiliaryFileSuffixes + the rollback journal)
+const wxChar *const kAuxiliarySuffixes[] = {
+   wxT("-wal"), wxT("-shm"), wxT("-journal") };
+
+json ProjectRename(const json &args)
+{
+   const auto path = RequireAbsolutePath(args);
+   if (!EndsWithNoCase(path, wxT(".aup3")))
+      Fail(ErrorCode::INVALID_ARGS, "not a project file (.aup3)");
+   const auto name = RequireProjectName(args);
+   if (!wxFileExists(path))
+      Fail(ErrorCode::NOT_FOUND, "no such file " + ToUtf8(path));
+   if (IsOpen(path))
+      Fail(ErrorCode::FAILED, "cannot rename the open project");
+   wxFileName fn{ path };
+   fn.SetName(name);
+   fn.SetExt(wxT("aup3"));
+   const auto target = fn.GetFullPath();
+   if (target == path)
+      return json{ { "path", ToUtf8(path) } };
+   if (wxFileExists(target) || wxDirExists(target))
+      Fail(ErrorCode::FAILED,
+         "a project named '" + ToUtf8(name) + "' already exists");
+
+   wxLogNull noLog;
+   // Leftovers of a deleted database must not be attached to this one
+   for (const auto suffix : kAuxiliarySuffixes)
+      if (wxFileExists(target + suffix) && !wxRemoveFile(target + suffix))
+         Fail(ErrorCode::FAILED, "cannot remove " + ToUtf8(target + suffix));
+
+   // Like ProjectFileIO::MoveProject: the database first, then its -wal/-shm
+   // (a -wal may hold committed transactions); back out on failure
+   std::vector<std::pair<wxString, wxString>> renamed;
+   const auto backOut = [&] {
+      for (auto it = renamed.rbegin(); it != renamed.rend(); ++it)
+         wxRenameFile(it->second, it->first, false);
+   };
+   if (!wxRenameFile(path, target, false))
+      Fail(ErrorCode::FAILED, "could not rename " + ToUtf8(path));
+   renamed.emplace_back(path, target);
+   for (const auto suffix : kAuxiliarySuffixes) {
+      if (!wxFileExists(path + suffix))
+         continue;
+      if (!wxRenameFile(path + suffix, target + suffix, false)) {
+         backOut();
+         Fail(ErrorCode::FAILED, "could not rename " + ToUtf8(path + suffix));
+      }
+      renamed.emplace_back(path + suffix, target + suffix);
+   }
+
+   // A project with an autosave left by a crash stays recoverable
+   if (!ActiveProjects::Find(path).empty()) {
+      ActiveProjects::Remove(path);
+      ActiveProjects::Add(target);
+   }
+   return json{ { "path", ToUtf8(target) } };
+}
+
+json ProjectCompact(const json &)
+{
+   auto &session = Session::Get();
+   session.RequireProject();
+   const auto freed = session.Current()->Compact();
+   return json{ { "freedBytes", freed } };
+}
+
+json ProjectCompactInfo(const json &)
+{
+   auto &session = Session::Get();
+   session.RequireProject();
+   const auto info = session.Current()->GetCompactInfo();
+   return json{ { "totalBytes", info.totalBytes },
+      { "usedBytes", info.usedBytes }, { "fileBytes", info.fileBytes },
+      { "freeBytes", info.freeBytes } };
+}
+
 } // namespace
 
 void RegisterProjectCommands(ModuleRegistry &registry)
@@ -357,6 +459,10 @@ void RegisterProjectCommands(ModuleRegistry &registry)
       NeedsProject | NeedsIdleAudio | Mutates);
    registry.AddCommand("project.list", ProjectList);
    registry.AddCommand("project.delete", ProjectDelete, NeedsIdleAudio);
+   registry.AddCommand("project.rename", ProjectRename, NeedsIdleAudio);
+   registry.AddCommand("project.compact", ProjectCompact,
+      NeedsProject | NeedsIdleAudio | Mutates | LongRunning);
+   registry.AddCommand("project.compactInfo", ProjectCompactInfo, NeedsProject);
 }
 
 } // namespace aubridge

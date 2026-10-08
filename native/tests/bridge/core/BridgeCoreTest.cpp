@@ -16,8 +16,14 @@
      undo/redo with stable track ids, history list/goto, tags with undo
    * saveAs (Unicode file name) -> close -> open round trip, saveCopy,
      list, delete
-   * blocking dialogs answered with ReplyDialog, progress cancel/stop
-   * Stop() and a restart in the same process
+   * blocking dialogs answered with ReplyDialog, multiChoice dialogs
+     answered with ReplyDialogChoices, progress cancel/stop
+   * settings added after phase 1 (latency trim, sync-lock, paste/record
+     behaviour, dropout detection, language)
+   * project.rename (with -wal/-shm), project.compactInfo, project.compact
+     (undo history, freed space, dirty flag, reopen)
+   * Stop() and a restart in the same process; a restart with locale ko_KR
+     and the Korean catalog: engine strings in Korean, `language` setting
 
   Exit code 0 on success.  BRIDGE_TEST_VERBOSE=1 prints the events.
 
@@ -51,6 +57,28 @@ std::string ReadFile(const std::string &path)
    return ss.str();
 }
 
+bool WriteFile(const std::string &path, const std::string &contents)
+{
+   std::ofstream out(path, std::ios::binary | std::ios::trunc);
+   out << contents;
+   return bool(out);
+}
+
+bool CopyFile(const std::string &from, const std::string &to)
+{
+   std::ifstream in(from, std::ios::binary);
+   if (!in)
+      return false;
+   std::ofstream out(to, std::ios::binary | std::ios::trunc);
+   out << in.rdbuf();
+   return bool(out);
+}
+
+bool MakeDirs(const std::string &path)
+{
+   return std::system(("mkdir -p '" + path + "'").c_str()) == 0;
+}
+
 bool EndsWith(const std::string &s, const std::string &suffix)
 {
    return s.size() >= suffix.size() &&
@@ -63,8 +91,22 @@ uint64_t Flags(const json &snapshot)
 }
 
 constexpr uint64_t NB = 1ull << 0, TE = 1ull << 4, UA = 1ull << 9,
-   RA = 1ull << 10, WE = 1ull << 13, HW = 1ull << 22, PROJECT_OPEN = 1ull << 34,
-   FOC = 1ull << 32;
+   RA = 1ull << 10, WE = 1ull << 13, SL = 1ull << 14, NSL = 1ull << 15,
+   HW = 1ull << 22, PROJECT_OPEN = 1ull << 34, FOC = 1ull << 32;
+
+// Korean catalog strings (native/audacity/locale/ko.po)
+const std::string kKoCreatedNewProject =
+   "\xEC\x83\x88 \xED\x94\x84\xEB\xA1\x9C\xEC\xA0\x9D\xED\x8A\xB8\xEB\xA5\xBC "
+   "\xEB\xA7\x8C\xEB\x93\xA4\xEC\x97\x88\xEC\x8A\xB5\xEB\x8B\x88\xEB\x8B\xA4";
+   // "새 프로젝트를 만들었습니다" = "Created new project"
+const std::string kKoMetadataTags =
+   "\xEB\xA9\x94\xED\x83\x80\xEB\x8D\xB0\xEC\x9D\xB4\xED\x84\xB0 "
+   "\xED\x83\x9C\xEA\xB7\xB8";
+   // "메타데이터 태그" = "Metadata Tags"
+const std::string kKoCouldNotOpenFile =
+   "\xED\x8C\x8C\xEC\x9D\xBC\xEC\x9D\x84 \xEC\x97\xB4 \xEC\x88\x98 "
+   "\xEC\x97\x86\xEC\x8A\xB5\xEB\x8B\x88\xEB\x8B\xA4";
+   // "파일을 열 수 없습니다" = "Could not open file"
 
 //! The snapshot emitted by the last call: must exist, be emitted before the
 //! response, and carry the response's generation
@@ -79,10 +121,10 @@ json SnapshotOf(Sink &sink, size_t before, const json &envelope)
 }
 
 std::optional<json> StartAndWait(Sink &sink, std::shared_ptr<Sink> pSink,
-   const TempDirs &dirs)
+   const TempDirs &dirs, const json &extraConfig = json::object())
 {
    const auto from = sink.Count();
-   if (!aubridge::Start(dirs.ConfigJson(), pSink))
+   if (!aubridge::Start(dirs.ConfigJson(extraConfig), pSink))
       return std::nullopt;
    auto ready = sink.WaitFor("engine.ready", 180s, from);
    if (!ready) {
@@ -151,6 +193,9 @@ void TestAppInfo()
    CHECK(info["libraries"].size() > 50);
    CHECK(info["importers"].size() >= 5);
    CHECK(info["exporters"].size() >= 5);
+   // locale en_US, no catalog installed yet
+   CHECK(info.value("language", "") == "en");
+   CHECK(info["languages"] == json::array({ "en" }));
    std::fprintf(stderr, "app.info: %zu libraries, %zu importers, %zu exporters, "
       "%d effects, abi %s\n", info["libraries"].size(), info["importers"].size(),
       info["exporters"].size(), info.value("effectsCount", -1),
@@ -220,8 +265,6 @@ void TestNewProject(Sink &sink)
 
    r = Call("project.save");
    CHECK(ErrorCodeOf(r) == "NEEDS_PATH");
-   r = Call("project.new", { { "closeCurrent", false } });
-   CHECK(ErrorCodeOf(r) == "UNSUPPORTED");
 }
 
 void TestTrackAndHistory(Sink &sink)
@@ -558,6 +601,384 @@ void TestProgress(Sink &sink)
    CHECK(Ok(r) && !r["result"].value("stopped", true));
 }
 
+void TestMultiChoice(Sink &sink)
+{
+   // How the "UI" answers the next blocking dialog
+   enum Mode { Choices, Cancel, OkDefaults, NoneChecked, OneIndex };
+   std::atomic<int> mode{ Choices };
+   sink.onBlockingDialog = [&mode](const json &dialog) {
+      const int id = dialog.value("id", -1);
+      const int m = mode.load();
+      std::thread([id, m] {
+         std::this_thread::sleep_for(20ms);
+         switch (m) {
+         case Choices:
+            // out of range and duplicate indices are dropped
+            aubridge::ReplyDialogChoices(id, { 2, 0, 2, 9, -1 });
+            break;
+         case Cancel: aubridge::ReplyDialog(id, -1); break;
+         case OkDefaults: aubridge::ReplyDialog(id, 0); break;
+         case NoneChecked: aubridge::ReplyDialogChoices(id, {}); break;
+         case OneIndex: aubridge::ReplyDialogChoices(id, { 1 }); break;
+         }
+      }).detach();
+   };
+   const json args{ { "multiChoice", true }, { "title", "Streams" },
+      { "message", "Import which streams?" },
+      { "choices", json::array({ "Stream 1", "Stream 2", "Stream 3" }) },
+      { "defaultChecked", json::array({ true, false, true }) } };
+
+   auto before = sink.Count();
+   auto r = Call("debug.ask", args);
+   CHECK_MSG(Ok(r), r.dump());
+   CHECK_MSG(r["result"]["choices"] == json::array({ 0, 2 }), r.dump());
+   auto dialog = sink.Last("dialog", before);
+   CHECK(dialog.has_value());
+   int dialogId = -1;
+   if (dialog) {
+      dialogId = dialog->value("id", -1);
+      CHECK(dialog->value("kind", "") == "multiChoice");
+      CHECK(dialog->value("blocking", false));
+      CHECK(dialog->value("title", "") == "Streams");
+      CHECK(dialog->value("message", "") == "Import which streams?");
+      CHECK((*dialog)["choices"].size() == 3);
+      CHECK((*dialog)["defaultChecked"] == json::array({ true, false, true }));
+      CHECK((*dialog)["buttons"].size() == 2);
+   }
+
+   mode = Cancel;
+   r = Call("debug.ask", args);
+   CHECK(Ok(r) && r["result"].value("result", "") == "cancel" &&
+      !r["result"].contains("choices"));
+
+   mode = OkDefaults;
+   r = Call("debug.ask", args);
+   CHECK_MSG(Ok(r) && r["result"]["choices"] == json::array({ 0, 2 }), r.dump());
+
+   mode = NoneChecked;
+   r = Call("debug.ask", args);
+   CHECK_MSG(Ok(r) && r["result"]["choices"] == json::array(), r.dump());
+
+   // defaultChecked shorter than choices: the rest is unchecked
+   mode = OkDefaults;
+   before = sink.Count();
+   auto shorter = args;
+   shorter["defaultChecked"] = json::array({ false, true });
+   r = Call("debug.ask", shorter);
+   CHECK_MSG(Ok(r) && r["result"]["choices"] == json::array({ 1 }), r.dump());
+   dialog = sink.Last("dialog", before);
+   CHECK(dialog && (*dialog)["defaultChecked"] == json::array({ false, true, false }));
+
+   // ReplyDialogChoices on an ordinary question: one index = that button
+   mode = OneIndex;
+   r = Call("debug.ask", { { "message", "Proceed?" } });
+   CHECK(Ok(r) && r["result"].value("result", "") == "no");
+   sink.onBlockingDialog = {};
+
+   // Late replies to finished dialogs are ignored
+   aubridge::ReplyDialogChoices(dialogId, { 0 });
+   aubridge::ReplyDialog(dialogId, 0);
+   aubridge::ReplyDialogChoices(123456, { 0 });
+
+   CHECK(ErrorCodeOf(Call("debug.ask", { { "multiChoice", true },
+      { "choices", json::array({ "a" }) }, { "defaultChecked", 3 } })) ==
+      "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("debug.ask", { { "multiChoice", true } })) ==
+      "INVALID_ARGS");
+}
+
+void TestSettingsAdditions(Sink &sink, const TempDirs &dirs)
+{
+   auto r = Call("settings.get");
+   CHECK(Ok(r));
+   auto s = r["result"]["settings"];
+   CHECK(s.value("latencyCorrectionMs", -1.0) == 0.0);
+   CHECK(s.contains("syncLock") && !s.value("syncLock", true));
+   CHECK(s.contains("pasteAsNewClips") && !s.value("pasteAsNewClips", true));
+   CHECK(s.contains("moveSelectionWithTracks") &&
+      !s.value("moveSelectionWithTracks", true));
+   CHECK(s.contains("preferNewTrackRecord") && !s.value("preferNewTrackRecord", true));
+   CHECK(s.value("dropoutDetection", false));
+   CHECK(s.value("language", "") == "system");
+   CHECK(s.value("hqDither", "") == "shaped");
+
+   auto before = sink.Count();
+   r = Call("settings.set", { { "settings", {
+      { "latencyCorrectionMs", 12.5 }, { "syncLock", true },
+      { "pasteAsNewClips", true }, { "moveSelectionWithTracks", true },
+      { "preferNewTrackRecord", true }, { "dropoutDetection", false },
+      { "hqDither", "rectangle" }, { "realtimeDither", "none" },
+      { "language", "en" } } } });
+   CHECK_MSG(Ok(r), r.dump());
+   s = r["result"]["settings"];
+   CHECK(s.value("latencyCorrectionMs", 0.0) == 12.5);
+   CHECK(s.value("syncLock", false));
+   CHECK(s.value("pasteAsNewClips", false));
+   CHECK(s.value("moveSelectionWithTracks", false));
+   CHECK(s.value("preferNewTrackRecord", false));
+   CHECK(!s.value("dropoutDetection", true));
+   CHECK(s.value("hqDither", "") == "rectangle");
+   CHECK(s.value("realtimeDither", "") == "none");
+   CHECK(s.value("language", "") == "en");
+   // Sync-lock also applies to the open project: SL in the snapshot that
+   // precedes the response
+   auto snap = sink.Last("snapshot", before);
+   CHECK_MSG(snap && (Flags(*snap) & SL) && !(Flags(*snap) & NSL),
+      snap ? snap->dump().substr(0, 200) : "no snapshot");
+   CHECK(Call("settings.get")["result"]["settings"] == s);
+
+   const auto cfg = ReadFile(dirs.filesDir + "/audacity/audacity.cfg");
+   for (const char *line : { "UserLatencyTrimMs=12.5", "SyncLockTracks=1",
+           "PasteAsNewClips=1", "MoveSelectionWithTracks=1",
+           "PreferNewTrackRecord=1", "DropoutDetected=0",
+           "HQDitherAlgorithmChoice=Rectangle", "DitherAlgorithmChoice=None",
+           "[Android]", "Language=en" })
+      CHECK_MSG(cfg.find(line) != std::string::npos, line);
+
+   CHECK(ErrorCodeOf(Call("settings.set", { { "settings",
+      { { "language", "xx" } } } })) == "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("settings.set", { { "settings",
+      { { "dropoutDetection", "yes" } } } })) == "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("settings.set", { { "settings",
+      { { "latencyCorrectionMs", 1e6 } } } })) == "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("settings.set", { { "settings",
+      { { "syncLock", 1 } } } })) == "INVALID_ARGS");
+
+   // Back to the defaults the other tests expect
+   before = sink.Count();
+   r = Call("settings.set", { { "settings", {
+      { "latencyCorrectionMs", 0.0 }, { "syncLock", false },
+      { "pasteAsNewClips", false }, { "moveSelectionWithTracks", false },
+      { "preferNewTrackRecord", false }, { "dropoutDetection", true },
+      { "hqDither", "shaped" }, { "language", "system" } } } });
+   CHECK_MSG(Ok(r), r.dump());
+   snap = sink.Last("snapshot", before);
+   CHECK(snap && (Flags(*snap) & NSL) && !(Flags(*snap) & SL));
+}
+
+void TestRename(const TempDirs &dirs, const std::string &openPath)
+{
+   const auto projects = dirs.filesDir + "/Projects/";
+   const auto first = projects + "first.aup3";
+   CHECK(Ok(Call("project.saveCopy", { { "path", first } })));
+   auto r = Call("project.rename", { { "path", first }, { "newName", "second" } });
+   CHECK_MSG(Ok(r), r.dump());
+   const auto second = projects + "second.aup3";
+   CHECK(r["result"].value("path", "") == second);
+   CHECK(FileExists(second) && !FileExists(first));
+
+   // Blanks and ".aup3" are stripped; Unicode names work ("세 번째")
+   r = Call("project.rename", { { "path", second },
+      { "newName", "  \xEC\x84\xB8 \xEB\xB2\x88\xEC\xA7\xB8.aup3 " } });
+   CHECK_MSG(Ok(r), r.dump());
+   const auto third = projects + "\xEC\x84\xB8 \xEB\xB2\x88\xEC\xA7\xB8.aup3";
+   CHECK(r["result"].value("path", "") == third);
+   CHECK(FileExists(third) && !FileExists(second));
+
+   // -wal/-shm move with the database; leftovers at the target are removed
+   CHECK(WriteFile(third + "-wal", "wal") && WriteFile(third + "-shm", "shm"));
+   const auto fourth = projects + "fourth.aup3";
+   CHECK(WriteFile(fourth + "-shm", "stale"));
+   r = Call("project.rename", { { "path", third }, { "newName", "fourth" } });
+   CHECK_MSG(Ok(r), r.dump());
+   CHECK(FileExists(fourth) && !FileExists(third));
+   CHECK(ReadFile(fourth + "-wal") == "wal" && ReadFile(fourth + "-shm") == "shm");
+   CHECK(!FileExists(third + "-wal") && !FileExists(third + "-shm"));
+   // (not real SQLite files: remove them before the database is opened)
+   std::remove((fourth + "-wal").c_str());
+   std::remove((fourth + "-shm").c_str());
+
+   // Same name: nothing to do
+   r = Call("project.rename", { { "path", fourth }, { "newName", "fourth" } });
+   CHECK(Ok(r) && r["result"].value("path", "") == fourth);
+
+   // Errors
+   for (const char *bad : { "", "   ", "a/b", ".hidden", "backup~", "x\ty" })
+      CHECK_MSG(ErrorCodeOf(Call("project.rename", { { "path", fourth },
+         { "newName", bad } })) == "INVALID_ARGS", bad);
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", fourth } })) ==
+      "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", "rel.aup3" },
+      { "newName", "x" } })) == "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", dirs.filesDir + "/x.txt" },
+      { "newName", "x" } })) == "INVALID_ARGS");
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", projects + "missing.aup3" },
+      { "newName", "x" } })) == "NOT_FOUND");
+   const auto openName = openPath.substr(projects.size(),
+      openPath.size() - projects.size() - 5);
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", fourth },
+      { "newName", openName } })) == "FAILED");   // target exists
+   CHECK(ErrorCodeOf(Call("project.rename", { { "path", openPath },
+      { "newName", "x" } })) == "FAILED");        // the open project
+   CHECK(FileExists(openPath) && !FileExists(projects + "x.aup3"));
+
+   r = Call("project.list");
+   bool listed = false;
+   for (const auto &p : r["result"]["projects"])
+      listed |= p.value("path", "") == fourth && p.value("name", "") == "fourth";
+   CHECK(listed);
+
+   // The renamed database opens
+   r = Call("project.open", { { "path", fourth } });
+   CHECK_MSG(Ok(r), r.dump());
+   r = Call("project.snapshot");
+   CHECK(r["result"]["project"].value("name", "") == "fourth");
+   CHECK(r["result"]["tracks"].size() == 2);
+   CHECK_MSG(Ok(Call("project.open", { { "path", openPath } })), openPath);
+   CHECK(Ok(Call("project.delete", { { "path", fourth } })));
+   CHECK(!FileExists(fourth));
+}
+
+void TestCompact(Sink &sink, const std::string &openPath)
+{
+   // An undone edit leaves its audio in the database (the redo state)
+   auto r = Call("debug.makeTestTrack", { { "seconds", 20.0 },
+      { "channels", 2 }, { "rate", 44100 } });
+   CHECK_MSG(Ok(r), r.dump());
+   CHECK(Ok(Call("history.undo")));
+
+   r = Call("project.compactInfo");
+   CHECK_MSG(Ok(r), r.dump());
+   const auto info = r["result"];
+   const auto total = info.value("totalBytes", int64_t(-1));
+   const auto used = info.value("usedBytes", int64_t(-1));
+   const auto fileBytes = info.value("fileBytes", int64_t(-1));
+   std::fprintf(stderr, "compactInfo: %s\n", info.dump().c_str());
+   CHECK(used > 0 && total > used);
+   // 20 s of 32-bit float stereo at 44.1 kHz
+   CHECK(total - used > 5000000);
+   CHECK(fileBytes > total);
+   CHECK(info.value("freeBytes", int64_t(-1)) > 0);
+
+   auto before = sink.Count();
+   const auto gen0 = Call("project.info")["generation"].get<uint64_t>();
+   r = Call("project.compact");
+   CHECK_MSG(Ok(r), r.dump());
+   const auto freed = r["result"].value("freedBytes", int64_t(-1));
+   std::fprintf(stderr, "compact freed %lld bytes\n", (long long)freed);
+   CHECK(freed > 5000000);
+   CHECK(r["generation"].get<uint64_t>() > gen0);
+   auto snap = SnapshotOf(sink, before, r);
+   CHECK(snap["tracks"].size() == 2);
+   CHECK(!snap["history"].value("canUndo", true));
+   CHECK(!snap["history"].value("canRedo", true));
+   CHECK(!snap["project"].value("dirty", true));
+   r = Call("history.list");
+   CHECK(Ok(r) && r["result"]["states"].size() == 1);
+   if (r["result"]["states"].size() == 1) {
+      CHECK(r["result"]["states"][0].value("description", "") ==
+         "Compacted project file");
+      CHECK(r["result"]["states"][0].value("shortDescription", "") == "Compact");
+   }
+   r = Call("project.compactInfo");
+   CHECK(Ok(r));
+   CHECK(r["result"].value("totalBytes", int64_t(-1)) < total - 5000000);
+   CHECK(r["result"].value("fileBytes", int64_t(-1)) < fileBytes - 5000000);
+
+   // A modified project stays modified, and undo back to the saved state
+   // still works
+   CHECK(Ok(Call("debug.makeTestTrack", { { "seconds", 1.0 } })));
+   before = sink.Count();
+   r = Call("project.compact");
+   CHECK_MSG(Ok(r), r.dump());
+   snap = SnapshotOf(sink, before, r);
+   CHECK(snap["project"].value("dirty", false));
+   CHECK(snap["tracks"].size() == 3);
+   CHECK(snap["history"].value("canUndo", false));
+   r = Call("history.list");
+   CHECK(Ok(r) && r["result"]["states"].size() == 2 &&
+      r["result"].value("current", -1) == 1);
+   CHECK(Ok(Call("history.undo")));
+   snap = Call("project.snapshot")["result"];
+   CHECK(snap["tracks"].size() == 2 && !snap["project"].value("dirty", true));
+
+   // The compacted file reopens intact
+   CHECK(Ok(Call("project.close")));
+   r = Call("project.open", { { "path", openPath } });
+   CHECK_MSG(Ok(r), r.dump());
+   snap = Call("project.snapshot")["result"];
+   CHECK(snap["tracks"].size() == 2);
+   if (snap["tracks"].size() == 2)
+      CHECK(std::fabs(snap["tracks"][0].value("end", 0.0) - 1.0) < 1e-6);
+
+   // A temporary project: compaction works and it stays modified
+   CHECK(Ok(Call("project.new")));
+   CHECK(Ok(Call("debug.makeTestTrack", { { "seconds", 2.0 } })));
+   CHECK(Ok(Call("history.undo")));
+   CHECK(Ok(Call("debug.makeTestTrack", { { "seconds", 1.0 } })));
+   r = Call("project.compact");
+   CHECK_MSG(Ok(r), r.dump());
+   snap = Call("project.snapshot")["result"];
+   CHECK(snap["project"].value("temporary", false));
+   CHECK(snap["project"].value("dirty", false));
+   CHECK(snap["tracks"].size() == 1);
+   CHECK(Ok(Call("project.close")));
+   CHECK(ErrorCodeOf(Call("project.compact")) == "NO_PROJECT");
+   CHECK(ErrorCodeOf(Call("project.compactInfo")) == "NO_PROJECT");
+   CHECK(Ok(Call("project.open", { { "path", openPath } })));
+}
+
+//! Engine started with locale ko_KR and the Korean catalog installed
+void TestKorean(Sink &sink)
+{
+   auto r = Call("app.info");
+   CHECK(Ok(r));
+   CHECK_MSG(r["result"].value("language", "") == "ko", r["result"].dump().substr(0, 100));
+   CHECK(r["result"]["languages"] == json::array({ "en", "ko" }));
+   r = Call("settings.get");
+   CHECK(r["result"]["settings"].value("language", "") == "system");
+
+   const auto list = Call("project.list");
+   CHECK(Ok(list) && !list["result"]["projects"].empty());
+   if (list["result"]["projects"].empty())
+      return;
+   CHECK(Ok(Call("project.close")));
+   r = Call("project.open",
+      { { "path", list["result"]["projects"][0].value("path", "") } });
+   CHECK_MSG(Ok(r), r.dump());
+   const auto firstDescription = [] {
+      auto h = Call("history.list");
+      if (!Ok(h) || h["result"]["states"].empty())
+         return std::string("<none>");
+      return h["result"]["states"][0].value("description", "");
+   };
+   // "Created new project" (ProjectHistory::InitialState) in Korean
+   CHECK_MSG(firstDescription() == kKoCreatedNewProject, firstDescription());
+   // A history label pushed by a command
+   auto before = sink.Count();
+   r = Call("project.tags.set", { { "tags", json::array({
+      { { "name", "TITLE" }, { "value", "Korean" } } }) } });
+   CHECK(Ok(r));
+   auto snap = SnapshotOf(sink, before, r);
+   CHECK_MSG(snap["history"].value("undo", "") == kKoMetadataTags,
+      snap["history"].dump());
+   // Error messages of the libraries
+   r = Call("project.open", { { "path", "/nonexistent/x.aup3" } });
+   CHECK(ErrorCodeOf(r) == "NOT_FOUND");
+   CHECK_MSG(r["error"].value("message", "").rfind(kKoCouldNotOpenFile, 0) == 0,
+      r.dump());
+
+   // The `language` setting switches at runtime (and re-emits the snapshot)
+   before = sink.Count();
+   r = Call("settings.set", { { "settings", { { "language", "en" } } } });
+   CHECK_MSG(Ok(r), r.dump());
+   snap = SnapshotOf(sink, before, r);
+   CHECK(snap["history"].value("undo", "") == "Metadata Tags");
+   CHECK(firstDescription() == "Created new project");
+   CHECK(Call("app.info")["result"].value("language", "") == "en");
+   r = Call("settings.set", { { "settings", { { "language", "ko" } } } });
+   CHECK(Ok(r));
+   CHECK(firstDescription() == kKoCreatedNewProject);
+   CHECK(Call("app.info")["result"].value("language", "") == "ko");
+   r = Call("settings.set", { { "settings", { { "language", "en" } } } });
+   r = Call("settings.set", { { "settings", { { "language", "system" } } } });
+   CHECK(Ok(r) && r["result"]["settings"].value("language", "") == "system");
+   CHECK(firstDescription() == kKoCreatedNewProject);
+   CHECK(ErrorCodeOf(Call("settings.set", { { "settings",
+      { { "language", "../ko" } } } })) == "INVALID_ARGS");
+   CHECK(Ok(Call("history.undo")));
+}
+
 void TestRealtimeEntryPoints()
 {
    // No audio/display module installed yet: "not ready" answers
@@ -626,11 +1047,18 @@ int main(int argc, char **argv)
    TestRecovery(*sink, dirs);
    TestNewProject(*sink);
    TestSettings(dirs);
+   TestSettingsAdditions(*sink, dirs);
    TestTrackAndHistory(*sink);
    TestView(*sink);
    TestTags();
    TestSaveOpen(*sink, dirs);
+   {
+      const std::string openPath = dirs.filesDir + "/Projects/\xED\x85\x8C\xEC\x8A\xA4\xED\x8A\xB8 \xF0\x9F\x8E\xB5.aup3";
+      TestRename(dirs, openPath);
+      TestCompact(*sink, openPath);
+   }
    TestDialogs(*sink);
+   TestMultiChoice(*sink);
    TestProgress(*sink);
 
    // Stop while the engine thread waits for an unanswered question: Stop()
@@ -650,13 +1078,19 @@ int main(int argc, char **argv)
          CHECK(answer["result"].value("result", "") == "no");
    }
 
-   // Stop, then restart in the same process with the same directories
+   // Stop, then restart in the same process with the same directories,
+   // now with a Korean locale and the Korean catalog where the app installs
+   // it (assets/audacity/locale -> filesDir/audacity/locale)
    aubridge::Stop();   // idempotent
    CHECK(!aubridge::IsReady());
    CHECK(ErrorCodeOf(Call("app.info")) == "NOT_READY");
    {
+      const std::string moDir = dirs.filesDir + "/audacity/locale/ko/LC_MESSAGES";
+      CHECK(MakeDirs(moDir));
+      CHECK_MSG(CopyFile(AUBRIDGE_TEST_LOCALE_DIR "/ko/LC_MESSAGES/audacity.mo",
+         moDir + "/audacity.mo"), AUBRIDGE_TEST_LOCALE_DIR);
       auto sink2 = std::make_shared<Sink>();
-      auto ready2 = StartAndWait(*sink2, sink2, dirs);
+      auto ready2 = StartAndWait(*sink2, sink2, dirs, { { "locale", "ko_KR" } });
       CHECK_MSG(ready2.has_value(), "restart failed");
       if (ready2) {
          CHECK(ready2->value("recoverable", -1) == 0);
@@ -674,6 +1108,7 @@ int main(int argc, char **argv)
          }
          CHECK(Ok(Call("debug.makeTestTrack")));
          CHECK(Ok(Call("history.undo")));
+         TestKorean(*sink2);
       }
       aubridge::Stop();
    }

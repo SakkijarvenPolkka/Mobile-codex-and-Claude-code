@@ -263,8 +263,20 @@ endif()
 if(USE_LIBOPUS AND USE_OPUSFILE AND USE_LIBOGG)
    list(APPEND AUDACITY_MODULES mod-opus)
 endif()
-set(AUDACITY_SKIPPED_MODULES "" CACHE STRING "Modules to leave out (e.g. mod-aup;mod-lof)")
+# mod-lof imports .lof "list of files" documents that name other files by
+# path: an Android app only sees copies of the files the user picked (staged
+# in cacheDir/import), so those paths never resolve, and Importer::Import
+# cannot disable a registered plug-in at run time.  Leave it out on Android
+# by default; the host keeps it (tests/smoke imports a .lof).
+if(ANDROID)
+   set(_audacity_default_skipped_modules "mod-lof")
+else()
+   set(_audacity_default_skipped_modules "")
+endif()
+set(AUDACITY_SKIPPED_MODULES "${_audacity_default_skipped_modules}" CACHE STRING
+   "Modules to leave out, e.g. mod-aup;mod-lof (default: mod-lof on Android, none on the host)")
 list(REMOVE_ITEM AUDACITY_MODULES ${AUDACITY_SKIPPED_MODULES})
+message(STATUS "Skipped modules:    ${AUDACITY_SKIPPED_MODULES}")
 
 foreach(mod IN LISTS AUDACITY_MODULES)
    add_subdirectory("${AUDACITY_SOURCE_ROOT}/modules/import-export/${mod}"

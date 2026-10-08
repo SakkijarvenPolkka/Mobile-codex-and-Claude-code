@@ -14,6 +14,8 @@
 **********************************************************************/
 #include "ProjectSession.h"
 
+#include <algorithm>
+
 #include <wx/dir.h>
 #include <wx/filename.h>
 #include <wx/log.h>
@@ -24,6 +26,7 @@
 #include "BasicUI.h"
 #include "Clipboard.h"
 #include "CodeConversions.h"
+#include "Edit.h"
 #include "EngineThread.h"
 #include "Events.h"
 #include "FileException.h"
@@ -44,6 +47,7 @@
 #include "TrackFocus.h"
 #include "UiServices.h"
 #include "UndoManager.h"
+#include "UndoTracks.h"
 #include "WaveTrack.h"
 #include "WaveTrackUtilities.h"
 
@@ -497,6 +501,124 @@ bool ProjectSession::SaveCopy(const FilePath &fileName, std::string &error)
       return false;
    }
    return true;
+}
+
+namespace {
+//! Size of a project database plus its write-ahead log
+int64_t FileFootprint(const FilePath &path)
+{
+   int64_t total = 0;
+   for (const auto &suffix : { wxString{}, wxString{ wxT("-wal") } }) {
+      const auto size = wxFileName::GetSize(path + suffix);
+      if (size != wxInvalidSize)
+         total += int64_t(size.GetValue());
+   }
+   return total;
+}
+} // namespace
+
+// The first part of ProjectFileManager::Compact
+std::vector<const TrackList *> ProjectSession::CompactionTrackLists(
+   size_t &least, size_t &greatest, bool live)
+{
+   auto &project = *mProject;
+   auto &undoManager = UndoManager::Get(project);
+   std::vector<const TrackList *> trackLists;
+   least = greatest = 0;
+   const size_t numStates = undoManager.GetNumStates();
+   if (numStates > 0) {
+      const size_t currentState = undoManager.GetCurrentState();
+      auto savedState = undoManager.GetSavedState();
+      // Upstream calls undoManager.StateSaved() when there is no saved state
+      // (never saved, or the saved state was discarded), which keeps the
+      // current state only -- but also makes the project look unmodified.
+      // Keep the current state without touching the saved-state marker.
+      if (savedState < 0 || size_t(savedState) >= numStates)
+         savedState = int(currentState);
+      least = std::min<size_t>(savedState, currentState);
+      greatest = std::max<size_t>(savedState, currentState);
+      auto fn = [&](const UndoStackElem& elem) {
+         if (auto pTracks = UndoTracks::Find(elem))
+            trackLists.push_back(pTracks);
+      };
+      undoManager.VisitStates(fn, least, 1 + least);
+      if (least != greatest)
+         undoManager.VisitStates(fn, greatest, 1 + greatest);
+   }
+   // Android: also keep the blocks of the last save (the project document in
+   // the file refers to them even when the saved state left the history) and
+   // of the live tracks (normally the same as the current state's)
+   if (mLastSavedTracks)
+      trackLists.push_back(mLastSavedTracks.get());
+   if (live)
+      trackLists.push_back(&TrackList::Get(project));
+   return trackLists;
+}
+
+auto ProjectSession::GetCompactInfo() -> CompactInfo
+{
+   auto &projectFileIO = ProjectFileIO::Get(*mProject);
+   size_t least = 0, greatest = 0;
+   // project.compactInfo is allowed while recording: the undo states and the
+   // last-saved copies are immutable, the live tracks are not (the audio
+   // thread appends to recording tracks)
+   const auto trackLists =
+      CompactionTrackLists(least, greatest, !AudioBusy(*mProject));
+   CompactInfo info;
+   info.totalBytes = projectFileIO.GetTotalUsage();
+   info.usedBytes = projectFileIO.GetCurrentUsage(trackLists);
+   info.fileBytes = FileFootprint(projectFileIO.GetFileName());
+   const auto freeSpace = projectFileIO.GetFreeDiskSpace();
+   info.freeBytes = freeSpace >= 0 ? int64_t(freeSpace.GetValue()) : -1;
+   return info;
+}
+
+// ProjectFileManager::Compact (the CompactDialog question is Kotlin's)
+int64_t ProjectSession::Compact()
+{
+   auto &project = *mProject;
+   auto &undoManager = UndoManager::Get(project);
+   auto &clipboard = Clipboard::Get();
+   auto &projectFileIO = ProjectFileIO::Get(project);
+
+   if (undoManager.GetNumStates() == 0)
+      Fail(ErrorCode::FAILED, "the project has no undo state");
+
+   // Purpose of this is to remove the -wal file.
+   if (!projectFileIO.ReopenProject())
+      Fail(ErrorCode::FAILED, Translated(projectFileIO.GetLastError().empty()
+         ? XO("Error Opening Project") : projectFileIO.GetLastError()));
+
+   size_t least = 0, greatest = 0;
+   const auto trackLists = CompactionTrackLists(least, greatest, true);
+
+   // We can remove redo states, if they are after the saved state.
+   undoManager.RemoveStates(1 + greatest, undoManager.GetNumStates());
+
+   // We can remove all states between the current and the last saved.
+   if (least < greatest)
+      undoManager.RemoveStates(least + 1, greatest);
+
+   // We can remove all states before the current and the last saved.
+   undoManager.RemoveStates(0, least);
+
+   // And clear the clipboard, if needed
+   if (&project == clipboard.Project().lock().get())
+      clipboard.Clear();
+
+   // Refresh the before space usage since it may have changed due to the
+   // above actions.
+   const auto before = FileFootprint(projectFileIO.GetFileName());
+
+   projectFileIO.Compact(trackLists, true);
+
+   const auto after = FileFootprint(projectFileIO.GetFileName());
+
+   undoManager.RenameState( undoManager.GetCurrentState(),
+      XO("Compacted project file"),
+      XO("Compact") );
+
+   return std::max<int64_t>(0, before - after);
 }
 
 // Non-GUI part of ProjectManager::OnCloseWindow, with

@@ -15,6 +15,13 @@ desktop.
 
 All other vendored files are byte-identical to upstream.
 
+## Added files
+
+| Path | Upstream | Notes |
+|---|---|---|
+| `locale/ko.po` | `locale/ko.po` of tag `Audacity-3.7.9` | unmodified (SHA-256 `9c58e918108ac70f728f019f4fc9edb6672774fe3baa1a1dfdebbeb9c78744d4`) |
+| `locale/ko/LC_MESSAGES/audacity.mo` | generated | `native/scripts/po2mo.py locale/ko.po locale/ko/LC_MESSAGES/audacity.mo` (pure-Python msgfmt; ctest `bridge-core.locale-ko` checks it is up to date). The app ships it as `assets/audacity/locale/ko/LC_MESSAGES/audacity.mo`, extracted to `filesDir/audacity/locale/`. |
+
 ## How the port avoids patching
 
 The deviations the native build needs are applied from outside the vendored
@@ -29,4 +36,5 @@ tree (see `native/BUILDING.md` and `native/cmake/PortFixups.cmake`):
 | `mod-mp3/ExportMP3.cpp` | includes wx GUI headers (LAME locate dialog, resample prompt) | headless stand-in headers `native/compat/wx-gui-stubs` (dialogs act as "Cancel") |
 | `mod-lof/ImportLOF.cpp` | includes `<wx/frame.h>` (unused) | stand-in `native/compat/wx-gui-stubs/wx/frame.h` |
 | `mod-aup`, `mod-lof` | link the wx application target `Audacity` (ProjectFileManager, ProjectManager, ProjectWindows) | `native/compat/app-services` (`lib-app-services`), target name remapped |
+| `mod-lof` | `.lof` lists name other files by path; an app only gets copies of picked files | left out of Android builds by default (`AUDACITY_SKIPPED_MODULES=mod-lof`); kept on the host |
 | `lib-uuid` (Linux branch) | needs libuuid | `native/cmake/deps/libuuid` (`uuid_generate` only) |

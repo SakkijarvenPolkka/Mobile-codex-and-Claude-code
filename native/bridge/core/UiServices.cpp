@@ -13,6 +13,7 @@
 **********************************************************************/
 #include "UiServices.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -181,9 +182,16 @@ void CancelAllProgress()
 // ---------------------------------------------------------------------------
 namespace Dialogs {
 namespace {
+//! What a blocking dialog was answered with
+struct Answer {
+   int button = -1;           //!< button / choice index, -1 = cancelled
+   std::vector<int> indices;  //!< multiChoice: the checked choices
+};
 struct Pending {
-   std::shared_ptr<std::promise<int>> promise;
-   int count = 0;
+   std::shared_ptr<std::promise<Answer>> promise;
+   int count = 0;                    //!< buttons (message) / choices
+   bool multi = false;               //!< kind "multiChoice"
+   std::vector<int> defaultIndices;  //!< multiChoice: replyDialog(id, >= 0)
 };
 struct DialogRegistry {
    std::mutex mutex;
@@ -206,23 +214,23 @@ const char *StyleName(Style style)
    }
 }
 
-int Blocking(json payload, int count)
+Answer Blocking(json payload, Pending pending)
 {
    if (!Events::GetSink())
-      return -1;
+      return {};
    auto &engine = EngineThread::Get();
    auto &reg = Registry();
    const int id = reg.nextId++;
-   auto promise = std::make_shared<std::promise<int>>();
-   auto future = promise->get_future();
+   pending.promise = std::make_shared<std::promise<Answer>>();
+   auto future = pending.promise->get_future();
    {
       std::lock_guard lock{ reg.mutex };
-      reg.pending[id] = Pending{ promise, count };
+      reg.pending[id] = std::move(pending);
    }
    if (engine.IsStopping()) {
       std::lock_guard lock{ reg.mutex };
       reg.pending.erase(id);
-      return -1;
+      return {};
    }
    payload["id"] = id;
    payload["blocking"] = true;
@@ -231,8 +239,28 @@ int Blocking(json payload, int count)
       return engine.WaitModal(future);
    }
    catch (const std::future_error &) {
-      return -1;
+      return {};
    }
+}
+
+int BlockingButton(json payload, int count)
+{
+   Pending pending;
+   pending.count = count;
+   return Blocking(std::move(payload), std::move(pending)).button;
+}
+
+//! Removes the pending dialog `dialogId`; false if there is none
+bool Take(int dialogId, Pending &pending)
+{
+   auto &reg = Registry();
+   std::lock_guard lock{ reg.mutex };
+   auto it = reg.pending.find(dialogId);
+   if (it == reg.pending.end())
+      return false;
+   pending = std::move(it->second);
+   reg.pending.erase(it);
+   return true;
 }
 } // namespace
 
@@ -302,7 +330,7 @@ int Ask(Style style, const std::string &title, const std::string &message,
    json payload{ { "kind", "message" }, { "style", StyleName(style) },
       { "title", title }, { "message", message }, { "buttons", buttons },
       { "defaultButton", defaultButton }, { "helpPage", HelpUrl(helpPage) } };
-   return Blocking(std::move(payload), int(buttons.size()));
+   return BlockingButton(std::move(payload), int(buttons.size()));
 }
 
 int Choose(const std::string &title, const std::string &message,
@@ -313,24 +341,74 @@ int Choose(const std::string &title, const std::string &message,
       { "title", title }, { "message", message },
       { "buttons", json::array({ Tr(wxT("OK")) }) }, { "choices", choices },
       { "defaultButton", defaultChoice }, { "helpPage", HelpUrl(helpPage) } };
-   return Blocking(std::move(payload), int(choices.size()));
+   return BlockingButton(std::move(payload), int(choices.size()));
+}
+
+std::optional<std::vector<int>> ChooseMany(const std::string &title,
+   const std::string &message, const std::vector<std::string> &choices,
+   const std::vector<bool> &defaultChecked, const std::string &helpPage)
+{
+   json checked = json::array();
+   Pending pending;
+   pending.count = int(choices.size());
+   pending.multi = true;
+   for (size_t i = 0; i < choices.size(); ++i) {
+      const bool on = i < defaultChecked.size() && defaultChecked[i];
+      checked.push_back(on);
+      if (on)
+         pending.defaultIndices.push_back(int(i));
+   }
+   json payload{ { "kind", "multiChoice" }, { "style", "question" },
+      { "title", title }, { "message", message },
+      { "buttons", json::array({ Tr(wxT("OK")), Tr(wxT("Cancel")) }) },
+      { "defaultButton", 0 }, { "choices", choices },
+      { "defaultChecked", std::move(checked) },
+      { "helpPage", HelpUrl(helpPage) } };
+   auto answer = Blocking(std::move(payload), std::move(pending));
+   if (answer.button < 0)
+      return std::nullopt;
+   return std::move(answer.indices);
 }
 
 void Reply(int dialogId, int button)
 {
-   auto &reg = Registry();
    Pending pending;
-   {
-      std::lock_guard lock{ reg.mutex };
-      auto it = reg.pending.find(dialogId);
-      if (it == reg.pending.end())
-         return;
-      pending = std::move(it->second);
-      reg.pending.erase(it);
+   if (!Take(dialogId, pending))
+      return;
+   Answer answer;
+   if (pending.multi) {
+      // Cancel, or OK with the default checks
+      if (button >= 0) {
+         answer.button = 0;
+         answer.indices = std::move(pending.defaultIndices);
+      }
    }
-   if (button < -1 || button >= pending.count)
-      button = -1;
-   pending.promise->set_value(button);
+   else if (button >= 0 && button < pending.count)
+      answer.button = button;
+   pending.promise->set_value(std::move(answer));
+}
+
+void ReplyChoices(int dialogId, const std::vector<int> &indices)
+{
+   Pending pending;
+   if (!Take(dialogId, pending))
+      return;
+   Answer answer;
+   if (pending.multi) {
+      answer.button = 0;
+      for (int index : indices)
+         if (index >= 0 && index < pending.count)
+            answer.indices.push_back(index);
+      std::sort(answer.indices.begin(), answer.indices.end());
+      answer.indices.erase(
+         std::unique(answer.indices.begin(), answer.indices.end()),
+         answer.indices.end());
+   }
+   else if (indices.size() == 1 && indices[0] >= 0 &&
+            indices[0] < pending.count)
+      // A message box / single choice answered with one index
+      answer.button = indices[0];
+   pending.promise->set_value(std::move(answer));
 }
 
 void CancelAll()
@@ -342,7 +420,7 @@ void CancelAll()
       all.swap(reg.pending);
    }
    for (auto &[id, pending] : all)
-      pending.promise->set_value(-1);
+      pending.promise->set_value(Answer{});
 }
 
 } // namespace Dialogs

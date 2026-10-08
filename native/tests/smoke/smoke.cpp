@@ -392,21 +392,24 @@ int main(int argc, char **argv)
 
       // A .lof ("list of files") naming the WAV: mod-lof asks the
       // application (lib-app-services) to open it into the project.
-      const wxString lofPath = tempDir + "/list.lof";
-      if (auto f = std::fopen(lofPath.utf8_str(), "w")) {
-         std::fprintf(f, "file \"%s\" offset 1.0\n", (const char*)wavPath.utf8_str());
-         std::fclose(f);
-      }
+      // (mod-lof is left out of Android builds by default.)
       auto &tracks = TrackList::Get(*project);
       TrackHolders lofTracks;
-      const bool lofOk = Importer::Get().Import(*project, lofPath, nullptr,
-         &WaveTrackFactory::Get(*project), lofTracks, &Tags::Get(*project),
-         acidTags, errorMessage);
-      std::printf("Imported %s: %s, project now has %zu track(s), end %.3f s\n",
-         Utf8(lofPath).c_str(), lofOk ? "ok" : "FAILED", tracks.Size(),
-         tracks.GetEndTime());
-      Check(lofOk && tracks.Size() == 1 && std::fabs(tracks.GetEndTime() - 1.5) < 1e-6,
-         "import LOF through mod-lof + lib-app-services (offset applied)");
+      if (ModuleBuilt("mod-lof")) {
+         const wxString lofPath = tempDir + "/list.lof";
+         if (auto f = std::fopen(lofPath.utf8_str(), "w")) {
+            std::fprintf(f, "file \"%s\" offset 1.0\n", (const char*)wavPath.utf8_str());
+            std::fclose(f);
+         }
+         const bool lofOk = Importer::Get().Import(*project, lofPath, nullptr,
+            &WaveTrackFactory::Get(*project), lofTracks, &Tags::Get(*project),
+            acidTags, errorMessage);
+         std::printf("Imported %s: %s, project now has %zu track(s), end %.3f s\n",
+            Utf8(lofPath).c_str(), lofOk ? "ok" : "FAILED", tracks.Size(),
+            tracks.GetEndTime());
+         Check(lofOk && tracks.Size() == 1 && std::fabs(tracks.GetEndTime() - 1.5) < 1e-6,
+            "import LOF through mod-lof + lib-app-services (offset applied)");
+      }
       // Close like ProjectManager::OnCloseWindow(): drop undo states and
       // tracks (they own sample blocks) before closing the database
       ProjectFileIO::Get(*project).SetBypass();

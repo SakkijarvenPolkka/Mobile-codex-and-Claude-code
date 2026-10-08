@@ -64,7 +64,7 @@
 #include "Hooks.h"
 #include "Import.h"
 #include "Internat.h"
-#include "Languages.h"
+#include "Language.h"
 #include "ModuleRegistry.h"
 #include "Modules.h"
 #include "PluginManager.h"
@@ -246,24 +246,6 @@ void InitWx(const StartConfig &config)
 // ---------------------------------------------------------------------------
 // Preferences (replacement of AudacityApp::PopulatePreferences)
 // ---------------------------------------------------------------------------
-wxString LanguageCode(const std::string &locale)
-{
-   // Java Locale.toString(): "ko_KR", "zh_CN_#Hans", "pt_BR"; legacy codes
-   auto code = locale.substr(0, locale.find('#'));
-   while (!code.empty() && code.back() == '_')
-      code.pop_back();
-   for (auto &c : code)
-      if (c == '-')
-         c = '_';
-   if (code.rfind("iw", 0) == 0)
-      code = "he" + code.substr(2);
-   else if (code.rfind("in", 0) == 0 && (code.size() == 2 || code[2] == '_'))
-      code = "id" + code.substr(2);
-   if (code.empty())
-      code = "en";
-   return FromUtf8(code);
-}
-
 void WriteMobileDefaults(const StartConfig &config)
 {
    auto &p = *gPrefs;
@@ -297,7 +279,6 @@ void PopulatePreferences(const StartConfig &config)
    p.Read(wxT("/Version/Minor"), &vMinor);
    p.Read(wxT("/Version/Micro"), &vMicro);
    SetPreferencesVersion(int(vMajor), int(vMinor), int(vMicro));
-   p.Write(wxT("/Locale/Language"), LanguageCode(config.locale));
    if (firstRun)
       WriteMobileDefaults(config);
    p.Write(wxT("/PrefsVersion"), wxString(wxT(AUDACITY_PREFS_VERSION_STRING)));
@@ -479,17 +460,10 @@ void Bootstrap(const std::string &configJson)
       InitPreferences(audacity::ApplicationSettings::Call());
       state.prefsInitialized = true;
       PopulatePreferences(config);
-      Languages::SetLang(FileNames::AudacityPathList(),
-         LanguageCode(config.locale));
-      // wxLocale set LC_ALL for the UI language (on bionic only C/C.UTF-8
-      // exist).  The engine formats no UI numbers: keep "." as the decimal
-      // separator everywhere (config files, Internat), and UTF-8 multibyte
-      // conversions on Android.
-#if defined(__ANDROID__)
-      std::setlocale(LC_CTYPE, "C.UTF-8");
-#endif
-      std::setlocale(LC_NUMERIC, "C");
-      Internat::Init();
+      // Languages::SetLang with the `language` setting / the start locale
+      // ("ko_KR" -> "ko" when the catalog is installed, else "en"), then the
+      // C locale fixups (UTF-8 LC_CTYPE, "C" LC_NUMERIC) + Internat::Init()
+      Language::Apply(true);
 
       // 7. TempDir
       InitTempDir(paths.sessionDir);

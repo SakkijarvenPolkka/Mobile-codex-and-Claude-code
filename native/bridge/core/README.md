@@ -78,10 +78,28 @@ register is cleared at `Stop()`.
 | `ResolveClipRef(p, args)` | `Edit.h` | `{trackId, clipIndex, generation}` → `ClipRef{track, clip, index}` (STALE / NOT_FOUND) |
 | `AudioBusy(p)` | `Edit.h` | the AudioIONotBusy predicate (token active or any stream open) |
 | `Clipboard::Get()` | `Clipboard.h` | port of `src/Clipboard` (cleared when its project closes) |
-| `ProgressScope`, `Dialogs::Show/Ask/Choose` | `UiServices.h` | `progress` / `dialog` events for work that does not go through BasicUI |
+| `ProgressScope`, `Dialogs::Show/Ask/Choose/ChooseMany` | `UiServices.h` | `progress` / `dialog` events for work that does not go through BasicUI (see below) |
 | `Events::Emit(type, json)`, `Events::Log(level, text)` | `Events.h` | raw events / `log` events (+ logcat) |
 | `BuildSnapshot()`, `ComputeCommandFlags(p)`, `FormatName`, `ParseFormat`, `TrackKind` | `Snapshot.h` | snapshot pieces |
 | `EngineThread::Get().PostInternal(fn)`, `WaitModal(future)`, `IsCurrent()` | `EngineThread.h` | helper threads (export): post back to the engine, wait without blocking CallAfter work |
+| `AudioUserLatencyTrimMs` | `BridgePrefs.h` | the user's latency trim (ms, `settings.latencyCorrectionMs`, pref `/Android/AAudio/UserLatencyTrimMs`); read it through this object or `gPrefs`, never through a second `DoubleSetting` (stale cache) |
+| `Language::Current()` | `Language.h` | language of the engine strings (`"en"`, `"ko"`) |
+
+Multiple choice (API.md §4.4 `kind:"multiChoice"`), e.g. the streams of a
+multi-stream file on import:
+
+```cpp
+#include "UiServices.h"
+// Blocks the engine thread (nested loop, internal work only) until Kotlin
+// answers with replyDialogChoices / replyDialog
+std::optional<std::vector<int>> Dialogs::ChooseMany(
+   const std::string &title, const std::string &message,
+   const std::vector<std::string> &choices,
+   const std::vector<bool> &defaultChecked = {},   // missing = unchecked
+   const std::string &helpPage = {});
+// -> checked indices (ascending, unique, possibly empty), or std::nullopt
+//    when cancelled / no UI / engine stopping
+```
 
 Library code that uses `BasicUI` (progress dialogs, message boxes, error
 dialogs) already produces the right events: OK-only boxes and error dialogs
@@ -136,13 +154,18 @@ without it), the `TimeSignatureRestorer` undo extension, the `Clipboard`.
 * Never call `Invoke()` or the display entry points on the engine thread.
 * Do not call `FileNames::SetAudacityPathList` (the spine sets it once:
   `<nyquistDir parent>`, `<pluginsDir parent>`, `DataDir`, `<configDir>/locale`).
+* Do not call `Languages::SetLang`: the spine applies the `language` setting
+  (`Language::Apply`, also at run time from `settings.set`).  Translate when
+  you produce output (`Translated(XO(...))`, `.Translation()`), never cache
+  translated strings: the language can change while the engine runs.
 
 ## 6. Bootstrap order (Engine.cpp)
 
 env (`HOME`, `XDG_*_HOME`, `TMPDIR`, `SQLITE_TMPDIR`, `WX_AUDACITY_DATA_DIR`) →
 `wxInitialize` on the engine thread → BasicUI services → `InitializeSQL` →
 logger (wxLog → `log` events) → path list, default temp dir → preferences
-(`filesDir/audacity/audacity.cfg`, mobile defaults on first run, language) →
+(`filesDir/audacity/audacity.cfg`, mobile defaults on first run) → language
+(`Language::Apply`: catalog from `<configDir>/locale`, C locale fixups) →
 TempDir (`noBackupDir/SessionData`) → spine commands + `Register*Module` →
 `BeforePluginManagerInit` → `PluginManager::Initialize` (registry reset when
 the engine build changed) → `InitDitherers`, `AudioIO::Init` →

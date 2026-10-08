@@ -83,10 +83,11 @@ library (`native/bridge`) links `audacity-core`; loading it with
 | `cmake/patches/*.patch` | patches to third-party sources (wxWidgets only) |
 | `compat/app-services` | `lib-app-services`: stand-in for the application calls of mod-aup/mod-lof |
 | `compat/wx-gui-stubs` | headless stand-ins for wx GUI headers included by mod-mp3/mod-lof |
-| `portaudio-android/` | PortAudio host-API table for Android; put the AAudio back end here (`PA_USE_AAUDIO`) |
-| `tests/` | host tests (`tests/smoke`: link-model smoke test) |
-| `scripts/` | build helpers and `check-android-libs.sh` |
-| `audacity/` | vendored Audacity sources (unchanged, see `audacity/ANDROID_CHANGES.md`) |
+| `portaudio-android/` | PortAudio host-API table for Android and the AAudio host API (`PA_USE_AAUDIO`, `PA_USE_NULL`) |
+| `bridge/` | the C++ bridge (`libaudacity-bridge.so`, see `bridge/MODULES.md`, `bridge/API.md`) |
+| `tests/` | host tests: `tests/smoke` (link-model smoke test), `tests/portaudio` (AAudio host API on the Null device), `tests/bridge/<module>` (the bridge through `Bridge.h`) |
+| `scripts/` | build helpers, `check-android-libs.sh`, `po2mo.py` (gettext catalogs) |
+| `audacity/` | vendored Audacity sources (see `audacity/ANDROID_CHANGES.md`); `audacity/locale` holds the shipped translations |
 
 ## Link model
 
@@ -143,10 +144,47 @@ answers "Cancel").
 | `AUDACITY_USE_NYQUIST` | ON | libnyquist + lib-nyquist-effects |
 | `AUDACITY_USE_MIDI` | OFF | USE_MIDI (NoteTrack, MIDI playback via PortMidi null back end) |
 | `AUDACITY_HIDDEN_VISIBILITY` | OFF | compile Audacity libraries with `-fvisibility=hidden` (not like upstream; breaks cross-library template statics) |
-| `AUDACITY_SKIPPED_MODULES` | empty | modules to leave out |
-| `PA_USE_AAUDIO` | OFF | build the PortAudio AAudio host API from `portaudio-android/sources.cmake` |
+| `AUDACITY_SKIPPED_MODULES` | `mod-lof` (Android), empty (host) | modules to leave out (`;`-separated). mod-lof imports `.lof` lists that name other files by path, which an app never sees (it only gets copies of picked files); the host keeps it for `tests/smoke`. Existing build trees keep their cached value: reconfigure with `-DAUDACITY_SKIPPED_MODULES=mod-lof` once. |
+| `PA_USE_AAUDIO` | ON (Android), OFF (host) | build the PortAudio AAudio host API (`portaudio-android/`, links `libaaudio`) |
+| `PA_USE_NULL` | OFF (Android), ON (host) | the same host API on a simulated "Null" AAudio device, for host tests (`portaudio-android/README.md`) |
 | `AUDACITY_DEPS_CACHE_DIR` | `native/_deps/cache` | shared download cache |
 | `audacity_use_sbsms`, `audacity_use_soundtouch`, `audacity_use_twolame` | local | `off` disables them |
+
+## Host tests
+
+```sh
+flock /tmp/claude-0/locks/build-host.lock ninja -C native/build-host   # or build-host.sh
+ctest --test-dir native/build-host --output-on-failure            # everything
+ctest --test-dir native/build-host -L core                        # one label
+```
+
+Labels: `smoke`, `portaudio`, and one per bridge module (`core`, `edit`,
+`effects`, `io`, `audio`, `display`).  The timing-sensitive PortAudio tests
+(`portaudio.drift`, `portaudio.fixed_buffer`, `portaudio.audioio_monitor`)
+have `RUN_SERIAL`: `ctest -j` runs them alone, but they can still fail when
+other processes load every CPU.
+
+## Translations
+
+The engine's strings (effect names, history labels, library messages) come
+from Audacity's gettext catalogs.  `audacity/locale/<lang>.po` is vendored
+unchanged from Audacity 3.7.9 `locale/`; the compiled catalog
+`audacity/locale/<lang>/LC_MESSAGES/audacity.mo` is committed and made with
+the pure-Python `scripts/po2mo.py` (no gettext needed; msgfmt semantics:
+fuzzy and untranslated entries are left out, msgctxt and plural forms kept):
+
+```sh
+python3 native/scripts/po2mo.py native/audacity/locale/ko.po native/audacity/locale/ko/LC_MESSAGES/audacity.mo
+python3 native/scripts/po2mo.py --verify native/audacity/locale/ko.po native/audacity/locale/ko/LC_MESSAGES/audacity.mo
+```
+
+The ctest `bridge-core.locale-ko` fails when the committed `.mo` is not what
+`po2mo.py` makes of the `.po`.  The app packages
+`audacity/locale/<lang>/LC_MESSAGES/audacity.mo` as
+`assets/audacity/locale/<lang>/LC_MESSAGES/audacity.mo` and extracts it to
+`filesDir/audacity/locale/` (a directory of the engine's path list).  Only
+Korean (`ko`) is shipped so far; adding a language = vendoring its `.po`,
+running `po2mo.py`, and listing it in the Gradle asset task.
 
 ## Adding a library or target
 
