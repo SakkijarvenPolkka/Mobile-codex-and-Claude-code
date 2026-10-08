@@ -62,22 +62,6 @@ std::string FormatNumber(double value)
    return std::string(buf, end);
 }
 
-void RequireAudioSelection(AudacityProject &project, const TranslatableString &name)
-{
-   const auto &region = ViewInfo::Get(project).selectedRegion;
-   const bool anyWave =
-      !TrackList::Get(project).Selected<const WaveTrack>().empty();
-   if (region.isPoint() || !anyWave)
-      Fail(ErrorCode::NO_SELECTION, Translated(XO(
-         "Select the audio for %s to use (for example, Ctrl + A to Select All) then try again.")
-            .Format(name)));
-}
-
-void RequireAudioSelection(AudacityProject &project)
-{
-   RequireAudioSelection(project, XO("this effect"));
-}
-
 double ValidateDuration(double d)
 {
    // 24 hours is far beyond anything a phone can hold; it guards against
@@ -191,9 +175,23 @@ double ShortFloat(float f)
    auto [end, ec] = std::to_chars(buf, buf + sizeof buf, f);
    if (ec != std::errc{})
       return f;
+   // (the NDK's libc++ has no floating-point from_chars; wx parses with the
+   // C locale whatever the process locale is)
    double d = f;
-   std::from_chars(buf, end, d);
+   if (!wxString::FromAscii(buf, end - buf).ToCDouble(&d))
+      return f;
    return d;
+}
+
+//! Doubles that are exactly a float (bounds declared with float literals,
+//! e.g. Amplify's Ratio) as the float's shortest text: 0.003162, not
+//! 0.0031620000954717398
+double Tidy(double v)
+{
+   if (!std::isfinite(v) || std::fabs(v) > 3.0e38)
+      return v;
+   const float f = static_cast<float>(v);
+   return static_cast<double>(f) == v ? ShortFloat(f) : v;
 }
 
 bool IsNyquistPrompt(const Loaded &fx)
@@ -351,11 +349,33 @@ std::vector<ParamDef> NoiseReductionSchema(const Loaded &fx)
    return params;
 }
 
+//! The Nyquist Prompt: its code and the nested parameter string of the
+//! code's own controls (NyquistBase.cpp KEY_Command / KEY_Parameters; the
+//! const visitor reports nothing once settings were loaded, mExternal)
+std::vector<ParamDef> PromptSchema(const Loaded &fx)
+{
+   CommandParameters eap{ GetParameterString(fx) };
+   std::vector<ParamDef> params;
+   for (auto key : { wxT("Command"), wxT("Parameters") }) {
+      ParamDef p;
+      p.key = key;
+      p.kind = ParamDef::Kind::String;
+      p.bounded = false;
+      eap.Read(key, &p.strValue, wxString{});
+      params.push_back(std::move(p));
+   }
+   // src/effects/nyquist/Nyquist.cpp prompt dialog
+   params[0].label = StripMnemonics(XO("Enter Nyquist Command: ").Translation());
+   return params;
+}
+
 std::vector<ParamDef> Schema(const Loaded &fx)
 {
    std::vector<ParamDef> params;
    if (fx.special == Special::NoiseReduction)
       params = NoiseReductionSchema(fx);
+   else if (IsNyquistPrompt(fx))
+      params = PromptSchema(fx);
    else if (auto nyq = AsNyquist(fx))
       return NyquistSchema(fx, *nyq, nullptr);
    else {
@@ -432,16 +452,27 @@ json ParamJson(const ParamDef &p)
       }
       {
          const bool isFloat = p.kind == K::Float || p.kind == K::DoubleF;
-         const double mn = isFloat ? ShortFloat(p.fmin) : p.min;
-         const double mx = isFloat ? ShortFloat(p.fmax) : p.max;
-         if (std::isfinite(mn) && std::fabs(mn) < 1e300)
+         const double mn = isFloat ? ShortFloat(p.fmin) : Tidy(p.min);
+         const double mx = isFloat ? ShortFloat(p.fmax) : Tidy(p.max);
+         // FLT_MAX / INT_MAX bounds mean "unbounded" (Echo delay, Repeat
+         // count, Nyquist "nil" bounds): left out
+         auto bounded = [&](double v) {
+            if (!std::isfinite(v) || std::fabs(v) >= 3.0e38)
+               return false;
+            if ((p.kind == K::Int || p.kind == K::Size) &&
+                (v >= double(std::numeric_limits<int>::max()) ||
+                 v <= double(std::numeric_limits<int>::min())))
+               return false;
+            return true;
+         };
+         if (bounded(mn))
             j["min"] = mn;
-         if (std::isfinite(mx) && std::fabs(mx) < 1e300)
+         if (bounded(mx))
             j["max"] = mx;
          if (p.scale != 0 && std::isfinite(p.scale))
-            j["scale"] = p.scale;
-         j["default"] = NumberOrInt(p, p.def);
-         j["value"] = NumberOrInt(p, p.value);
+            j["scale"] = Tidy(p.scale);
+         j["default"] = NumberOrInt(p, Tidy(p.def));
+         j["value"] = NumberOrInt(p, Tidy(p.value));
       }
       break;
    }
@@ -533,9 +564,17 @@ wxString ValidateValue(const ParamDef &p, const json &v, double &number)
    case K::Double: {
       if (!v.is_number())
          Bad(p, "expected a number");
-      const double d = v.get<double>();
+      double d = v.get<double>();
       if (!std::isfinite(d))
          Bad(p, "expected a finite number");
+      // Bounds declared as float literals are reported in their short form
+      // (Tidy): accept a value that equals the bound in float precision
+      if (p.bounded) {
+         if (d < p.min && static_cast<float>(d) == static_cast<float>(p.min))
+            d = p.min;
+         if (d > p.max && static_cast<float>(d) == static_cast<float>(p.max))
+            d = p.max;
+      }
       checkRange(d);
       number = d;
       return FromUtf8(FormatNumber(d));
@@ -812,6 +851,11 @@ json Describe(const Loaded &fx)
       result["curve"] = CurveJson(fx);
       result["curves"] = factory;
    }
+   if (fx.special == Special::Amplify) {
+      // The desktop dialog shows the new peak and refuses to clip
+      const auto peak = SelectionPeak(fx);
+      result["peak"] = peak ? json(Finite(*peak)) : json(nullptr);
+   }
    result["nyquist"] = std::move(nyquist);
    result["help"] = ToUtf8(def.ManualPage().GET());
    return result;
@@ -909,12 +953,10 @@ void ApplyParamArgs(const Loaded &fx, const json &args)
       if (!WriteParameterString(fx, merged, original))
          Fail(ErrorCode::INVALID_ARGS,
             "the effect rejected the parameters (nothing changed)");
-      // PostSet of the LoadSettings path, skipped by the visitor
-      if (fx.special == Special::Phaser || fx.special == Special::Dtmf) {
-         EffectSettings scratch;
+      // PostSet of the LoadSettings path, skipped by the visitor (Phaser:
+      // even stages; DTMF: tone/silence lengths)
+      if (fx.special == Special::Phaser || fx.special == Special::Dtmf)
          PostInitFixups(*fx.plugin, *fx.settings);
-         (void)scratch;
-      }
    }
 
    if (duration)
@@ -988,7 +1030,7 @@ json LoadPresetCmd(const json &args)
    else if (kind == "user") {
       if (!name)
          Fail(ErrorCode::INVALID_ARGS, "name is required");
-      const auto wanted = FromUtf8(*name);
+      const auto wanted = FromUtf8(*name).Strip(wxString::both);
       if (fx.special == Special::NoiseReduction || !HasUserPreset(fx, wanted))
          Fail(ErrorCode::NOT_FOUND, "no such user preset");
       if (!def.LoadUserPreset(UserPresetsGroup(wanted), *fx.settings) ||
@@ -1003,8 +1045,11 @@ json LoadPresetCmd(const json &args)
          NoiseReductionSet(*fx.plugin, NoiseReductionValues{});
       else if (fx.special == Special::Amplify) {
          // AmplifyBase::LoadFactoryDefaults calls Init(), which needs the
-         // effect context of DoEffect (SIGSEGV otherwise, effects.md §4.5)
-         if (!def.LoadUserPreset(FactoryDefaultsGroup(), *fx.settings))
+         // effect context of DoEffect (SIGSEGV otherwise, effects.md §4.5):
+         // with an audio selection it gives ratio = 1/peak like the desktop
+         // dialog, else the stored factory defaults
+         if (!LoadAmplifyDefaults(fx) &&
+             !def.LoadUserPreset(FactoryDefaultsGroup(), *fx.settings))
             Fail(ErrorCode::FAILED, "the defaults could not be loaded");
       }
       else if (!def.LoadFactoryDefaults(*fx.settings))
@@ -1034,7 +1079,7 @@ json SavePresetCmd(const json &args)
 json DeletePresetCmd(const json &args)
 {
    auto fx = LoadEffect(ArgString(args, "id"));
-   const auto name = FromUtf8(ArgString(args, "name"));
+   const auto name = FromUtf8(ArgString(args, "name")).Strip(wxString::both);
    if (fx.special == Special::NoiseReduction || !HasUserPreset(fx, name))
       Fail(ErrorCode::NOT_FOUND, "no such user preset");
    if (!RemoveConfigSubgroup(fx.plugin->GetDefinition(),

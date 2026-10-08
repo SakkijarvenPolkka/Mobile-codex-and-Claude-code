@@ -58,7 +58,7 @@ object ContextMenus {
         when (target) {
             is ContextTarget.Clip -> clipMenu(target, snapshot)
             is ContextTarget.Track -> waveAreaMenu(target.trackId, snapshot)
-            is ContextTarget.Label -> labelMenu(target)
+            is ContextTarget.Label -> labelMenu(target, snapshot.generation)
             is ContextTarget.Timeline -> timelineMenu()
             ContextTarget.Empty -> emptyAreaMenu()
         }.let { nodes ->
@@ -113,7 +113,8 @@ object ContextMenus {
         )
     }
 
-    private fun labelMenu(t: ContextTarget.Label): List<MenuNode> = listOf(
+    /** [generation]: the label references of the menu's snapshot (STALE when the labels changed since). */
+    private fun labelMenu(t: ContextTarget.Label, generation: Long): List<MenuNode> = listOf(
         item("EditLabel", res(R.string.cm_edit_label), PO) { h -> editLabelText(h, t.trackId, t.index) },
         item("SelectLabel", res(R.string.cm_select_label)) { h ->
             val l = h.engine.snapshot.value.track(t.trackId)?.labels?.firstOrNull { it.index == t.index } ?: return@item
@@ -121,16 +122,18 @@ object ContextMenus {
             h.engine.select(l.t0, l.t1)
         },
         Separator,
-        item("DeleteLabel", res(R.string.cm_delete_label), NB) { h -> h.engine.removeLabel(t.trackId, t.index) },
+        item("DeleteLabel", res(R.string.cm_delete_label), NB) { h -> h.engine.removeLabel(t.trackId, t.index, generation) },
     )
 
     /** Edit a label's text (double-tap / long-press on a label). */
     suspend fun editLabelText(h: MenuHost, trackId: Long, index: Int) {
-        val l = h.engine.snapshot.value.track(trackId)?.labels?.firstOrNull { it.index == index } ?: return
+        val s = h.engine.snapshot.value
+        val l = s.track(trackId)?.labels?.firstOrNull { it.index == index } ?: return
         val d = AppDialog.TextInput(UiText.Res(R.string.cm_edit_label), UiText.Res(R.string.label_text), l.title, allowEmpty = true)
         h.open(d)
         val text = d.result.await() ?: return
-        if (text != l.title) h.engine.editLabel(trackId, index, title = text)
+        // The reference is the one the dialog showed: STALE when labels changed meanwhile
+        if (text != l.title) h.engine.editLabel(trackId, index, title = text, generation = s.generation)
     }
 
     /** Timeline Options (AdornedRulerPanel.cpp:2214-2268). */

@@ -20,8 +20,11 @@ package io.github.sakkijarvenpolkka.audacity.engine
 
 import android.content.Context
 import io.github.sakkijarvenpolkka.audacity.engine.model.AppInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.CompactInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.CompactResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.ContrastResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.DialogEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.DisplayStatus
@@ -40,6 +43,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.ExportValue
 import io.github.sakkijarvenpolkka.audacity.engine.model.HistoryList
 import io.github.sakkijarvenpolkka.audacity.engine.model.ImportFormats
 import io.github.sakkijarvenpolkka.audacity.engine.model.ImportResult
+import io.github.sakkijarvenpolkka.audacity.engine.model.LabelExportResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.LatencyInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.LogEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.MeterSample
@@ -48,6 +52,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.ProgressEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileList
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.SetDevicesResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.SettingsResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
@@ -64,6 +69,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.ExecutorService
@@ -147,6 +153,18 @@ class NativeAudacityEngine internal constructor(
         if ((dialog == null || dialog.blocking) && bridge.isLoaded) bridge.replyDialog(dialogId, button)
     }
 
+    override fun replyDialogChoices(dialogId: Int, indices: List<Int>) {
+        val dialog = hub.resolveDialog(dialogId)
+        if ((dialog == null || dialog.blocking) && bridge.isLoaded) {
+            try {
+                bridge.replyDialogChoices(dialogId, indices.toIntArray())
+            } catch (e: LinkageError) {
+                // A library without the entry point: cancel instead of leaving the engine waiting
+                bridge.replyDialog(dialogId, -1)
+            }
+        }
+    }
+
     override fun cancelProgress(progressId: Int, stop: Boolean) {
         if (bridge.isLoaded) bridge.cancelProgress(progressId, stop)
     }
@@ -220,6 +238,10 @@ class NativeAudacityEngine internal constructor(
     }
     override suspend fun listProjects(): List<ProjectFileEntry> = callFor<ProjectFileList>("project.list").projects
     override suspend fun deleteProject(path: String) { call("project.delete", "path" to path) }
+    override suspend fun renameProject(path: String, newName: String): String =
+        callFor<PathResult>("project.rename", "path" to path, "newName" to newName).path
+    override suspend fun compactProject(): Long = callFor<CompactResult>("project.compact").freedBytes
+    override suspend fun compactInfo(): CompactInfo = callFor("project.compactInfo")
 
     // ----- history -------------------------------------------------------
     override suspend fun undo() { call("history.undo") }
@@ -232,7 +254,10 @@ class NativeAudacityEngine internal constructor(
     override suspend fun setView(zoom: Double?, hpos: Double?) { call("view.set", "zoom" to zoom, "hpos" to hpos) }
 
     // ----- selection -------------------------------------------------------
-    override suspend fun select(t0: Double, t1: Double) { call("select.set", "t0" to t0, "t1" to t1) }
+    override suspend fun select(t0: Double, t1: Double) = select(t0, t1, null, null)
+    override suspend fun select(t0: Double, t1: Double, trackIds: List<Long>?, focus: Long?) {
+        call("select.set", "t0" to t0, "t1" to t1, "trackIds" to trackIds, "focus" to focus)
+    }
     override suspend fun selectAll() { call("select.all") }
     override suspend fun selectNone() { call("select.none") }
     override suspend fun selectTracks(ids: List<Long>, mode: String) { call("select.tracks", "ids" to ids, "mode" to mode) }
@@ -267,12 +292,16 @@ class NativeAudacityEngine internal constructor(
     }
     override suspend fun setTrackMute(id: Long, mute: Boolean) { call("tracks.setMute", "id" to id, "mute" to mute) }
     override suspend fun setTrackSolo(id: Long, solo: Boolean) { call("tracks.setSolo", "id" to id, "solo" to solo) }
+    override suspend fun muteAllTracks(mute: Boolean) { call("tracks.muteAll", "mute" to mute) }
     override suspend fun renameTrack(id: Long, name: String) { call("tracks.rename", "id" to id, "name" to name) }
     override suspend fun moveTrack(id: Long, to: String) { call("tracks.move", "id" to id, "to" to to) }
     override suspend fun trackChannelCommand(command: String, id: Long) { call(command, "id" to id) }
     override suspend fun setTrackRate(id: Long, rate: Int) { call("tracks.setRate", "id" to id, "rate" to rate) }
     override suspend fun setTrackFormat(id: Long, format: String) { call("tracks.setFormat", "id" to id, "format" to format) }
-    override suspend fun alignTracks(mode: String) { call("tracks.align", "mode" to mode) }
+    override suspend fun alignTracks(mode: String, moveSelection: Boolean?) {
+        call("tracks.align", "mode" to mode, "moveSelection" to moveSelection)
+    }
+    override suspend fun sortTracks(by: String) { call("tracks.sort", "by" to by) }
 
     // ----- clips / labels ----------------------------------------------------
     override suspend fun moveClip(trackId: Long, clipIndex: Int, generation: Long, newStart: Double, toTrackId: Long?) {
@@ -284,10 +313,15 @@ class NativeAudacityEngine internal constructor(
     }
     override suspend fun addLabel(title: String): Pair<Long, Int> =
         callFor<LabelRef>("labels.add", "title" to title).let { it.trackId to it.index }
-    override suspend fun editLabel(trackId: Long, index: Int, title: String?, t0: Double?, t1: Double?) {
-        call("labels.edit", "trackId" to trackId, "index" to index, "title" to title, "t0" to t0, "t1" to t1)
+    override suspend fun editLabel(trackId: Long, index: Int, title: String?, t0: Double?, t1: Double?, generation: Long?): Int =
+        callFor<LabelIndex>("labels.edit", "trackId" to trackId, "index" to index, "generation" to generation,
+            "title" to title, "t0" to t0, "t1" to t1).index
+    override suspend fun removeLabel(trackId: Long, index: Int, generation: Long?) {
+        call("labels.remove", "trackId" to trackId, "index" to index, "generation" to generation)
     }
-    override suspend fun removeLabel(trackId: Long, index: Int) { call("labels.remove", "trackId" to trackId, "index" to index) }
+    override suspend fun importLabels(path: String): Long = callFor<TrackIdResult>("labels.import", "path" to path).trackId
+    override suspend fun exportLabels(path: String, format: String): Int =
+        callFor<LabelExportResult>("labels.export", "path" to path, "format" to format).labels
 
     // ----- effects / analyze ---------------------------------------------------
     override suspend fun effects(): EffectList = callFor("effects.list")
@@ -299,10 +333,12 @@ class NativeAudacityEngine internal constructor(
         callFor("effects.loadPreset", "id" to id, "kind" to kind, "name" to name, "index" to index)
     override suspend fun saveEffectPreset(id: String, name: String) { call("effects.savePreset", "id" to id, "name" to name) }
     override suspend fun deleteEffectPreset(id: String, name: String) { call("effects.deletePreset", "id" to id, "name" to name) }
-    override suspend fun applyEffect(id: String, params: Map<String, JsonElement>?, duration: Double?): EffectApplyResult =
-        callFor("effects.apply", "id" to id, "params" to params?.let { JsonObject(it) }, "duration" to duration)
-    override suspend fun previewEffect(id: String, params: Map<String, JsonElement>?, duration: Double?) {
-        call("effects.preview", "id" to id, "params" to params?.let { JsonObject(it) }, "duration" to duration)
+    override suspend fun applyEffect(id: String, params: Map<String, JsonElement>?, duration: Double?, curve: EqCurve?): EffectApplyResult =
+        callFor("effects.apply", "id" to id, "params" to params?.let { JsonObject(it) }, "duration" to duration,
+            "curve" to curve?.let { EngineJson.json.encodeToJsonElement(EqCurve.serializer(), it) })
+    override suspend fun previewEffect(id: String, params: Map<String, JsonElement>?, duration: Double?, curve: EqCurve?) {
+        call("effects.preview", "id" to id, "params" to params?.let { JsonObject(it) }, "duration" to duration,
+            "curve" to curve?.let { EngineJson.json.encodeToJsonElement(EqCurve.serializer(), it) })
     }
     override suspend fun stopPreview() { call("effects.stopPreview") }
     override suspend fun repeatLastEffect(): EffectApplyResult = callFor("effects.repeatLast")
@@ -336,6 +372,9 @@ class NativeAudacityEngine internal constructor(
     override suspend fun skipToEnd() { call("transport.skipToEnd") }
     override suspend fun monitor(enabled: Boolean) { call("transport.monitor", "enabled" to enabled) }
     override suspend fun audioDevices(): AudioDevices = callFor("audio.devices")
+    override suspend fun setAudioDevices(devices: List<AudioDeviceSpec>): Boolean =
+        callFor<SetDevicesResult>("audio.setDevices",
+            "devices" to EngineJson.json.encodeToJsonElement(ListSerializer(AudioDeviceSpec.serializer()), devices)).applied
     override suspend fun setRecordPermission(granted: Boolean) { call("audio.permission", "recordPermission" to granted) }
     override suspend fun latency(): LatencyInfo = callFor("audio.latency")
 

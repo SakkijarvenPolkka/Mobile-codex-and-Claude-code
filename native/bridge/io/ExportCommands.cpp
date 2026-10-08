@@ -43,9 +43,12 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <future>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
+#include <system_error>
 #include <thread>
 #include <variant>
 
@@ -85,6 +88,9 @@ const std::vector<int> kDefaultRates{ 8000, 11025, 16000, 22050, 32000,
 
 constexpr const char *kMp3Key = "MP3 Files";
 constexpr const char *kWavPackKey = "WavPack Files";
+//! ExportPCM's second format: its FormatInfo (extension, channels) follows
+//! the preferences that its options editor writes
+constexpr const char *kPcmOtherKey = "Other uncompressed files";
 //! ExportWavPack.cpp OptionIDCreateCorrection
 constexpr ExportOptionID kWavPackCorrectionOption = 3;
 
@@ -228,6 +234,13 @@ public:
          mEditor->Load(*gPrefs);
          if (IsWavPackCorrection(kWavPackCorrectionOption))
             mEditor->SetValue(kWavPackCorrectionOption, ExportValue{ false });
+         // ExportPCM::GetFormatInfo(FMT_OTHER) reads the header type from
+         // the preferences (default WAV), the editor defaults to the first
+         // non-WAV header: store once so that both agree
+         if (mKey == kPcmOtherKey) {
+            mEditor->Store(*gPrefs);
+            gPrefs->Flush();
+         }
       }
    }
    ~OptionsSession() override = default;
@@ -496,13 +509,15 @@ private:
    }
 }
 
-void RemoveOutput(const FilePath &path)
+//! Deletes the (partial) output; `sidecar`: also the WavPack correction
+//! file "<path>c" (only when it did not exist before the export)
+void RemoveOutput(const FilePath &path, bool sidecar)
 {
    wxLogNull noLog;
-   // the export file and a WavPack correction file next to it
-   for (const auto &file : { path, path + wxT("c") })
-      if (wxFileExists(file))
-         wxRemoveFile(file);
+   if (wxFileExists(path))
+      wxRemoveFile(path);
+   if (sidecar && wxFileExists(path + wxT("c")))
+      wxRemoveFile(path + wxT("c"));
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +618,7 @@ json ExportRun(const json &args)
       Fail(ErrorCode::INVALID_ARGS, "the staging path must not exist yet");
    if (!wxDirExists(fileName.GetPath()))
       Fail(ErrorCode::INVALID_ARGS, "the directory of the path does not exist");
+   const bool sidecar = !wxFileExists(path + wxT("c"));
 
    const auto range = ArgString(args, "range");
    if (range != "project" && range != "selection")
@@ -628,6 +644,8 @@ json ExportRun(const json &args)
 
    // ExportAudioDialog::OnExport
    auto &tracks = TrackList::Get(project);
+   if (tracks.Any<const WaveTrack>().empty())
+      Fail(ErrorCode::FAILED, "There is no audio to export");
    if (selectedOnly && !ExportUtils::HasSelectedAudio(project))
       Fail(ErrorCode::NO_SELECTION,
          "select the audio (time and tracks) to export first");
@@ -644,13 +662,13 @@ json ExportRun(const json &args)
    if (skipSilence)
       t0 = std::max(t0, exportedTracks.min(&Track::GetStartTime));
    if (!(t1 > t0))
-      Fail(ErrorCode::FAILED, "there is no audio to export");
+      Fail(ErrorCode::FAILED, "There is no audio to export");
 
    auto parameters = session.Commit();
 
    ExportTaskBuilder builder;
    builder.SetFileName(fileName)
-      .SetPlugin(&ref.plugin == nullptr ? nullptr : ref.plugin, ref.index)
+      .SetPlugin(ref.plugin, ref.index)
       .SetParameters(std::move(parameters))
       .SetSampleRate(double(rate))
       .SetRange(t0, t1, selectedOnly)
@@ -667,7 +685,7 @@ json ExportRun(const json &args)
       task = builder.Build(project);
    }
    catch (...) {
-      RemoveOutput(path);
+      RemoveOutput(path, sidecar);
       RethrowExportError(std::current_exception());
    }
 
@@ -678,9 +696,18 @@ json ExportRun(const json &args)
       worker = std::thread{ std::move(task), std::ref(delegate) };
    }
    catch (const std::system_error &e) {
-      RemoveOutput(path);
+      RemoveOutput(path, sidecar);
       Fail(ErrorCode::FAILED, std::string("cannot start the export: ") + e.what());
    }
+   // Whatever happens below, the worker (which uses `delegate` and reads
+   // the project) is finished before this frame goes away; a joinable
+   // std::thread would also terminate the process when destroyed
+   auto joinWorker = finally([&] {
+      if (worker.joinable()) {
+         delegate.RequestCancel();
+         worker.join();
+      }
+   });
 
    // ExportProgressUI::Show, but the worker is joined and the engine thread
    // runs only internal (CallAfter) work meanwhile: no command can touch the
@@ -709,7 +736,7 @@ json ExportRun(const json &args)
       result = future.get();   // rethrows the exceptions of Process()
    }
    catch (...) {
-      RemoveOutput(path);
+      RemoveOutput(path, sidecar);
       RethrowExportError(std::current_exception());
    }
 
@@ -718,16 +745,16 @@ json ExportRun(const json &args)
    case ExportResult::Stopped:
       break;
    case ExportResult::Cancelled:
-      RemoveOutput(path);
+      RemoveOutput(path, sidecar);
       if (userCancelled || scope.IsCancelled())
          Fail(ErrorCode::CANCELLED, Translated(XO("Cancelled")));
       // Initialize() returned false without the user asking
       Fail(ErrorCode::FAILED, Translated(XO("Export error")));
    case ExportResult::Error:
    default:
-      RemoveOutput(path);
-      Fail(ErrorCode::FAILED,
-         Translated(FileException::WriteFailureMessage(fileName)));
+      // ExportProgressUI::Show's message
+      RemoveOutput(path, sidecar);
+      Fail(ErrorCode::FAILED, Translated(XO("Export completed with error.")));
    }
    if (!wxFileExists(path))
       Fail(ErrorCode::FAILED,

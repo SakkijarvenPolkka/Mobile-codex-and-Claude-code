@@ -116,6 +116,38 @@ fun TextInputDialog(d: AppDialog.TextInput, vm: AppViewModel) {
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 }
 
+/** One of several options (radio buttons), e.g. the label file type. */
+@Composable
+fun ChoiceDialog(d: AppDialog.Choice, vm: AppViewModel) {
+    var sel by rememberSaveable(d) { mutableIntStateOf(d.initial.coerceIn(0, (d.options.size - 1).coerceAtLeast(0))) }
+    AlertDialog(
+        onDismissRequest = { vm.dismiss(d) },
+        title = { Text(d.title.text()) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                d.options.forEachIndexed { i, o ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(role = Role.RadioButton) { sel = i },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = sel == i, onClick = { sel = i })
+                        Text(o.text())
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                d.result.complete(sel)
+                vm.dismiss(d)
+            }, enabled = d.options.isNotEmpty()) { Text(stringResource(R.string.btn_ok)) }
+        },
+        dismissButton = { TextButton(onClick = { vm.dismiss(d) }) { Text(stringResource(R.string.btn_cancel)) } },
+    )
+}
+
 @Composable
 fun TimeInputDialog(d: AppDialog.TimeInput, vm: AppViewModel) {
     var value by rememberSaveable(d) { mutableStateOf(TimeCodec.format(d.initial)) }
@@ -212,11 +244,15 @@ fun RecoveryDialog(d: AppDialog.Recovery, vm: AppViewModel) {
     )
 }
 
-/** A `dialog` event of the engine (BasicUI message box or choice). */
+/** A `dialog` event of the engine (BasicUI message box, choice or multi-choice). */
 @Composable
 fun EngineDialog(e: DialogEvent, vm: AppViewModel) {
     val reply: (Int) -> Unit = { b -> vm.engine.replyDialog(e.id, b) }
-    if (e.kind == "choice" && e.choices.isNotEmpty()) {
+    if (e.isMultiChoice) {
+        MultiChoiceDialog(e, vm)
+        return
+    }
+    if (e.kind == DialogEvent.KIND_CHOICE && e.choices.isNotEmpty()) {
         var sel by remember(e.id) { mutableIntStateOf(e.defaultButton.coerceIn(0, e.choices.lastIndex)) }
         AlertDialog(
             onDismissRequest = { reply(-1) },
@@ -254,6 +290,45 @@ fun EngineDialog(e: DialogEvent, vm: AppViewModel) {
                 }
             }
         },
+    )
+}
+
+/**
+ * `kind:"multiChoice"` (API.md §4.4), e.g. "Select stream(s) to import":
+ * check boxes initialised from `defaultChecked`; OK answers the checked
+ * indices with replyDialogChoices (none checked is a valid answer), Cancel /
+ * back answers replyDialog(id, -1).
+ */
+@Composable
+fun MultiChoiceDialog(e: DialogEvent, vm: AppViewModel) {
+    val checked = remember(e.id) { mutableStateListOf<Int>().apply { addAll(e.defaultIndices) } }
+    val ok = e.buttons.getOrNull(0) ?: stringResource(R.string.btn_ok)
+    val cancel = e.buttons.getOrNull(1) ?: stringResource(R.string.btn_cancel)
+    AlertDialog(
+        onDismissRequest = { vm.engine.replyDialog(e.id, -1) },
+        properties = DialogProperties(dismissOnClickOutside = false),
+        title = { Text(e.title.ifEmpty { "Audacity" }) },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                if (e.message.isNotEmpty()) {
+                    Text(e.message)
+                    Spacer(Modifier.height(8.dp))
+                }
+                e.choices.forEachIndexed { i, c ->
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable(role = Role.Checkbox) { if (i in checked) checked.remove(i) else checked.add(i) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(checked = i in checked, onCheckedChange = { c2 -> if (c2) checked.add(i) else checked.remove(i) })
+                        Text(c)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = { vm.engine.replyDialogChoices(e.id, checked.sorted()) }) { Text(ok) } },
+        dismissButton = { TextButton(onClick = { vm.engine.replyDialog(e.id, -1) }) { Text(cancel) } },
     )
 }
 

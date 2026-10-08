@@ -72,12 +72,15 @@ kotlin {
 }
 
 // ---------------------------------------------------------------------------
-// Nyquist runtime and plug-ins as assets (assets/audacity/{nyquist,plug-ins}).
+// Nyquist runtime, plug-ins and the engine's translations as assets
+// (assets/audacity/{nyquist,plug-ins,locale}).
 // The file lists are read from the CMakeLists.txt of native/audacity/nyquist
 // (set( RUNTIME ...)) and native/audacity/plug-ins (set( SOURCES ...)), i.e.
 // exactly what Audacity 3.7.9 installs; build files and the test/sample
-// sources next to them are not packaged. AssetInstaller extracts them to
-// filesDir/audacity/ at runtime (API.md §2.1).
+// sources next to them are not packaged. The gettext catalogs are the
+// compiled native/audacity/locale/<lang>/LC_MESSAGES/*.mo (not the .po
+// sources). AssetInstaller extracts them to filesDir/audacity/ at runtime
+// (API.md §2.1).
 // ---------------------------------------------------------------------------
 abstract class PackageAudacityAssetsTask : DefaultTask() {
     @get:InputDirectory
@@ -87,6 +90,14 @@ abstract class PackageAudacityAssetsTask : DefaultTask() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val pluginsDir: DirectoryProperty
+
+    // native/audacity/locale: only the <lang>/LC_MESSAGES/<domain>.mo files are packaged
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val localeFiles: ConfigurableFileCollection
+
+    @get:Internal
+    abstract val localeDir: DirectoryProperty
 
     @get:OutputDirectory
     abstract val outputDir: DirectoryProperty
@@ -112,6 +123,18 @@ abstract class PackageAudacityAssetsTask : DefaultTask() {
         return files.size
     }
 
+    private fun copyCatalogs(localeRoot: File, dest: File): Int {
+        var n = 0
+        for (mo in localeFiles.files.sortedBy { it.path }) {
+            val rel = mo.relativeTo(localeRoot).invariantSeparatorsPath
+            // <lang>/LC_MESSAGES/<domain>.mo
+            if (!Regex("""[A-Za-z0-9_@-]+/LC_MESSAGES/[^/]+\.mo""").matches(rel)) continue
+            mo.copyTo(File(dest, rel), overwrite = true)
+            n++
+        }
+        return n
+    }
+
     @TaskAction
     fun run() {
         val root = outputDir.get().asFile
@@ -119,13 +142,17 @@ abstract class PackageAudacityAssetsTask : DefaultTask() {
         val base = File(root, "audacity")
         val n = copyListed(nyquistDir.get().asFile, "RUNTIME", File(base, "nyquist")) +
             copyListed(pluginsDir.get().asFile, "SOURCES", File(base, "plug-ins"))
-        logger.info("packaged $n Audacity runtime files into $root")
+        val catalogs = copyCatalogs(localeDir.get().asFile, File(base, "locale"))
+        logger.info("packaged $n Audacity runtime files and $catalogs catalogs into $root")
     }
 }
 
 val packageAudacityAssets = tasks.register<PackageAudacityAssetsTask>("packageAudacityAssets") {
     nyquistDir.set(rootProject.layout.projectDirectory.dir("native/audacity/nyquist"))
     pluginsDir.set(rootProject.layout.projectDirectory.dir("native/audacity/plug-ins"))
+    val locale = rootProject.layout.projectDirectory.dir("native/audacity/locale")
+    localeDir.set(locale)
+    localeFiles.from(rootProject.fileTree(locale) { include("*/LC_MESSAGES/*.mo") })
     outputDir.set(layout.buildDirectory.dir("generated/audacityAssets"))
 }
 
@@ -148,3 +175,34 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
 }
+
+// Host contract test of the typed facade (NativeContractHostTest): with
+//   -Paudacity.hostJniLibrary=<libaudacity-jni.so> -Paudacity.hostContractTest=true
+//   --tests '*NativeContractHostTest*'   (alone: the engine starts once per JVM)
+if ((project.findProperty("audacity.hostContractTest") as String?)?.trim()?.toBoolean() == true) {
+    tasks.withType<Test>().configureEach {
+        systemProperty("audacity.hostContractTest", "true")
+    }
+}
+
+// ---------------------------------------------------------------------------
+// [jni] BEGIN -- owned by the JNI glue (native/jni/README.md); please keep
+// other edits outside this block.
+// Host end-to-end test NativeHostIntegrationTest: loads the host build of
+// libaudacity-jni.so into the unit-test JVM. Skipped unless
+//   -Paudacity.hostJniLibrary=<absolute path to libaudacity-jni.so>
+// is given (e.g. $PWD/native/build-host/lib/libaudacity-jni.so); then the
+// unit tests also run with -Xcheck:jni and are never up to date (the native
+// library is not a tracked input).
+// ---------------------------------------------------------------------------
+val hostJniLibrary = (project.findProperty("audacity.hostJniLibrary") as String?)
+    ?.trim()?.takeIf { it.isNotEmpty() }
+if (hostJniLibrary != null) {
+    tasks.withType<Test>().configureEach {
+        systemProperty("audacity.jni.library", file(hostJniLibrary).absolutePath)
+        jvmArgs("-Xcheck:jni")
+        outputs.upToDateWhen { false }
+        outputs.cacheIf { false }
+    }
+}
+// [jni] END

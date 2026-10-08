@@ -86,6 +86,8 @@ class MainActivity : ComponentActivity() {
         val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             vm.onRecordPermissionResult(granted, vm.pendingRecordNewTrack)
         }
+        // Optional: without it the service still runs, its notification is just not shown
+        val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
         LaunchedEffect(vm) {
             vm.requests.collect { r ->
                 try {
@@ -101,6 +103,9 @@ class MainActivity : ComponentActivity() {
                         is HostRequest.RecordPermission -> {
                             vm.pendingRecordNewTrack = r.newTrack
                             permission.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                        HostRequest.NotificationPermission -> if (Build.VERSION.SDK_INT >= 33) {
+                            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                         is HostRequest.OpenUrl -> startActivity(Intent(Intent.ACTION_VIEW, r.url.toUri()))
                         HostRequest.AppLanguageSettings -> if (Build.VERSION.SDK_INT >= 33) {

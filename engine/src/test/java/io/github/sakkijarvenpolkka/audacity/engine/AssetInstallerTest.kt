@@ -40,6 +40,8 @@ class AssetInstallerTest {
         File(root, "audacity/nyquist/nyquist.lsp").writeText("(nyquist)")
         File(root, "audacity/nyquist/rawwaves/sinewave.raw").writeBytes(ByteArray(16) { it.toByte() })
         File(root, "audacity/plug-ins/highpass.ny").writeText("\$nyquist plug-in")
+        File(root, "audacity/locale/ko/LC_MESSAGES").mkdirs()
+        File(root, "audacity/locale/ko/LC_MESSAGES/audacity.mo").writeBytes(byteArrayOf(0xde.toByte(), 0x12, 0x04, 0x95.toByte()))
         return root
     }
 
@@ -51,9 +53,14 @@ class AssetInstallerTest {
         File(audacityDir, "audacity.cfg").writeText("[GUI]\nSolo=Simple\n")
         File(audacityDir, "nyquist").mkdirs()
         File(audacityDir, "nyquist/stale.lsp").writeText("old")
+        File(audacityDir, "locale/de/LC_MESSAGES").mkdirs()
+        File(audacityDir, "locale/de/LC_MESSAGES/audacity.mo").writeText("stale catalog")
         val installer = AssetInstaller(source, audacityDir)
 
-        assertEquals(3, installer.installIfNeeded("1:a"))
+        assertEquals(4, installer.installIfNeeded("1:a"))
+        // The engine's catalogs (API.md §2.1): filesDir/audacity/locale/<lang>/LC_MESSAGES/audacity.mo
+        assertEquals(4L, File(audacityDir, "locale/ko/LC_MESSAGES/audacity.mo").length())
+        assertFalse(File(audacityDir, "locale/de").exists())
         assertEquals("(nyquist)", File(audacityDir, "nyquist/nyquist.lsp").readText())
         assertEquals(16, File(audacityDir, "nyquist/rawwaves/sinewave.raw").length())
         assertTrue(File(audacityDir, "plug-ins/highpass.ny").isFile)
@@ -63,17 +70,17 @@ class AssetInstallerTest {
 
         // Same version: nothing copied again
         assertEquals(0, installer.installIfNeeded("1:a"))
-        assertEquals(3, source.opened)
+        assertEquals(4, source.opened)
 
         // New version: replaced
         assertFalse(installer.isUpToDate("2:b"))
-        assertEquals(3, installer.installIfNeeded("2:b"))
+        assertEquals(4, installer.installIfNeeded("2:b"))
         assertTrue(File(audacityDir, "audacity.cfg").exists())
 
         // A deleted runtime directory is reinstalled even with the same stamp
-        File(audacityDir, "plug-ins").deleteRecursively()
+        File(audacityDir, "locale").deleteRecursively()
         assertFalse(installer.isUpToDate("2:b"))
-        assertEquals(3, installer.installIfNeeded("2:b"))
+        assertEquals(4, installer.installIfNeeded("2:b"))
     }
 
     @Test
@@ -84,6 +91,7 @@ class AssetInstallerTest {
         assertEquals(0, installer.installIfNeeded("x"))
         assertTrue(File(audacityDir, "nyquist").isDirectory)
         assertTrue(File(audacityDir, "plug-ins").isDirectory)
+        assertTrue(File(audacityDir, "locale").isDirectory)
         assertTrue(installer.isUpToDate("x"))
     }
 }

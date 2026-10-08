@@ -9,10 +9,12 @@
  */
 package io.github.sakkijarvenpolkka.audacity
 
+import android.Manifest
 import android.app.Application
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.StatFs
@@ -22,6 +24,8 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.key.Key
+import androidx.core.content.ContextCompat
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.sakkijarvenpolkka.audacity.editor.EditorState
@@ -38,8 +42,6 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.LogEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
-import io.github.sakkijarvenpolkka.audacity.files.LabelFiles
-import io.github.sakkijarvenpolkka.audacity.files.LabelLine
 import io.github.sakkijarvenpolkka.audacity.files.SafFiles
 import io.github.sakkijarvenpolkka.audacity.menu.Disallowed
 import io.github.sakkijarvenpolkka.audacity.menu.MenuHost
@@ -114,11 +116,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
     val projectsDir: File get() = File(context.filesDir, "Projects")
 
     init {
+        audacity.attachEngineServices(engine)
         viewModelScope.launch { startEngine() }
         viewModelScope.launch {
             engine.logs.collect { e ->
                 logLines.add(e)
                 if (logLines.size > 600) logLines.removeRange(0, logLines.size - 500)
+            }
+        }
+        viewModelScope.launch {
+            // Ask once for the notification of the recording/playback service (Android 13+)
+            engine.transportState.collect { t ->
+                if ((t.state == "recording" || t.state == "playing") && shouldAskNotifications()) {
+                    markNotificationsAsked()
+                    request(HostRequest.NotificationPermission)
+                }
             }
         }
         viewModelScope.launch {
@@ -176,6 +188,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
     fun onResume() {
         if (!ready) return
         launchAction(quiet = true) { syncRecordPermission() }
+    }
+
+    private fun shouldAskNotifications(): Boolean =
+        Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED &&
+            !context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(K_ASKED_NOTIFICATIONS, false)
+
+    private fun markNotificationsAsked() {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(K_ASKED_NOTIFICATIONS, true) }
     }
 
     private suspend fun syncRecordPermission() {
@@ -253,6 +274,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         when (dialog) {
             is AppDialog.TextInput -> dialog.result.complete(null)
             is AppDialog.TimeInput -> dialog.result.complete(null)
+            is AppDialog.Choice -> dialog.result.complete(null)
             is AppDialog.Confirm -> dialog.result.complete(false)
             is AppDialog.SaveChanges -> dialog.result.complete(SaveChoice.CANCEL)
             else -> Unit
@@ -390,7 +412,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         refreshRecent()
     }
 
-    /** Project manager: rename a project file that is not open (main file plus -wal/-shm). */
+    /** Project manager: rename a project that is not open (project.rename moves the -wal/-shm files too). */
     suspend fun renameProjectFile(entry: ProjectFileEntry) {
         if (engine.snapshot.value.project.path == entry.path) {
             message(R.string.msg_rename_open_project)
@@ -398,20 +420,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         }
         val name = askText(UiText.Res(R.string.pm_rename), UiText.Res(R.string.project_name), entry.name) ?: return
         val base = SafFiles.sanitizeBaseName(name.trim().removeSuffix(".aup3"))
-        val src = File(entry.path)
-        val dst = File(src.parentFile, "$base.aup3")
-        if (dst.exists()) {
-            message(R.string.msg_name_exists, dst.name)
+        if (base == entry.name) return
+        if (recentProjects.value.any { it.name == base && it.path != entry.path }) {
+            message(R.string.msg_name_exists, "$base.aup3")
             return
         }
-        withContext(Dispatchers.IO) {
-            if (!src.renameTo(dst)) throw IOException(src.name)
-            for (suffix in listOf("-wal", "-shm")) {
-                val aux = File(src.path + suffix)
-                if (aux.exists()) aux.renameTo(File(dst.path + suffix))
-            }
+        try {
+            engine.renameProject(entry.path, base)
+        } finally {
+            refreshRecent()
         }
-        refreshRecent()
     }
 
     suspend fun deleteProjectFile(entry: ProjectFileEntry) {
@@ -487,7 +505,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
 
     override suspend fun updateSettings(partial: Settings) {
         settings.value = engine.setSettings(partial)
-        if (partial.effectsGroupBy != null) reloadEffects()
+        // Effect names and menus are translated by the engine
+        if (partial.effectsGroupBy != null || partial.language != null) reloadEffects()
+        if (partial.language != null) quietly { appInfo.value = engine.appInfo() }
     }
 
     override fun clipboardText(): String? {
@@ -530,10 +550,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
                 importStaged(staged, newProject = false)
             }
             OpenPurpose.IMPORT_LABELS -> launchAction {
-                val uri = uris.first()
-                val text = SafFiles.readText(context.contentResolver, uri)
-                val name = SafFiles.displayName(context.contentResolver, uri)?.substringBeforeLast('.') ?: "Labels"
-                importLabels(name, LabelFiles.parse(text))
+                val staged = stageForImport(uris.take(1)) ?: return@launchAction
+                importLabels(staged.single())
             }
         }
     }
@@ -616,25 +634,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
         }
     }
 
-    /** File ▸ Import ▸ Labels: a new label track named after the file (LabelMenus.cpp OnImportLabels). */
-    private suspend fun importLabels(name: String, labels: List<LabelLine>) {
-        if (labels.isEmpty()) {
-            message(R.string.msg_no_labels_in_file)
-            return
+    /** File ▸ Import ▸ Labels (labels.import): a new label track named after the staged file. */
+    private suspend fun importLabels(staged: File) {
+        try {
+            val id = engine.importLabels(staged.absolutePath)
+            val n = engine.snapshot.value.track(id)?.labels?.size ?: 0
+            if (n == 0) message(R.string.msg_no_labels_in_file) else message(R.string.msg_labels_imported, n)
+        } finally {
+            withContext(Dispatchers.IO) { staged.parentFile?.deleteRecursively() }
         }
-        val snap = engine.snapshot.value
-        val oldSel = snap.selection
-        val oldTracks = snap.selectedTracks.map { it.id }
-        val id = engine.addTrack("label")
-        engine.renameTrack(id, name)
-        engine.selectTracks(listOf(id), "set")
-        for (l in labels) {
-            engine.select(l.t0, l.t1)
-            engine.addLabel(l.title)
-        }
-        engine.selectTracks(oldTracks, "set")
-        engine.select(oldSel.t0, oldSel.t1)
-        message(R.string.msg_labels_imported, labels.size)
     }
 
     /** Export dialog → pick the destination first (§5.3 step 1). */
@@ -683,15 +691,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app), MenuHost {
                 }
             }
             is CreatePurpose.ExportLabels -> launchAction {
+                // labels.export writes a staging file in the chosen format; then it is copied to the document
+                val dir = SafFiles.stagingDir(context.cacheDir, "export")
+                val staged = File(dir, SafFiles.sanitizeBaseName(purpose.fileName))
                 try {
-                    SafFiles.writeTextToUri(cr, uri, purpose.text)
-                    message(R.string.msg_exported, SafFiles.displayName(cr, uri) ?: "labels.txt")
+                    engine.exportLabels(staged.absolutePath, purpose.format)
+                    SafFiles.copyFileToUri(cr, staged, uri)
+                    message(R.string.msg_exported, SafFiles.displayName(cr, uri) ?: purpose.fileName)
                 } catch (e: Throwable) {
                     SafFiles.deleteDocument(cr, uri)
                     throw e
+                } finally {
+                    withContext(Dispatchers.IO) { dir.deleteRecursively() }
                 }
             }
         }
+    }
+
+    private companion object {
+        const val PREFS = "audacity_ui"
+        const val K_ASKED_NOTIFICATIONS = "askedNotificationPermission"
     }
 
     /** Runs [block] with a cancellable app-side progress dialog. */

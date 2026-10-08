@@ -24,8 +24,10 @@
    * errors are returned in the response instead of error dialogs; a batch
      goes on after a file that fails (its message is in `messages`);
    * tempo detection (MIR) is not ported (3.7.9's "non-tempo" path);
-   * the first import into an empty project adopts the imported rate as the
-     project rate (as Audacity 2.x did; 3.7.9 keeps the project rate);
+   * the first import into an empty project adopts the rate of the first
+     imported track as the project rate (Audacity 2.x / early 3.x
+     AddImportedTracks behaviour; 3.7.9's AddImportedTracks no longer does
+     it), so that recording and playback run at the material's rate;
    * imports nested in another import (mod-aup <import>, mod-lof) add their
      tracks without an undo state of their own: every file named in
      import.files is exactly one undo state.
@@ -42,6 +44,7 @@
 #include <wx/log.h>
 
 #include "AcidizerTags.h"
+#include "AudacityException.h"
 #include "BasicUI.h"
 #include "Edit.h"
 #include "Import.h"
@@ -63,6 +66,7 @@
 #include "Track.h"
 #include "TrackFocus.h"
 #include "UiServices.h"
+#include "UserException.h"
 #include "WaveClip.h"
 #include "WaveTrack.h"
 
@@ -104,6 +108,26 @@ std::set<int64_t> TrackIds(AudacityProject &project)
    return ids;
 }
 
+// MessageBoxException::ErrorMessage() is protected; reach it through a
+// pointer to member named via a derived class (as the spine's dispatcher)
+struct MessageAccess : MessageBoxException {
+   static TranslatableString Message(const MessageBoxException &e)
+   {
+      auto pm = &MessageAccess::ErrorMessage;
+      return (e.*pm)();
+   }
+};
+
+std::string LibraryMessage(const AudacityException &e)
+{
+   if (auto p = dynamic_cast<const MessageBoxException *>(&e)) {
+      auto message = Translated(MessageAccess::Message(*p));
+      if (!message.empty())
+         return message;
+   }
+   return "The operation failed";
+}
+
 // ---------------------------------------------------------------------------
 // The listener: port of ImportProgress (ProjectFileManager.cpp) with the
 // ImportStreamDialog replaced by a multiChoice dialog and the progress
@@ -120,6 +144,7 @@ public:
    {
       mHandle = &handle;
       mScope.reset();
+      mLinkFilter.reset();
 
       // Refuse a file that cannot fit into the project's database (a lower
       // bound: the project may store wider samples than the file)
@@ -149,11 +174,22 @@ public:
             mUserCancelled = true;
             return false;
          }
-         for (wxInt32 i = 0; i < count; ++i)
-            handle.SetStreamUsage(i, false);
+         std::vector<bool> keep(size_t(count), false);
          for (const int i : *chosen)
             if (i >= 0 && i < count)
-               handle.SetStreamUsage(i, true);
+               keep[size_t(i)] = true;
+         const bool all =
+            std::find(keep.begin(), keep.end(), false) == keep.end();
+         if (!all && IsOggVorbis(handle))
+            // 3.7.9 OggImportFileHandle::Import ends with
+            // FinalizeImport(outTracks, std::move(*stream)) for every link,
+            // also for the null TrackListHolder of an unused link (a crash
+            // in the desktop too).  Decode every link instead and drop the
+            // tracks of the links that were not chosen afterwards
+            // (FilterStreams).
+            mLinkFilter = OggLinkFilter(infos, keep);
+         for (wxInt32 i = 0; i < count; ++i)
+            handle.SetStreamUsage(i, mLinkFilter ? true : keep[size_t(i)]);
       }
       else
          // One stream: import it (the OGG importer defaults to "unused")
@@ -194,16 +230,81 @@ public:
       }
    }
 
+   //! After a successful Importer::Import: removes the tracks of the
+   //! streams that were decoded only to work around the OGG importer
+   void FilterStreams(TrackHolders &tracks) const
+   {
+      if (!mLinkFilter)
+         return;
+      const auto &perLink = mLinkFilter->tracksPerLink;
+      size_t total = 0;
+      for (const auto n : perLink)
+         total += n;
+      if (total != tracks.size()) {
+         // Unexpected layout: keep everything rather than guess
+         wxLogWarning(wxT("import: %zu tracks for %zu Ogg links, expected %zu"),
+            tracks.size(), perLink.size(), total);
+         return;
+      }
+      TrackHolders kept;
+      size_t index = 0;
+      for (size_t link = 0; link < perLink.size(); ++link)
+         for (size_t k = 0; k < perLink[link]; ++k, ++index)
+            if (mLinkFilter->keep[link])
+               kept.push_back(std::move(tracks[index]));
+      tracks = std::move(kept);
+   }
+
    bool UserCancelled() const { return mUserCancelled; }
    bool NoSpace() const { return mNoSpace; }
    const std::vector<TranslatableString> &Errors() const { return mErrors; }
 
 private:
+   struct LinkFilter {
+      //! WaveTrackFactory::CreateMany: one stereo track for 2 channels,
+      //! else one mono track per channel
+      std::vector<size_t> tracksPerLink;
+      std::vector<bool> keep;
+   };
+
+   static bool IsOggVorbis(ImportFileHandle &handle)
+   {
+      // OggImportFileHandle::GetFileDescription() == DESC
+      return handle.GetFileDescription().MSGID().GET() ==
+         wxT("Ogg Vorbis files");
+   }
+
+   //! Channels of each link from the (untranslated) stream descriptions
+   //! "Index[%02x] Version[%d], Channels[%d], Rate[%ld]" of ImportOGG;
+   //! nullopt when one cannot be parsed (then the chosen links are used as
+   //! they are)
+   static std::optional<LinkFilter> OggLinkFilter(
+      const TranslatableStrings &infos, const std::vector<bool> &keep)
+   {
+      if (infos.size() != keep.size())
+         return std::nullopt;
+      LinkFilter filter;
+      filter.keep = keep;
+      for (const auto &info : infos) {
+         const auto text = info.Debug();
+         const auto pos = text.Find(wxT("Channels["));
+         if (pos == wxNOT_FOUND)
+            return std::nullopt;
+         long channels = 0;
+         if (!text.Mid(size_t(pos) + 9).BeforeFirst(wxT(']')).ToLong(&channels)
+             || channels < 1 || channels > 255)
+            return std::nullopt;
+         filter.tracksPerLink.push_back(channels == 2 ? 1 : size_t(channels));
+      }
+      return filter;
+   }
+
    AudacityProject &mProject;
    const wxString mDisplayName;
    ImportFileHandle *mHandle{};   // valid only inside Importer::Import
    std::unique_ptr<ProgressScope> mScope;
    std::vector<TranslatableString> mErrors;
+   std::optional<LinkFilter> mLinkFilter;
    bool mUserCancelled = false;
    bool mNoSpace = false;
 };
@@ -388,6 +489,7 @@ std::vector<int64_t> ImportOne(AudacityProject &project, const FilePath &path)
             FailureMessage(listener, errorMessage, path, displayName));
       }
 
+      listener.FilterStreams(newTracks);
       const auto projectTempo = ProjectTimeSignature::Get(project).GetTempo();
       for (auto &track : newTracks)
          DoProjectTempoChange(*track, projectTempo);
@@ -454,6 +556,7 @@ bool NestedImport(AudacityProject &project, const FilePath &path)
             wxT("Importing_Audio"));
       return false;
    }
+   listener.FilterStreams(newTracks);
    const auto projectTempo = ProjectTimeSignature::Get(project).GetTempo();
    for (auto &track : newTracks)
       DoProjectTempoChange(*track, projectTempo);
@@ -548,6 +651,20 @@ json ImportFiles(const json &args)
             if (!firstError)
                firstError = e;
             messages.push_back(std::string{ e.what() });
+         }
+         catch (const UserException &) {
+            // RunEditSelf rolled this file back; the batch ends
+            throw BridgeError{ ErrorCode::CANCELLED, "Cancelled" };
+         }
+         catch (const AudacityException &e) {
+            // e.g. the project database could not be written: this file was
+            // rolled back (RunEditSelf); go on like for other failures
+            const auto name = ToUtf8(wxFileName(file).GetFullName());
+            BridgeError error{ ErrorCode::FAILED,
+               name + ": " + LibraryMessage(e) };
+            if (!firstError)
+               firstError = error;
+            messages.push_back(std::string{ error.what() });
          }
       }
       if (imported == 0)

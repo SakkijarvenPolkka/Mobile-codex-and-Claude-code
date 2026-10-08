@@ -28,6 +28,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeClipboard
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeConfig
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeDemo
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeFormats
+import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeLabels
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FxCatalog
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FxContext
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FxDef
@@ -40,11 +41,13 @@ import io.github.sakkijarvenpolkka.audacity.engine.fake.Wav
 import io.github.sakkijarvenpolkka.audacity.engine.model.AppInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioBusyState
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevice
+import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipState
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardState
 import io.github.sakkijarvenpolkka.audacity.engine.model.CommandFlags
+import io.github.sakkijarvenpolkka.audacity.engine.model.CompactInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.ContrastResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.CurrentDevices
 import io.github.sakkijarvenpolkka.audacity.engine.model.DialogEvent
@@ -176,7 +179,13 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     private var nextProgressId = 1
     private var nextDialogId = 1
     private val cancelRequests = ConcurrentHashMap<Int, Boolean>()
-    private val dialogWaiters = ConcurrentHashMap<Int, CompletableDeferred<Int>>()
+    /** Answer of a blocking dialog: a button (or choice) index, or the
+     *  checked indices of a multi-choice dialog. */
+    private class DialogAnswer(val button: Int, val choices: List<Int>? = null)
+    private val dialogWaiters = ConcurrentHashMap<Int, CompletableDeferred<DialogAnswer>>()
+    /** Device list injected with audio.setDevices (null = only the defaults). */
+    private var injectedDevices: List<AudioDeviceSpec>? = null
+    private var pendingDevices: List<AudioDeviceSpec>? = null
 
     // ----- transport simulation (guarded by lock) ----------------------------
     private enum class TState(val code: Int, val wire: String) {
@@ -245,7 +254,41 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
 
     override fun replyDialog(dialogId: Int, button: Int) {
         hub.resolveDialog(dialogId)
-        dialogWaiters.remove(dialogId)?.complete(button)
+        dialogWaiters.remove(dialogId)?.complete(DialogAnswer(button))
+    }
+
+    override fun replyDialogChoices(dialogId: Int, indices: List<Int>) {
+        hub.resolveDialog(dialogId)
+        dialogWaiters.remove(dialogId)?.complete(DialogAnswer(0, indices))
+    }
+
+    /** Shows a blocking dialog and waits for the answer (no lock held). */
+    private suspend fun ask(dialog: (id: Int) -> DialogEvent): DialogAnswer {
+        val id = synchronized(lock) { nextDialogId++ }
+        val waiter = CompletableDeferred<DialogAnswer>()
+        dialogWaiters[id] = waiter
+        hub.showDialog(dialog(id))
+        return try {
+            waiter.await()
+        } finally {
+            dialogWaiters.remove(id)
+            hub.resolveDialog(id)
+        }
+    }
+
+    /** Port of the bridge's Dialogs::ChooseMany: the checked indices (sorted,
+     *  unique, in range), or null when cancelled. */
+    private suspend fun chooseMany(title: String, message: String, choices: List<String>, defaultChecked: List<Boolean>): List<Int>? {
+        val answer = ask { id ->
+            DialogEvent(id, DialogEvent.KIND_MULTI_CHOICE, "question", title, message, listOf("OK", "Cancel"), choices,
+                List(choices.size) { defaultChecked.getOrElse(it) { false } }, 0, blocking = true)
+        }
+        val picked = answer.choices
+        return when {
+            picked != null -> picked.filter { it in choices.indices }.distinct().sorted()
+            answer.button < 0 -> null
+            else -> choices.indices.filter { defaultChecked.getOrElse(it) { false } }
+        }
     }
 
     override fun cancelProgress(progressId: Int, stop: Boolean) {
@@ -427,7 +470,9 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         if (clipboard != null) f = f or CommandFlags.CLIPBOARD
         if (tState == TState.PAUSED_PLAY || tState == TState.PAUSED_RECORD) f = f or CommandFlags.PAUSED
         if (!(tState == TState.RECORDING || tState == TState.PAUSED_RECORD)) f = f or CommandFlags.CNB
-        if (!projectOpen) return f or CommandFlags.NB or CommandFlags.NSL or CommandFlags.NO_TIMETRACK
+        val syncLocked = settings.syncLock == true
+        if (!projectOpen) return f or CommandFlags.NB or CommandFlags.NO_TIMETRACK or
+            (if (syncLocked) CommandFlags.SL else CommandFlags.NSL)
         f = f or CommandFlags.PROJECT_OPEN
         val busy = isBusy()
         f = f or if (busy) CommandFlags.BUSY else CommandFlags.NB
@@ -447,7 +492,7 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             if (zoom > 0.001) f = f or CommandFlags.ZO
         }
         if (tracks.any { it.isWave }) f = f or CommandFlags.WE or CommandFlags.PLAYABLE
-        f = f or CommandFlags.NSL
+        f = f or if (syncLocked) CommandFlags.SL else CommandFlags.NSL
         if (selectedWaves.any { it.channels > 1 }) f = f or CommandFlags.ST
         if (ts && selected.isNotEmpty()) f = f or CommandFlags.CC
         if (!busy && ts && selectedWaves.any { it.clipsIntersecting(sel.t0, sel.t1).size > 1 }) f = f or CommandFlags.JC
@@ -560,6 +605,7 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         tState = TState.STOPPED
         previewTracks = null
         looping = false
+        applyPendingDevices()
         hub.setTransport(TransportEvent("stopped", reason))
         publish()
     }
@@ -681,7 +727,17 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             exporters = FakeFormats.FORMATS.map { it.key },
             effectsCount = effects.size,
             nyquist = true,
+            language = currentLanguage(),
+            languages = LANGUAGES,
         )
+    }
+
+    /** The engine-string language: the `language` setting, "system" = the device locale. */
+    private fun currentLanguage(): String {
+        val setting = settings.language ?: "system"
+        if (setting != "system") return setting
+        val lang = Locale.getDefault().language
+        return if (lang in LANGUAGES) lang else "en"
     }
 
     override suspend fun getSettings(): Settings = cmd(needsProject = false, allowBusy = true) { settings }
@@ -698,6 +754,7 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         for (v in listOfNotNull(partial.latencyMs, partial.latencyCorrectionMs, partial.preRollSec, partial.crossfadeMs)) {
             if (!v.isFinite()) fail(ErrorCodes.INVALID_ARGS, "non-finite setting")
         }
+        partial.language?.let { if (it != "system" && it !in LANGUAGES) fail(ErrorCodes.INVALID_ARGS, "unknown language '$it'") }
         val s = settings
         settings = Settings(
             defaultRate = partial.defaultRate ?: s.defaultRate,
@@ -717,6 +774,12 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             soloMode = partial.soloMode ?: s.soloMode,
             editClipsCanMove = partial.editClipsCanMove ?: s.editClipsCanMove,
             selectAllOnNone = partial.selectAllOnNone ?: s.selectAllOnNone,
+            syncLock = partial.syncLock ?: s.syncLock,
+            pasteAsNewClips = partial.pasteAsNewClips ?: s.pasteAsNewClips,
+            moveSelectionWithTracks = partial.moveSelectionWithTracks ?: s.moveSelectionWithTracks,
+            preferNewTrackRecord = partial.preferNewTrackRecord ?: s.preferNewTrackRecord,
+            dropoutDetection = partial.dropoutDetection ?: s.dropoutDetection,
+            language = partial.language ?: s.language,
         )
         publish()
         settings
@@ -876,6 +939,65 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         Unit
     }
 
+    override suspend fun renameProject(path: String, newName: String): String = cmd(needsProject = false) {
+        if (!File(path).isAbsolute) fail(ErrorCodes.INVALID_ARGS, "path must be absolute")
+        if (!path.endsWith(".aup3", ignoreCase = true)) fail(ErrorCodes.INVALID_ARGS, "not a project file (.aup3)")
+        val name = newName.trim().let { if (it.endsWith(".aup3", ignoreCase = true)) it.dropLast(5) else it }
+        if (name.isEmpty() || name.any { it == '/' || it == '\\' || it.isISOControl() } || name.startsWith(".") || name.endsWith("~")) {
+            fail(ErrorCodes.INVALID_ARGS, "invalid project name '$newName'")
+        }
+        val stored = storage[path] ?: fail(ErrorCodes.NOT_FOUND, "no such file $path")
+        if (projectOpen && path == projectPath) fail(ErrorCodes.FAILED, "cannot rename the open project")
+        val target = File(File(path).parentFile, "$name.aup3").path
+        if (target == path) return@cmd path
+        if (storage.containsKey(target)) fail(ErrorCodes.FAILED, "a project named '$name' already exists")
+        storage.remove(path)
+        storage[target] = StoredProject(name, stored.modifiedMs) { stored.model }
+        target
+    }
+
+    /** Bytes of the sample data of [models] (shared clips counted once). */
+    private fun sampleBytes(models: List<FModel>): Long {
+        val seen = java.util.IdentityHashMap<Array<FloatArray>, Boolean>()
+        var bytes = 0L
+        for (m in models) for (t in m.tracks) for (c in t.clips) {
+            if (seen.put(c.data, true) == null) bytes += 4L * c.length * c.channels
+        }
+        return bytes
+    }
+
+    /** History indices ProjectFileManager::Compact keeps: the current and the last saved state. */
+    private fun compactKeeps(): List<Int> = listOf(historyIndex, savedIndex).filter { it in history.indices }.distinct().sorted()
+
+    private fun compactInfoLocked(): CompactInfo {
+        val total = sampleBytes(history.map { it.model })
+        val used = sampleBytes(compactKeeps().map { history[it].model })
+        val free = runCatching { File(config.filesDir).usableSpace }.getOrDefault(0L).takeIf { it > 0 } ?: -1L
+        return CompactInfo(total, used, PROJECT_OVERHEAD + total, free)
+    }
+
+    override suspend fun compactInfo(): CompactInfo = cmd(allowBusy = true) { compactInfoLocked() }
+
+    override suspend fun compactProject(): Long = commandMutex.withLock {
+        locked { }
+        simulateProgress("Compacting project")
+        locked {
+            val before = compactInfoLocked()
+            val keep = compactKeeps()
+            val current = history[historyIndex]
+            val kept = keep.map { history[it] }
+            history.clear()
+            history += kept
+            historyIndex = kept.indexOf(current)
+            savedIndex = if (savedIndex >= 0) keep.indexOf(savedIndex) else -1
+            history[historyIndex] = HistEntry(current.model, "Compacted project file", "Compact")
+            clipboard = null
+            generation++
+            publish()
+            (before.totalBytes - before.usedBytes).coerceAtLeast(0L)
+        }
+    }
+
     // =========================================================================
     // history / view
     // =========================================================================
@@ -942,8 +1064,16 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         work = work.mapTracks { it.copy(selected = it.id in ids) }
     }
 
-    override suspend fun select(t0: Double, t1: Double) = cmd(allowBusy = true) {
+    override suspend fun select(t0: Double, t1: Double) = select(t0, t1, null, null)
+
+    override suspend fun select(t0: Double, t1: Double, trackIds: List<Long>?, focus: Long?) = cmd(allowBusy = true) {
+        if (!t0.isFinite() || !t1.isFinite()) fail(ErrorCodes.INVALID_ARGS, "times must be finite")
+        // Validate everything before changing anything
+        trackIds?.forEach { requireTrack(it) }
+        focus?.let { requireTrack(it) }
         setSelection(t0, t1)
+        if (trackIds != null) selectOnly(trackIds.toSet())
+        if (focus != null) work = work.copy(focusedId = focus)
         publish()
     }
 
@@ -993,10 +1123,20 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         publish()
     }
 
-    override suspend fun selectCommand(command: String) = cmd(allowBusy = true) {
+    override suspend fun selectCommand(command: String) = cmd(allowBusy = command != "select.zeroCrossing") {
+        if (command in NEEDS_EDITABLE_TRACKS && work.selectedTracks.isEmpty()) {
+            // EditableTracksSelected; with selectAllOnNone all audio is selected first
+            if (settings.selectAllOnNone == true && work.tracks.any { it.isWave }) {
+                work = work.mapTracks { it.copy(selected = it.isWave) }
+                setSelection(work.start, work.end)
+            } else {
+                fail(ErrorCodes.NO_SELECTION, "Select the audio to use (for example, Ctrl + A to Select All) then try again.")
+            }
+        }
         val sel = work.selection
         val selected = work.selectedTracks.filter { !it.isEmpty }
-        val pool = selected.ifEmpty { work.tracks.filter { !it.isEmpty } }
+        // Clip navigation: the selected wave tracks, or all of them when none is selected
+        val pool = work.selectedTracks.filter { it.isWave }.ifEmpty { work.tracks.filter { it.isWave } }
         when (command) {
             "select.allTracks" -> work = work.mapTracks { it.copy(selected = true) }
             "select.startToCursor" -> if (selected.isNotEmpty()) setSelection(min(selected.minOf { it.start }, sel.t1), sel.t1)
@@ -1007,20 +1147,63 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             "select.toProjectStart" -> setSelection(0.0, sel.t1)
             "select.toProjectEnd" -> setSelection(sel.t0, max(sel.t0, work.end))
             "select.prevClipBoundary", "select.nextClipBoundary" -> {
-                val bounds = pool.filter { it.isWave }.flatMap { t -> t.clips.flatMap { listOf(it.start, it.end) } }.distinct().sorted()
+                val bounds = pool.flatMap { t -> t.clips.flatMap { listOf(it.start, it.end) } }.distinct().sorted()
                 val t = if (command == "select.prevClipBoundary") bounds.lastOrNull { it < sel.t0 - 1e-9 }
                 else bounds.firstOrNull { it > sel.t0 + 1e-9 }
                 if (t != null) setSelection(t, t)
             }
             "select.prevClip", "select.nextClip" -> {
-                val clips = pool.filter { it.isWave }.flatMap { it.clips }.sortedBy { it.start }
-                val c = if (command == "select.prevClip") clips.lastOrNull { it.start < sel.t0 - 1e-9 }
-                else clips.firstOrNull { it.start > sel.t0 + 1e-9 }
+                // ClipMenus.cpp FindNextClip/FindPrevClip: a clip starting at the
+                // selection start that the selection does not cover yet, else the
+                // next (previous) clip start
+                val clips = pool.flatMap { it.clips }.sortedBy { it.start }
+                fun atStart(c: FClip) = abs(c.start - sel.t0) <= 1e-9
+                val c = if (command == "select.prevClip") clips.lastOrNull { it.start < sel.t0 - 1e-9 || (atStart(it) && it.end < sel.t1 - 1e-9) }
+                else clips.firstOrNull { (atStart(it) && it.end > sel.t1 + 1e-9) || it.start > sel.t0 + 1e-9 }
                 if (c != null) setSelection(c.start, c.end)
+            }
+            "select.zeroCrossing" -> {
+                // SelectMenus.cpp OnZeroCrossing
+                val t0 = nearestZeroCrossing(sel.t0)
+                if (sel.isPoint) setSelection(t0, t0)
+                else {
+                    val t1 = nearestZeroCrossing(sel.t1)
+                    if (abs(t1 - t0) * projectRate > 1.5) setSelection(t0, t1)
+                }
             }
             else -> fail(ErrorCodes.UNKNOWN_COMMAND, "unknown selection command '$command'")
         }
         publish()
+    }
+
+    /** SelectMenus.cpp NearestZeroCrossing: within ±5 ms of [t0], the sample
+     *  where the selected wave tracks are closest to zero, crossings first. */
+    private fun nearestZeroCrossing(t0: Double): Double {
+        val tracks = work.selectedTracks.filter { it.isWave }
+        if (tracks.isEmpty()) return t0
+        val rate = projectRate
+        val window = max(1, (rate / 100).toInt())
+        val start = t0 - window / 2 / rate
+        val dist = DoubleArray(window)
+        for (t in tracks) {
+            val data = Mixer.render(t.copy(gain = 1.0, pan = 0.0), start, rate, window + 1)
+            for (ch in data.indices) {
+                val d = data[ch]
+                for (i in 0 until window) {
+                    // A sign change scores 0; otherwise the distance from zero
+                    val crossing = (d[i] <= 0f && d[i + 1] >= 0f) || (d[i] >= 0f && d[i + 1] <= 0f)
+                    dist[i] += if (crossing) 0.0 else abs(d[i].toDouble()).coerceAtMost(1.0) + 0.1
+                }
+            }
+        }
+        var best = window / 2
+        var bestScore = Double.MAX_VALUE
+        for (i in 0 until window) {
+            // Prefer samples near the original position
+            val score = dist[i] + 1e-4 * abs(i - window / 2)
+            if (score < bestScore) { bestScore = score; best = i }
+        }
+        return max(0.0, start + best / rate)
     }
 
     /** Resolves a clip reference (API.md §3.2). */
@@ -1309,25 +1492,45 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         }
     }
 
+    /** A playable (wave) track; other kinds are NOT_FOUND like the bridge's RequirePlayableTrack. */
+    private fun requirePlayable(id: Long): FTrack =
+        work.track(id)?.takeIf { it.isWave } ?: fail(ErrorCodes.NOT_FOUND, "no playable track with id $id")
+
     override suspend fun setTrackGain(id: Long, gain: Double, final: Boolean) = cmd(allowBusy = true) {
-        if (!gain.isFinite() || gain < 0 || gain > 64) fail(ErrorCodes.INVALID_ARGS, "gain out of range")
-        work = work.replace(requireWave(id).copy(gain = gain))
-        if (final) pushState("Moved volume slider", "Volume", consolidate = true) else { generation++; publish() }
+        if (!gain.isFinite() || gain < 0 || gain > MAX_GAIN) fail(ErrorCodes.INVALID_ARGS, "gain out of range")
+        setGainOrPan(id, final, "Moved volume slider", "Volume") { it.copy(gain = gain) }
     }
 
     override suspend fun setTrackPan(id: Long, pan: Double, final: Boolean) = cmd(allowBusy = true) {
         if (!pan.isFinite() || pan < -1 || pan > 1) fail(ErrorCodes.INVALID_ARGS, "pan must be in [-1, 1]")
-        work = work.replace(requireWave(id).copy(pan = pan))
-        if (final) pushState("Moved pan slider", "Pan", consolidate = true) else { generation++; publish() }
+        setGainOrPan(id, final, "Moved pan slider", "Pan") { it.copy(pan = pan) }
+    }
+
+    /** final = false (dragging): model change only — no history entry, no
+     *  generation bump (clip references stay valid); final = true: one
+     *  consolidated history entry (WaveTrackSliderHandles.cpp). */
+    private fun setGainOrPan(id: Long, final: Boolean, description: String, short: String, change: (FTrack) -> FTrack) {
+        work = work.replace(change(requirePlayable(id)))
+        if (final) pushState(description, short, consolidate = true) else publish()
     }
 
     override suspend fun setTrackMute(id: Long, mute: Boolean) = cmd(allowBusy = true) {
-        work = work.replace(requireWave(id).copy(mute = mute))
-        modifyState()
+        val track = requirePlayable(id)
+        if (track.mute != mute) {
+            // TrackUtilities::DoTrackMute: toggles; with Simple solo the solo
+            // indicator follows when exactly one of several tracks plays
+            work = work.replace(track.copy(mute = mute))
+            if (settings.soloMode != "Multi") {
+                val playable = work.tracks.filter { it.isWave }
+                val playing = playable.count { !it.mute }
+                work = work.mapTracks { t -> if (!t.isWave) t else t.copy(solo = playing == 1 && playable.size > 1 && !t.mute) }
+            }
+            modifyState()
+        }
     }
 
     override suspend fun setTrackSolo(id: Long, solo: Boolean) = cmd(allowBusy = true) {
-        val track = requireWave(id)
+        val track = requirePlayable(id)
         if (track.solo != solo) {
             if (settings.soloMode == "Multi") {
                 work = work.replace(track.copy(solo = solo))
@@ -1342,8 +1545,37 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
                     }
                 }
             }
+            modifyState()
         }
+    }
+
+    override suspend fun muteAllTracks(mute: Boolean) = cmd(allowBusy = true) {
+        // TrackMenus.cpp MuteTracks(mute, selected = false)
+        val simple = settings.soloMode != "Multi"
+        work = work.mapTracks { t -> if (!t.isWave) t else t.copy(mute = mute, solo = if (simple) false else t.solo) }
         modifyState()
+    }
+
+    override suspend fun sortTracks(by: String) = cmd {
+        if (by != "time" && by != "name") fail(ErrorCodes.INVALID_ARGS, "argument 'by' must be time or name")
+        // TrackMenus.cpp DoSortTracks: a stable insertion sort; names case
+        // insensitively ('b' before 'B'), times by the first audible clip
+        fun time(t: FTrack): Double = if (t.isWave) t.clips.minOfOrNull { it.start } ?: t.end else t.labels.minOfOrNull { it.t0 } ?: 0.0
+        val sorted = ArrayList<FTrack>()
+        for (t in work.tracks) {
+            var ndx = 0
+            while (ndx < sorted.size) {
+                val o = sorted[ndx]
+                if (by == "name") {
+                    val c = t.name.compareTo(o.name, ignoreCase = true)
+                    if (c < 0 || (c == 0 && t.name > o.name)) break
+                } else if (time(t) < time(o)) break
+                ndx++
+            }
+            sorted.add(ndx, t)
+        }
+        work = work.copy(tracks = sorted)
+        if (by == "name") pushState("Tracks sorted by name", "Sort by Name") else pushState("Tracks sorted by time", "Sort by Time")
     }
 
     override suspend fun renameTrack(id: Long, name: String) = cmd {
@@ -1438,29 +1670,58 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         }
     }
 
-    override suspend fun alignTracks(mode: String) = cmd {
-        val sel = work.selection
-        val tracks = work.selectedTracks.filter { !it.isEmpty }
-        if (tracks.isEmpty()) fail(ErrorCodes.NO_SELECTION, "Select one or more tracks first")
-        val groupStart = tracks.minOf { it.start }
-        fun shiftTrack(t: FTrack, d: Double) = if (t.isWave) t.withClips(t.clips.map { it.withStart(it.start + d) })
-        else t.withLabels(t.labels.map { it.copy(t0 = it.t0 + d, t1 = it.t1 + d) })
-        val ids = tracks.map { it.id }.toSet()
-        work = work.mapTracks { t ->
-            if (t.id !in ids) t else {
-                val d = when (mode) {
-                    "startToZero" -> -t.start
-                    "startToCursor" -> sel.t0 - t.start
-                    "startToSelEnd" -> sel.t1 - t.start
-                    "endToCursor" -> sel.t0 - t.end
-                    "endToSelEnd" -> sel.t1 - t.end
-                    "together" -> groupStart - t.start
-                    else -> fail(ErrorCodes.INVALID_ARGS, "unknown align mode '$mode'")
-                }
-                shiftTrack(t, d)
-            }
+    override suspend fun alignTracks(mode: String, moveSelection: Boolean?) = cmd {
+        // TrackMenus.cpp DoAlign
+        val noSync = mode == "endToEnd" || mode == "together"
+        if (mode !in ALIGN_MODES) fail(ErrorCodes.INVALID_ARGS, "unknown align mode '$mode'")
+        val moveSel = if (noSync) false else moveSelection ?: (settings.moveSelectionWithTracks == true)
+        if (work.selectedTracks.isEmpty()) fail(ErrorCodes.NO_SELECTION, "Select the audio to use (for example, Ctrl + A to Select All) then try again.")
+        val audio = work.selectedTracks.filter { it.isWave }
+        if (audio.isEmpty()) {
+            fail(ErrorCodes.NO_SELECTION, "You must first select some audio to perform this action.\n(Selecting other kinds of track won't work.)")
         }
-        pushState("Aligned/Moved tracks ($mode)", "Align/Move")
+        val sel = work.selection
+        fun offset(t: FTrack) = if (t.clips.isEmpty()) 0.0 else t.start
+        fun shift(t: FTrack, d: Double) = if (t.isWave) t.withClips(t.clips.map { it.withStart(it.start + d) })
+        else t.withLabels(t.labels.map { it.copy(t0 = it.t0 + d, t1 = it.t1 + d) })
+        val minOffset = audio.minOf { offset(it) }
+        val maxEnd = max(0.0, audio.maxOf { it.end })
+        val delta = when (mode) {
+            "startToZero" -> -minOffset
+            "startToCursor" -> sel.t0 - minOffset
+            "startToSelEnd" -> sel.t1 - minOffset
+            "endToCursor" -> sel.t0 - maxEnd
+            "endToSelEnd" -> sel.t1 - maxEnd
+            else -> 0.0
+        }
+        if (noSync) {
+            var newPos = if (mode == "endToEnd") offset(audio.first()) else audio.sumOf { offset(it) } / audio.size
+            val moved = HashMap<Long, FTrack>()
+            for (t in audio) {
+                val m = shift(t, newPos - offset(t))
+                moved[t.id] = m
+                if (mode == "endToEnd") newPos += m.end - offset(m)
+            }
+            work = work.mapTracks { moved[it.id] ?: it }
+        } else if (delta != 0.0) {
+            // A fixed-distance shift moves every selected track (labels too)
+            work = work.mapTracks { if (it.selected) shift(it, delta) else it }
+        }
+        if (moveSel) setSelection(sel.t0 + delta, sel.t1 + delta)
+        val (long, short) = when (mode) {
+            "startToZero" -> (if (moveSel) "Aligned/Moved start to zero" else "Aligned start to zero") to (if (moveSel) "Align/Move Start" else "Align Start")
+            "startToCursor" -> (if (moveSel) "Aligned/Moved start to cursor/selection start" else "Aligned start to cursor/selection start") to
+                (if (moveSel) "Align/Move Start" else "Align Start")
+            "startToSelEnd" -> (if (moveSel) "Aligned/Moved start to selection end" else "Aligned start to selection end") to
+                (if (moveSel) "Align/Move Start" else "Align Start")
+            "endToCursor" -> (if (moveSel) "Aligned/Moved end to cursor/selection start" else "Aligned end to cursor/selection start") to
+                (if (moveSel) "Align/Move End" else "Align End")
+            "endToSelEnd" -> (if (moveSel) "Aligned/Moved end to selection end" else "Aligned end to selection end") to
+                (if (moveSel) "Align/Move End" else "Align End")
+            "endToEnd" -> "Aligned end to end" to "Align End to End"
+            else -> "Aligned together" to "Align Together"
+        }
+        pushState(long, short)
     }
 
     // =========================================================================
@@ -1497,37 +1758,86 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     }
 
     override suspend fun addLabel(title: String): Pair<Long, Int> = cmd(allowBusy = true) {
-        val sel = work.selection
-        var track = work.selectedTracks.firstOrNull { it.isLabel }
+        // OnAddLabel at the selection; OnAddLabelPlaying at the play position
+        // while this project plays or records
+        val sel = if (tState != TState.STOPPED && tState != TState.MONITORING) {
+            val t = position(now())
+            TimeRange(t, t)
+        } else work.selection
+        // The focused label track, else the first selected one, else a new one
+        var track = work.track(work.focusedId ?: -1L)?.takeIf { it.isLabel } ?: work.selectedTracks.firstOrNull { it.isLabel }
         if (track == null) {
             track = FTrack(newTrackId(), FTrack.LABEL, uniqueTrackName("Label"), selected = true)
             work = work.copy(tracks = work.tracks + track)
         }
         val label = FLabel(sel.t0, sel.t1, title)
-        val updated = track.withLabels(track.labels + label)
+        val updated = track.copy(selected = true).withLabels(track.labels + label)
         work = work.replace(updated).copy(focusedId = updated.id)
         pushState("Added label", "Label")
-        updated.id to updated.labels.indexOf(label)
+        updated.id to updated.labels.indexOfFirst { it === label }
     }
 
-    override suspend fun editLabel(trackId: Long, index: Int, title: String?, t0: Double?, t1: Double?) = cmd {
-        val t = requireTrack(trackId)
-        if (!t.isLabel) fail(ErrorCodes.INVALID_ARGS, "track $trackId is not a label track")
-        val old = t.labels.getOrNull(index) ?: fail(ErrorCodes.NOT_FOUND, "no label $index")
+    /** A label reference (API.md §3.3): an older generation is STALE. */
+    private fun labelRef(trackId: Long, index: Int, gen: Long?): Pair<FTrack, FLabel> {
+        if (gen != null && gen != generation) fail(ErrorCodes.STALE, "label reference of generation $gen is stale (current $generation)")
+        val t = work.track(trackId)?.takeIf { it.isLabel } ?: fail(ErrorCodes.NOT_FOUND, "no label track with id $trackId")
+        val label = t.labels.getOrNull(index) ?: fail(ErrorCodes.NOT_FOUND, "no label $index")
+        return t to label
+    }
+
+    override suspend fun editLabel(trackId: Long, index: Int, title: String?, t0: Double?, t1: Double?, generation: Long?): Int = cmd {
+        val (t, old) = labelRef(trackId, index, generation)
         val n0 = t0 ?: old.t0
         val n1 = t1 ?: old.t1
-        if (!n0.isFinite() || !n1.isFinite() || n1 < n0) fail(ErrorCodes.INVALID_ARGS, "label times must satisfy t0 <= t1")
+        if (!n0.isFinite() || !n1.isFinite()) fail(ErrorCodes.INVALID_ARGS, "label times must be finite")
+        if (n1 < n0) fail(ErrorCodes.INVALID_ARGS, "label times must satisfy t0 <= t1")
         val updated = FLabel(n0, n1, title ?: old.title)
-        work = work.replace(t.withLabels(t.labels.toMutableList().also { it[index] = updated }))
-        pushState("Edited labels", "Label")
+        if (updated == old) return@cmd index
+        // Time edits re-sort (LabelTrack::SortLabels): report the new position
+        val track = t.withLabels(t.labels.toMutableList().also { it[index] = updated })
+        work = work.replace(track)
+        pushState("Modified Label", "Label Edit")
+        track.labels.indexOfFirst { it === updated }
     }
 
-    override suspend fun removeLabel(trackId: Long, index: Int) = cmd {
-        val t = requireTrack(trackId)
-        if (!t.isLabel) fail(ErrorCodes.INVALID_ARGS, "track $trackId is not a label track")
-        if (index !in t.labels.indices) fail(ErrorCodes.NOT_FOUND, "no label $index")
+    override suspend fun removeLabel(trackId: Long, index: Int, generation: Long?) = cmd {
+        val (t, _) = labelRef(trackId, index, generation)
         work = work.replace(t.withLabels(t.labels.filterIndexed { i, _ -> i != index }))
-        pushState("Deleted Label", "Delete Label")
+        pushState("Deleted Label", "Label Edit")
+    }
+
+    override suspend fun importLabels(path: String): Long = cmd {
+        val file = File(path)
+        if (!file.isFile) fail(ErrorCodes.NOT_FOUND, "no such file: $path")
+        val format = FakeLabels.formatOf(file.name)
+        if (format == "webvtt") fail(ErrorCodes.UNSUPPORTED, "Importing WebVTT files is not currently supported.")
+        if (format != "text" && format != "subrip") fail(ErrorCodes.UNSUPPORTED, "labels can be imported from text and SubRip (.srt) files only")
+        val text = try {
+            file.readText()
+        } catch (e: IOException) {
+            fail(ErrorCodes.FAILED, "Could not open file: $path")
+        }
+        val parsed = FakeLabels.parse(text, format)
+        if (parsed.skipped) {
+            hub.showDialog(DialogEvent(synchronized(lock) { nextDialogId++ }, DialogEvent.KIND_MESSAGE, "warning", "Audacity",
+                "One or more saved labels could not be read.", listOf("OK")))
+        }
+        val track = FTrack(newTrackId(), FTrack.LABEL, file.nameWithoutExtension, selected = true).withLabels(parsed.labels)
+        work = work.copy(tracks = work.tracks.map { it.copy(selected = false) } + track)
+        pushState("Imported labels from '$path'", "Import Labels")
+        track.id
+    }
+
+    override suspend fun exportLabels(path: String, format: String): Int = cmd {
+        if (format !in LABEL_FORMATS) fail(ErrorCodes.INVALID_ARGS, "argument 'format' must be text, subrip, webvtt or podcastChapters")
+        val tracks = work.tracks.filter { it.isLabel }
+        if (tracks.isEmpty()) fail(ErrorCodes.FAILED, "There are no label tracks to export.")
+        try {
+            File(path).writeText(FakeLabels.export(tracks.map { it.labels }, format))
+        } catch (e: IOException) {
+            fail(ErrorCodes.FAILED, "Couldn't write to file: $path")
+        }
+        tracks.sumOf { it.labels.size }
     }
 
     // =========================================================================
@@ -1656,13 +1966,13 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         }
     }
 
-    override suspend fun applyEffect(id: String, params: Map<String, JsonElement>?, duration: Double?): EffectApplyResult =
-        commandMutex.withLock { applyLocked(id, params, duration) }
+    override suspend fun applyEffect(id: String, params: Map<String, JsonElement>?, duration: Double?, curve: EqCurve?): EffectApplyResult =
+        commandMutex.withLock { applyLocked(id, params, duration, curve) }
 
-    private suspend fun applyLocked(id: String, params: Map<String, JsonElement>?, duration: Double?): EffectApplyResult {
+    private suspend fun applyLocked(id: String, params: Map<String, JsonElement>?, duration: Double?, curve: EqCurve? = null): EffectApplyResult {
         val def = locked {
             val d = effect(id)
-            if (params != null || duration != null) setParamsLocked(d, params ?: emptyMap(), duration, null)
+            if (params != null || duration != null || curve != null) setParamsLocked(d, params ?: emptyMap(), duration, curve)
             checkEffectPreconditions(d)
             d
         }
@@ -1762,9 +2072,9 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         return FxContext(noiseProfileRms = noiseProfileRms, curve = curveOf(def))
     }
 
-    override suspend fun previewEffect(id: String, params: Map<String, JsonElement>?, duration: Double?) = cmd {
+    override suspend fun previewEffect(id: String, params: Map<String, JsonElement>?, duration: Double?, curve: EqCurve?) = cmd {
         val def = effect(id)
-        if (params != null || duration != null) setParamsLocked(def, params ?: emptyMap(), duration, null)
+        if (params != null || duration != null || curve != null) setParamsLocked(def, params ?: emptyMap(), duration, curve)
         checkEffectPreconditions(def)
         val sel = work.selection
         val p = P(values(def))
@@ -1824,15 +2134,15 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     override suspend fun plotSpectrum(algorithm: String, window: String, size: Int): SpectrumResult = cmd {
         if (algorithm !in SPECTRUM_ALGORITHMS) fail(ErrorCodes.INVALID_ARGS, "unknown algorithm '$algorithm'")
         if (window !in Dsp.WINDOWS) fail(ErrorCodes.INVALID_ARGS, "unknown window '$window'")
-        if (!Dsp.isPowerOfTwo(size) || size < 128 || size > 65536) fail(ErrorCodes.INVALID_ARGS, "size must be a power of two in 128..65536")
+        if (!Dsp.isPowerOfTwo(size) || size < 128 || size > 131072) fail(ErrorCodes.INVALID_ARGS, "size must be a power of two in 128..131072")
         val tracks = requireTimeAndTracks(waveOnly = true)
         val sel = work.selection
         val rate = tracks[0].rate
         var frames = ((sel.t1 - sel.t0) * rate).roundToInt()
         var warning: String? = null
         if (frames > MAX_SPECTRUM_FRAMES) { frames = MAX_SPECTRUM_FRAMES; warning = "Too much audio was selected: only the first ${fmt(frames / rate, 1)} seconds were analyzed." }
+        if (frames < size) fail(ErrorCodes.FAILED, "Not enough data selected.")
         val mono = Mixer.mix(tracks.map { it.copy(gain = 1.0, pan = 0.0) }, sel.t0, rate, frames, 1)[0]
-        if (frames < size) warning = "Not enough data selected: the analysis is zero-padded."
         val win = Dsp.window(window, size)
         val half = size / 2
         val acc = DoubleArray(half)
@@ -1849,6 +2159,8 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
                 for (k in 0 until size) {
                     var pw = re[k] * re[k] + im[k] * im[k]
                     if (algorithm == "cubeRootAutocorrelation") pw = cbrt(pw)
+                    // Cepstrum: the inverse transform of the log power spectrum
+                    if (algorithm == "cepstrum") pw = kotlin.math.ln(max(pw, 1e-20))
                     re[k] = pw; im[k] = 0.0
                 }
                 Dsp.fft(re, im, inverse = true)
@@ -1865,22 +2177,39 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             binHz = if (algorithm == "spectrum") rate / size else null,
             binSeconds = if (algorithm == "spectrum") null else 1.0 / rate,
             values = values, minValue = values.minOrNull()?.toDouble() ?: 0.0, maxValue = values.maxOrNull()?.toDouble() ?: 0.0,
-            warning = warning)
+            algorithm = algorithm, size = size, warning = warning)
     }
 
     override suspend fun contrast(fg0: Double, fg1: Double, bg0: Double, bg1: Double): ContrastResult = cmd {
-        val tracks = work.selectedTracks.filter { it.isWave }.ifEmpty { Mixer.audible(work.tracks) }
-        if (tracks.isEmpty()) fail(ErrorCodes.NO_SELECTION, "Select an audio track first")
-        fun level(a: Double, b: Double): Double {
-            if (!a.isFinite() || !b.isFinite() || b <= a) fail(ErrorCodes.INVALID_ARGS, "invalid time range [$a, $b]")
-            val rate = tracks[0].rate
+        val tracks = work.selectedTracks.filter { it.isWave }
+        if (tracks.isEmpty()) fail(ErrorCodes.NO_SELECTION, "Please select an audio track.")
+        if (tracks.size > 1) fail(ErrorCodes.NO_SELECTION, "You can only measure one track at a time.")
+        val track = tracks[0]
+        /** RMS in dB; null = digital silence. */
+        fun level(a: Double, b: Double): Double? {
+            if (!a.isFinite() || !b.isFinite() || b <= a) fail(ErrorCodes.FAILED, "Invalid audio selection.\nPlease ensure that audio is selected.")
+            val rate = track.rate
             val frames = ((b - a) * rate).roundToInt().coerceAtLeast(1)
-            val mono = Mixer.mix(tracks.map { it.copy(gain = 1.0, pan = 0.0) }, a, rate, frames, 1)[0]
-            return Dsp.linToDb(max(Dsp.rms(mono), 1e-10))
+            val mono = Mixer.render(track.copy(gain = 1.0, pan = 0.0), a, rate, frames)
+            var ss = 0.0
+            for (ch in mono) for (v in ch) ss += v.toDouble() * v
+            val rms = sqrt(ss / (frames.toDouble() * mono.size))
+            return if (rms <= 0.0) null else Dsp.linToDb(rms)
         }
         val fg = level(fg0, fg1)
         val bg = level(bg0, bg1)
-        ContrastResult(fg, bg, fg - bg, fg - bg >= 20.0)
+        val fgDb = fg ?: SILENT_DB
+        val bgDb = bg ?: SILENT_DB
+        val diff = fgDb - bgDb
+        // src/effects/Contrast.cpp: WCAG 2 success criterion 1.4.7
+        val (passes, verdict) = when {
+            fgDb > 0.0 -> false to "Foreground level too high"
+            bgDb > 0.0 -> false to "Background level too high"
+            bgDb > fgDb -> false to "Background higher than foreground"
+            abs(diff) > 20.0 -> true to "WCAG2 Pass"
+            else -> false to "WCAG2 Fail"
+        }
+        ContrastResult(fgDb, bgDb, diff, passes, verdict, fg == null, bg == null)
     }
 
     // =========================================================================
@@ -1904,14 +2233,25 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             val file = File(path)
             val name = file.nameWithoutExtension.ifEmpty { file.name }
             try {
+                val ext = file.extension.lowercase()
+                // Multi-stream containers ask which streams to import (all checked)
+                var streams: List<Int>? = null
+                if (ext in MULTI_STREAM_EXTENSIONS && file.isFile) {
+                    val choices = listOf("Stream 1: Audio (stereo)", "Stream 2: Audio (stereo)")
+                    streams = chooseMany("Select stream(s) to import", "", choices, listOf(true, true))
+                    if (streams.isNullOrEmpty()) fail(ErrorCodes.CANCELLED, "Import cancelled")
+                }
                 simulateProgress("Importing ${file.name}")
                 locked {
-                    val ext = file.extension.lowercase()
                     if (!file.isFile) fail(ErrorCodes.NOT_FOUND, "Could not open '${file.name}': file not found")
                     if (ext !in FakeFormats.IMPORT.extensions) fail(ErrorCodes.FAILED, "Audacity did not recognize the type of the file '${file.name}'.")
                     val (rate, channels) = decodeForImport(file, ext)
                     val wasEmpty = work.tracks.isEmpty()
-                    val groups = if (channels.size <= 2) listOf(channels) else channels.map { arrayOf(it) }
+                    val groups = when {
+                        streams != null -> streams.map { k -> Array(channels.size) { ch -> FloatArray(channels[ch].size) { i -> channels[ch][i] * (1f - 0.3f * k) } } }
+                        channels.size <= 2 -> listOf(channels)
+                        else -> channels.map { arrayOf(it) }
+                    }
                     val newTracks = groups.mapIndexed { k, data ->
                         val trackName = if (groups.size == 1) name else "$name ${k + 1}"
                         FTrack(newTrackId(), FTrack.WAVE, trackName, selected = true, channels = data.size, rate = rate.toDouble(),
@@ -2113,17 +2453,58 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     }
 
     override suspend fun audioDevices(): AudioDevices = cmd(needsProject = false, allowBusy = true) {
-        AudioDevices(
-            outputs = listOf(
-                AudioDevice(0, "Default Output", maxOutputChannels = 2, defaultRate = DEVICE_RATE, isDefault = true),
-                AudioDevice(1, "Built-in speaker", maxOutputChannels = 2, defaultRate = DEVICE_RATE),
-            ),
-            inputs = listOf(
-                AudioDevice(0, "Default Input", maxInputChannels = 2, defaultRate = DEVICE_RATE, isDefault = true),
-                AudioDevice(1, "Built-in microphone", maxInputChannels = 2, defaultRate = DEVICE_RATE),
-            ),
-            current = CurrentDevices(settings.outputDevice ?: "Default Output", settings.inputDevice ?: "Default Input", settings.recordChannels ?: 1),
-        )
+        applyPendingDevices()
+        val outputs = arrayListOf(AudioDevice(0, "Default Output", maxOutputChannels = 2, defaultRate = DEVICE_RATE, isDefault = true))
+        val inputs = arrayListOf(AudioDevice(0, "Default Input", maxInputChannels = 2, defaultRate = DEVICE_RATE, isDefault = true))
+        val injected = injectedDevices
+        if (injected == null) {
+            outputs += AudioDevice(1, "Speaker: Built-in speaker", maxOutputChannels = 2, defaultRate = DEVICE_RATE)
+            inputs += AudioDevice(1, "Microphone: Built-in microphone", maxInputChannels = 2, defaultRate = DEVICE_RATE)
+        } else {
+            for (d in deviceEntries(injected)) {
+                val (name, spec) = d
+                val channels = spec.channelCounts.maxOrNull()?.coerceIn(1, 8) ?: 2
+                val rate = spec.sampleRates.maxOrNull()?.toDouble() ?: DEVICE_RATE
+                if (spec.isSink) outputs += AudioDevice(outputs.size, name, maxOutputChannels = channels, defaultRate = rate)
+                if (spec.isSource) inputs += AudioDevice(inputs.size, name, maxInputChannels = channels, defaultRate = rate)
+            }
+        }
+        AudioDevices(outputs, inputs,
+            CurrentDevices(settings.outputDevice ?: "Default Output", settings.inputDevice ?: "Default Input", settings.recordChannels ?: 1),
+            pending = pendingDevices != null)
+    }
+
+    /** Names of an injected device list like the bridge: "<type label>: <name>",
+     *  telephony/internal routes left out, sorted by id, made unique. */
+    private fun deviceEntries(devices: List<AudioDeviceSpec>): List<Pair<String, AudioDeviceSpec>> {
+        val out = ArrayList<Pair<String, AudioDeviceSpec>>()
+        for (d in devices.sortedBy { it.id }) {
+            if (d.type in EXCLUDED_DEVICE_TYPES || (!d.isSink && !d.isSource)) continue
+            val label = DEVICE_TYPE_LABELS[d.type] ?: "Device"
+            var name = if (d.name.isEmpty()) label else "$label: ${d.name}"
+            if (out.any { it.first == name } || name == "Default Output" || name == "Default Input") name += " (id ${d.id})"
+            out += name to d
+        }
+        return out
+    }
+
+    /** A list injected while a stream ran is applied once the transport stopped. */
+    private fun applyPendingDevices() {
+        val pending = pendingDevices ?: return
+        if (tState != TState.STOPPED) return
+        injectedDevices = pending
+        pendingDevices = null
+    }
+
+    override suspend fun setAudioDevices(devices: List<AudioDeviceSpec>): Boolean = cmd(needsProject = false, allowBusy = true) {
+        if (tState == TState.STOPPED) {
+            injectedDevices = devices
+            pendingDevices = null
+            true
+        } else {
+            pendingDevices = devices
+            false
+        }
     }
 
     override suspend fun setRecordPermission(granted: Boolean) = cmd(needsProject = false, allowBusy = true) {
@@ -2133,7 +2514,10 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     }
 
     override suspend fun latency(): LatencyInfo = cmd(needsProject = false, allowBusy = true) {
-        LatencyInfo(OUTPUT_LATENCY * 1000, INPUT_LATENCY * 1000, settings.latencyCorrectionMs ?: 0.0)
+        // No measurement: the estimate is the round trip of the device latencies
+        val duplex = (OUTPUT_LATENCY + INPUT_LATENCY) * 1000
+        val trim = settings.latencyCorrectionMs ?: 0.0
+        LatencyInfo(OUTPUT_LATENCY * 1000, INPUT_LATENCY * 1000, -duplex + trim, duplex, measured = false, userTrimMs = trim)
     }
 
     // =========================================================================
@@ -2302,14 +2686,20 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             }
             "debug.ask" -> commandMutex.withLock {
                 val choices = (args["choices"] as? kotlinx.serialization.json.JsonArray)?.map { (it as JsonPrimitive).content } ?: emptyList()
-                val id = synchronized(lock) { nextDialogId++ }
                 val cancel = (args["cancel"] as? JsonPrimitive)?.booleanOrNull ?: false
+                val multi = (args["multiChoice"] as? JsonPrimitive)?.booleanOrNull ?: false
+                if (multi) {
+                    val checked = (args["defaultChecked"] as? kotlinx.serialization.json.JsonArray)
+                        ?.map { (it as? JsonPrimitive)?.booleanOrNull ?: false } ?: emptyList()
+                    val picked = chooseMany(str("title") ?: "Audacity", str("message") ?: "", choices, checked)
+                    return@withLock if (picked == null) buildJsonObject { put("result", "cancel") }
+                    else buildJsonObject { put("choices", kotlinx.serialization.json.JsonArray(picked.map { JsonPrimitive(it) })) }
+                }
                 val buttons = if (choices.isNotEmpty()) listOf("OK", "Cancel") else if (cancel) listOf("Yes", "No", "Cancel") else listOf("Yes", "No")
-                val waiter = CompletableDeferred<Int>()
-                dialogWaiters[id] = waiter
-                hub.showDialog(DialogEvent(id, if (choices.isNotEmpty()) "choice" else "message", "question", str("title") ?: "Audacity",
-                    str("message") ?: "", buttons, choices, 0, blocking = true))
-                val answer = waiter.await()
+                val answer = ask { id ->
+                    DialogEvent(id, if (choices.isNotEmpty()) DialogEvent.KIND_CHOICE else DialogEvent.KIND_MESSAGE, "question",
+                        str("title") ?: "Audacity", str("message") ?: "", buttons, choices, emptyList(), 0, blocking = true)
+                }.button
                 if (choices.isNotEmpty()) buildJsonObject { put("choice", answer) }
                 else buildJsonObject {
                     put("result", when { answer == 0 -> "yes"; answer == 1 -> "no"; answer == 2 || answer < 0 -> "cancel"; else -> "none" })
@@ -2351,6 +2741,9 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     companion object {
         const val DEFAULT_ZOOM = 86.1328125
         const val PENDING_TRACK_ID = -2L
+        private const val PROJECT_OVERHEAD = 65536L
+        /** Digital silence in analyze.contrast (−∞ dB is not JSON). */
+        private const val SILENT_DB = -1000.0
         private const val TICK_MS = 50L
         private const val DEVICE_RATE = 48000.0
         private const val OUTPUT_LATENCY = 0.020
@@ -2367,15 +2760,35 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         private val DITHERS = setOf("none", "rectangle", "triangle", "shaped")
         private val GROUP_BY = setOf("sortby:name", "sortby:publisher:name", "sortby:type:name", "groupby:publisher",
             "groupby:type", "default", "groupby:type:publisher")
-        private val SPECTRUM_ALGORITHMS = setOf("spectrum", "autocorrelation", "cubeRootAutocorrelation", "enhancedAutocorrelation")
+        private val SPECTRUM_ALGORITHMS = setOf("spectrum", "autocorrelation", "cubeRootAutocorrelation", "enhancedAutocorrelation", "cepstrum")
+        /** android.media.AudioDeviceInfo TYPE_* labels of the bridge (AudioDevices.cpp). */
+        private val DEVICE_TYPE_LABELS = mapOf(
+            2 to "Speaker", 3 to "Wired headset", 4 to "Wired headphones", 5 to "Line analog", 6 to "Line digital",
+            8 to "Bluetooth", 9 to "HDMI", 11 to "USB device", 12 to "USB accessory", 13 to "Dock", 15 to "Microphone",
+            19 to "Aux line", 22 to "USB headset", 23 to "Hearing aid", 26 to "BLE headset", 27 to "BLE speaker",
+            29 to "HDMI eARC", 30 to "BLE broadcast", 31 to "Dock analog",
+        )
+        /** Earpiece, SCO, HDMI ARC, tuners, telephony, IP, bus, remote submix, ...: not offered. */
+        private val EXCLUDED_DEVICE_TYPES = setOf(1, 7, 10, 14, 16, 17, 18, 20, 21, 24, 25, 28)
+        /** Containers whose fake import offers two audio streams. */
+        private val MULTI_STREAM_EXTENSIONS = setOf("mkv", "mka", "webm")
+        private val LABEL_FORMATS = setOf("text", "subrip", "webvtt", "podcastChapters")
+        private val ALIGN_MODES = setOf("startToZero", "startToCursor", "startToSelEnd", "endToCursor", "endToSelEnd", "endToEnd", "together")
+        /** The volume slider of 3.7.9 spans -36 dB ... +36 dB. */
+        private const val MAX_GAIN = 63.1
+        /** Commands whose 3.7.9 menu item needs EditableTracksSelected. */
+        private val NEEDS_EDITABLE_TRACKS = setOf("select.cursorToTrackStart", "select.cursorToTrackEnd", "select.zeroCrossing")
 
         /** Settings of API.md §5.1 as the engine writes them on first run. */
         val DEFAULT_SETTINGS = Settings(
             defaultRate = 44100, defaultFormat = "float", recordChannels = 1,
             outputDevice = "Default Output", inputDevice = "Default Input",
-            latencyMs = 100.0, latencyCorrectionMs = -130.0, overdub = true, swPlaythrough = false,
+            latencyMs = 100.0, latencyCorrectionMs = 0.0, overdub = true, swPlaythrough = false,
             preRollSec = 5.0, crossfadeMs = 10.0, realtimeDither = "none", hqDither = "shaped",
             effectsGroupBy = "default", soloMode = "Simple", editClipsCanMove = true, selectAllOnNone = false,
+            syncLock = false, pasteAsNewClips = false, moveSelectionWithTracks = false, preferNewTrackRecord = false,
+            dropoutDetection = true, language = "system",
         )
+        val LANGUAGES = listOf("en", "ko")
     }
 }

@@ -280,16 +280,29 @@ data class ProgressEvent(
 @Serializable
 data class DialogEvent(
     val id: Int,
-    val kind: String = "message",     // "message" | "choice"
+    val kind: String = KIND_MESSAGE,  // "message" | "choice" | "multiChoice"
     val style: String = "info",       // "info" | "warning" | "error" | "question"
     val title: String = "",
     val message: String = "",
     val buttons: List<String> = listOf("OK"),
     val choices: List<String> = emptyList(),
+    /** `kind:"multiChoice"`: initially checked choices (same length as [choices]). */
+    val defaultChecked: List<Boolean> = emptyList(),
     val defaultButton: Int = 0,
     val blocking: Boolean = false,
     val helpPage: String = "",
-)
+) {
+    val isMultiChoice: Boolean get() = kind == KIND_MULTI_CHOICE
+
+    /** Indices checked initially (a multi-choice dialog). */
+    val defaultIndices: List<Int> get() = choices.indices.filter { defaultChecked.getOrElse(it) { false } }
+
+    companion object {
+        const val KIND_MESSAGE = "message"
+        const val KIND_CHOICE = "choice"
+        const val KIND_MULTI_CHOICE = "multiChoice"
+    }
+}
 
 /** The `transport` event (API.md §4.5). */
 @Serializable
@@ -327,6 +340,16 @@ data class Settings(
     val soloMode: String? = null,
     val editClipsCanMove: Boolean? = null,
     val selectAllOnNone: Boolean? = null,
+    /** /GUI/SyncLockTracks (also switches the open project: flags SL/NSL). */
+    val syncLock: Boolean? = null,
+    val pasteAsNewClips: Boolean? = null,
+    val moveSelectionWithTracks: Boolean? = null,
+    /** R behaves like Shift+R (Record New Track). */
+    val preferNewTrackRecord: Boolean? = null,
+    /** /Warnings/DropoutDetected */
+    val dropoutDetection: Boolean? = null,
+    /** "system" | "en" | another code of [AppInfo.languages]; the engine's string language. */
+    val language: String? = null,
 )
 
 @Serializable
@@ -356,6 +379,29 @@ data class ProjectFileEntry(
 
 @Serializable
 data class ProjectFileList(val projects: List<ProjectFileEntry> = emptyList())
+
+/** `project.compactInfo` (API.md §3.3): the numbers of the desktop's Compact question. */
+@Serializable
+data class CompactInfo(
+    /** All sample blocks in the database. */
+    val totalBytes: Long = 0,
+    /** The blocks compaction keeps (the current and the last saved state). */
+    val usedBytes: Long = 0,
+    /** `.aup3` + `-wal` size. */
+    val fileBytes: Long = 0,
+    /** Free space on the project's file system, -1 = unknown. */
+    val freeBytes: Long = -1,
+) {
+    /** ≈ what compaction can recover. */
+    val reclaimableBytes: Long get() = (totalBytes - usedBytes).coerceAtLeast(0)
+}
+
+@Serializable
+data class CompactResult(val freedBytes: Long = 0)
+
+/** `labels.export` result: the file and the number of labels written. */
+@Serializable
+data class LabelExportResult(val path: String = "", val labels: Int = 0)
 
 @Serializable
 data class Tag(val name: String, val value: String)
@@ -402,13 +448,42 @@ data class AudioDevices(
     val outputs: List<AudioDevice> = emptyList(),
     val inputs: List<AudioDevice> = emptyList(),
     val current: CurrentDevices = CurrentDevices(),
+    /** An `audio.setDevices` list waits for the stream to stop. */
+    val pending: Boolean = false,
 )
 
+/**
+ * One `android.media.AudioDeviceInfo` for `audio.setDevices` (API.md §3.3):
+ * native code cannot enumerate Android devices, Kotlin passes
+ * `AudioManager.getDevices(GET_DEVICES_ALL)`. [type] is
+ * `AudioDeviceInfo.TYPE_*`; empty [channelCounts]/[sampleRates] = any.
+ */
+@Serializable
+data class AudioDeviceSpec(
+    val id: Int,
+    val name: String,
+    val type: Int,
+    val isSource: Boolean,
+    val isSink: Boolean,
+    val channelCounts: List<Int> = emptyList(),
+    val sampleRates: List<Int> = emptyList(),
+)
+
+@Serializable
+data class SetDevicesResult(val applied: Boolean = false)
+
+/** `audio.latency` (API.md §3.3). */
 @Serializable
 data class LatencyInfo(
     val outputLatencyMs: Double = 0.0,
     val inputLatencyMs: Double = 0.0,
+    /** The /AudioIO/LatencyCorrection an overdub would use now (= −duplexOffsetMs + userTrimMs). */
     val correctionMs: Double = 0.0,
+    val duplexOffsetMs: Double = 0.0,
+    /** false = an estimate (another route's measurement or the device latencies). */
+    val measured: Boolean = false,
+    /** The user trim (settings `latencyCorrectionMs`). */
+    val userTrimMs: Double = 0.0,
 )
 
 /** §5.4 */
@@ -499,15 +574,22 @@ data class SpectrumResult(
     val values: List<Float> = emptyList(),
     val minValue: Double = 0.0,
     val maxValue: Double = 0.0,
+    val algorithm: String = "spectrum",
+    val size: Int = 0,
     val warning: String? = null,
 )
 
+/** `analyze.contrast`; digital silence is −1000 dB with `…Silent:true`. */
 @Serializable
 data class ContrastResult(
     val foregroundDb: Double = 0.0,
     val backgroundDb: Double = 0.0,
     val differenceDb: Double = 0.0,
     val passes: Boolean = false,
+    /** Translated WCAG verdict of src/effects/Contrast.cpp (engine language). */
+    val verdict: String = "",
+    val foregroundSilent: Boolean = false,
+    val backgroundSilent: Boolean = false,
 )
 
 @Serializable
@@ -582,6 +664,10 @@ data class AppInfo(
     val exporters: List<String> = emptyList(),
     val effectsCount: Int = 0,
     val nyquist: Boolean = false,
+    /** Language of the engine's strings now ("en", "ko"). */
+    val language: String = "en",
+    /** "en" + the installed catalogs (valid `language` settings besides "system"). */
+    val languages: List<String> = listOf("en"),
 )
 
 // ---------------------------------------------------------------------------

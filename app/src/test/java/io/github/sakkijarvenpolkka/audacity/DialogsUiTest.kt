@@ -11,7 +11,9 @@ import io.github.sakkijarvenpolkka.audacity.editor.AudacityTheme
 import io.github.sakkijarvenpolkka.audacity.engine.FakeAudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeConfig
 import io.github.sakkijarvenpolkka.audacity.ui.DialogHost
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
@@ -24,6 +26,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /** Dialogs rendered by the dialog host over the in-memory engine. */
+@OptIn(DelicateCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35], qualifiers = "w500dp-h900dp-mdpi")
 class DialogsUiTest {
@@ -116,6 +119,40 @@ class DialogsUiTest {
         compose.runOnIdle { vm.open(AppDialog.Contrast) }
         waitForText("Contrast Analysis")
         compose.onNodeWithText("Measure").assertExists()
+    }
+
+    @Test
+    fun multiChoiceEngineDialogAnswersTheCheckedIndices() {
+        val answer = kotlinx.coroutines.CompletableDeferred<kotlinx.serialization.json.JsonElement>()
+        val job = kotlinx.coroutines.GlobalScope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            answer.complete(vm.engine.invokeCommand("debug.ask", io.github.sakkijarvenpolkka.audacity.engine.EngineProtocol.args(
+                "title" to "Select stream(s) to import", "multiChoice" to true,
+                "choices" to listOf("Stream 1", "Stream 2", "Stream 3"), "defaultChecked" to listOf(true, true, false))))
+        }
+        waitForText("Select stream(s) to import")
+        // Uncheck stream 1, check stream 3
+        compose.onNodeWithText("Stream 1").performClick()
+        compose.onNodeWithText("Stream 3").performClick()
+        compose.onNodeWithText("OK").performClick()
+        val result = runBlocking { withTimeout(5_000) { answer.await() } }
+        assertEquals("[1,2]", (result as kotlinx.serialization.json.JsonObject)["choices"].toString())
+        runBlocking { job.join() }
+        assertTrue(vm.engine.pendingDialogs.value.isEmpty())
+    }
+
+    @Test
+    fun choiceDialogCompletesWithTheSelectedOption() {
+        val d = AppDialog.Choice(
+            io.github.sakkijarvenpolkka.audacity.util.UiText.Res(R.string.lf_title),
+            io.github.sakkijarvenpolkka.audacity.files.LabelFormat.entries.map { io.github.sakkijarvenpolkka.audacity.util.UiText.Res(it.label) },
+        )
+        compose.runOnIdle { vm.open(d) }
+        waitForText("Export Labels As:")
+        compose.onNodeWithText("WebVTT file (*.vtt)").performClick()
+        compose.onNodeWithText("OK").performClick()
+        compose.waitUntil(5_000) { d.result.isCompleted }
+        assertEquals(2, runBlocking { d.result.await() })
+        assertTrue(vm.dialogs.isEmpty())
     }
 
     @Test

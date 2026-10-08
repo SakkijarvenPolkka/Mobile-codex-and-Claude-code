@@ -241,6 +241,7 @@ fun DeviceInfoDialog(d: AppDialog, vm: AppViewModel) {
                 appendLine("==============================")
                 appendLine("Default playback: ${dv.current.output}")
                 appendLine("Default recording: ${dv.current.input} (${dv.current.recordChannels} ch)")
+                if (dv.pending) appendLine("A new device list is applied when the stream stops.")
                 appendLine()
                 dv.outputs.forEach { appendLine("Output #${it.index}: ${it.name} [${it.hostApi}] ${it.maxOutputChannels} ch, ${it.defaultRate.roundToInt()} Hz${if (it.isDefault) " (default)" else ""}") }
                 dv.inputs.forEach { appendLine("Input #${it.index}: ${it.name} [${it.hostApi}] ${it.maxInputChannels} ch, ${it.defaultRate.roundToInt()} Hz${if (it.isDefault) " (default)" else ""}") }
@@ -249,6 +250,8 @@ fun DeviceInfoDialog(d: AppDialog, vm: AppViewModel) {
                 appendLine()
                 appendLine("Output latency: ${TimeCodec.number(it.outputLatencyMs, 1)} ms")
                 appendLine("Input latency: ${TimeCodec.number(it.inputLatencyMs, 1)} ms")
+                appendLine("Duplex offset: ${TimeCodec.number(it.duplexOffsetMs, 1)} ms${if (it.measured) " (measured)" else " (estimated)"}")
+                appendLine("User latency trim: ${TimeCodec.number(it.userTrimMs, 1)} ms")
                 appendLine("Latency correction: ${TimeCodec.number(it.correctionMs, 1)} ms")
             }
         }
@@ -278,10 +281,12 @@ fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
                         "${track.name} · ${TimeCodec.format(l.t0)} – ${TimeCodec.format(l.t1)}",
                         style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.clickable {
+                            // The reference shown now (STALE when the labels change meanwhile)
+                            val gen = snapshot.generation
                             vm.launchAction {
                                 val t0 = askTime(vm, R.string.le_start, l.t0) ?: return@launchAction
                                 val t1 = askTime(vm, R.string.le_end, maxOf(l.t1, t0)) ?: return@launchAction
-                                vm.engine.editLabel(track.id, l.index, t0 = minOf(t0, t1), t1 = maxOf(t0, t1))
+                                vm.engine.editLabel(track.id, l.index, t0 = minOf(t0, t1), t1 = maxOf(t0, t1), generation = gen)
                             }
                         },
                     )
@@ -289,7 +294,7 @@ fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
                 IconButton(onClick = { vm.launchAction { ContextMenus.editLabelText(vm, track.id, l.index) } }) {
                     Icon(Icons.Filled.Edit, stringResource(R.string.cm_edit_label), Modifier.size(20.dp))
                 }
-                IconButton(onClick = { vm.launchAction { vm.engine.removeLabel(track.id, l.index) } }) {
+                IconButton(onClick = { vm.launchAction { vm.engine.removeLabel(track.id, l.index, snapshot.generation) } }) {
                     Icon(Icons.Filled.Delete, stringResource(R.string.cm_delete_label), Modifier.size(20.dp))
                 }
             }

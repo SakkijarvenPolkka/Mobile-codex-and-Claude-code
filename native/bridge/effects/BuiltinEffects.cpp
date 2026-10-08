@@ -42,6 +42,7 @@
 #include "Session.h"
 
 #include "ConfigInterface.h"
+#include "EffectAutomationParameters.h"
 #include "EffectManager.h"
 #include "LoadEffects.h"
 #include "ModuleManager.h"
@@ -167,6 +168,13 @@ struct AmplifyFx final : AmplifyBase {
    // that calls through to non-const methods of a stateful effect."
    std::shared_ptr<EffectInstance> MakeInstance() const override
    { return std::make_shared<Instance>(const_cast<AmplifyFx &>(*this)); }
+   // src/effects/Amplify.cpp
+   TranslatableString GetDescription() const override
+   {
+      // Note: This is useful only after ratio has been set.
+      return XO("Increases or decreases the volume of the audio you have selected");
+   }
+   ManualPageID ManualPage() const override { return L"Amplify"; }
    //! Valid after Init()
    double Peak() const { return mPeak; }
    double Ratio() const { return mRatio; }
@@ -178,6 +186,28 @@ struct ScienFilterFx final : ScienFilterBase {
    //! mNyquist from the track rate; only the wx dialog (ScienFilter.cpp)
    //! and the LoadSettings PostSet call it
    void Recalc() { mOrderIndex = mOrder - 1; CalcFilter(); }
+};
+
+// ---------------------------------------------------------------------------
+// The Nyquist Prompt.  On desktop its dialog re-parses the code after the
+// user typed it (src/effects/nyquist/Nyquist.cpp TransferDataFromPromptWindow:
+// the code's ;type decides the effect type) and shows a second dialog for
+// the code's ;control lines.  Headless, the prompt runs like a macro step
+// (batch processing): Command is parsed for its type and the nested
+// Parameters string sets the controls.
+// ---------------------------------------------------------------------------
+struct NyquistPromptFx final : NyquistBase {
+   using NyquistBase::NyquistBase;
+   bool Process(EffectInstance &instance, EffectSettings &settings) override
+   {
+      SetBatchProcessing();
+      auto restore = finally([&] { UnsetBatchProcessing(); });
+      CommandParameters eap;
+      eap.Write(wxT("Command"), mInputCmd);
+      eap.Write(wxT("Parameters"), mParameters);
+      LoadSettings(eap, settings);
+      return NyquistBase::Process(instance, settings);
+   }
 };
 
 struct NoiseReductionFx final : NoiseReductionBase {
@@ -442,7 +472,9 @@ void InstallLibraryHooks()
       // src/effects/nyquist/Nyquist.cpp: without it every Nyquist effect
       // "could not be loaded"
       new NyquistBase::GetEffectHook::Scope{
-         [](const wxString &path) {
+         [](const wxString &path) -> std::unique_ptr<NyquistBase> {
+            if (path == NYQUIST_PROMPT_ID)
+               return std::make_unique<NyquistPromptFx>(path);
             return std::make_unique<NyquistBase>(path);
          } };
       // Spectral Nyquist effects require a spectrogram view.  The bridge has
@@ -638,6 +670,20 @@ double AmplifyPeak(EffectPlugin &effect)
 {
    auto p = dynamic_cast<AmplifyFx *>(&effect);
    return p ? p->Peak() : 0.0;
+}
+
+PluginID BuiltinId(const ComponentInterfaceSymbol &symbol)
+{
+   const wxString path = wxString{ BUILTIN_EFFECT_PREFIX } + symbol.Internal();
+   for (auto &plug : PluginManager::Get().PluginsOfType(PluginTypeEffect))
+      if (plug.GetPath() == path)
+         return plug.GetID();
+   return {};
+}
+
+PluginID NoiseReductionId()
+{
+   return BuiltinId(NoiseReductionBase::Symbol);
 }
 
 } // namespace effects

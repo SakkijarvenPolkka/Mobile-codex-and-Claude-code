@@ -1,13 +1,15 @@
 /*
- * Audacity Android port — extraction of the Nyquist runtime and plug-ins.
+ * Audacity Android port — extraction of the Nyquist runtime, the plug-ins
+ * and the engine's translations.
  *
- * The APK carries assets/audacity/nyquist and assets/audacity/plug-ins
- * (packaged by the :engine Gradle task packageAudacityAssets from
- * native/audacity/{nyquist,plug-ins}, using the file lists of their
- * CMakeLists.txt). The engine reads them with fopen, so they are copied to
- * filesDir/audacity/{nyquist,plug-ins} (API.md §2.1) whenever the app
- * version changes. Only those two directories are replaced: filesDir/audacity
- * also holds audacity.cfg and the other preferences.
+ * The APK carries assets/audacity/{nyquist,plug-ins,locale} (packaged by the
+ * :engine Gradle task packageAudacityAssets from native/audacity/{nyquist,
+ * plug-ins} using the file lists of their CMakeLists.txt, and the compiled
+ * catalogs native/audacity/locale/<lang>/LC_MESSAGES/audacity.mo). The engine
+ * reads them with fopen, so they are copied to filesDir/audacity/{nyquist,
+ * plug-ins,locale} (API.md §2.1) whenever the app version changes. Only those
+ * directories are replaced: filesDir/audacity also holds audacity.cfg and the
+ * other preferences.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -93,7 +95,8 @@ class AssetInstaller(
 
     companion object {
         const val ASSET_ROOT = "audacity"
-        val SUBDIRS = listOf("nyquist", "plug-ins")
+        /** Replaced on every version change; the engine finds `locale/<lang>/LC_MESSAGES/audacity.mo`. */
+        val SUBDIRS = listOf("nyquist", "plug-ins", "locale")
         const val STAMP_FILE = ".assets-version"
 
         fun forContext(context: Context): AssetInstaller {

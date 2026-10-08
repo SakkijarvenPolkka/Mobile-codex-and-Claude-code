@@ -33,7 +33,10 @@ class RecordingEngine(private val inner: AudacityEngine) : AudacityEngine by inn
     val calls = mutableListOf<String>()
     override suspend fun edit(command: String) { calls += command; inner.edit(command) }
     override suspend fun selectCommand(command: String) { calls += command; inner.selectCommand(command) }
-    override suspend fun alignTracks(mode: String) { calls += "tracks.align:$mode"; inner.alignTracks(mode) }
+    override suspend fun alignTracks(mode: String, moveSelection: Boolean?) { calls += "tracks.align:$mode"; inner.alignTracks(mode, moveSelection) }
+    override suspend fun sortTracks(by: String) { calls += "tracks.sort:$by"; inner.sortTracks(by) }
+    override suspend fun muteAllTracks(mute: Boolean) { calls += "tracks.muteAll:$mute"; inner.muteAllTracks(mute) }
+    override suspend fun compactProject(): Long = inner.compactProject().also { calls += "project.compact" }
     override suspend fun trackChannelCommand(command: String, id: Long) { calls += "$command:$id"; inner.trackChannelCommand(command, id) }
     override suspend fun mixAndRender(toNewTrack: Boolean) { calls += "tracks.mixAndRender:$toNewTrack"; inner.mixAndRender(toNewTrack) }
     override suspend fun play(loop: Boolean, t0: Double?, t1: Double?) { calls += "transport.play"; inner.play(loop, t0, t1) }
@@ -61,13 +64,16 @@ class TestHost(override val engine: AudacityEngine) : MenuHost {
     val calls = mutableListOf<String>()
     var textAnswer: String? = "Intro"
     var timeAnswer: Double? = 1.5
+    var choiceAnswer: Int? = 0
+    var confirmAnswer = true
 
     override fun open(dialog: AppDialog) {
         dialogs += dialog
         when (dialog) {
             is AppDialog.TextInput -> dialog.result.complete(textAnswer)
             is AppDialog.TimeInput -> dialog.result.complete(timeAnswer)
-            is AppDialog.Confirm -> dialog.result.complete(true)
+            is AppDialog.Confirm -> dialog.result.complete(confirmAnswer)
+            is AppDialog.Choice -> dialog.result.complete(choiceAnswer)
             else -> Unit
         }
     }
@@ -161,6 +167,8 @@ class MenuActionsTest {
             "SelCursorToTrackEnd" to "select.cursorToEnd", "SelTrackStartToEnd" to "select.trackStartToEnd",
             "CursTrackStart" to "select.cursorToTrackStart", "CursTrackEnd" to "select.cursorToTrackEnd",
             "CursPrevClipBoundary" to "select.prevClipBoundary", "CursNextClipBoundary" to "select.nextClipBoundary",
+            "SelPrevClip" to "select.prevClip", "SelNextClip" to "select.nextClip", "ZeroCross" to "select.zeroCrossing",
+            "SelStart" to "select.toProjectStart", "SelEnd" to "select.toProjectEnd",
         )
         for ((id, command) in expected) {
             selectRange(1.0, 2.0)
@@ -209,10 +217,13 @@ class MenuActionsTest {
         run("RemoveTracks")
         assertEquals(n + 1, snap.tracks.size)
 
+        val states = runBlocking { engine.history().states.size }
         run("MuteAllTracks")
         assertTrue(snap.tracks.filter { it.isWave }.all { it.mute })
         run("UnmuteAllTracks")
         assertTrue(snap.tracks.filter { it.isWave }.none { it.mute })
+        assertTrue(engine.calls.containsAll(listOf("tracks.muteAll:true", "tracks.muteAll:false")))
+        assertEquals("mute all updates the undo state in place", states, runBlocking { engine.history().states.size })
 
         selectRange(0.0, 1.0)
         run("PanLeft")
@@ -221,8 +232,20 @@ class MenuActionsTest {
         engine.calls.clear()
         run("Align_StartToSelStart")
         run("Align_EndToSelEnd")
+        run("Align_EndToEnd")
         run("MixAndRenderToNewTrack")
-        assertEquals(listOf("tracks.align:startToCursor", "tracks.align:endToSelEnd", "tracks.mixAndRender:true"), engine.calls)
+        run("SortByName")
+        run("SortByTime")
+        assertEquals(listOf("tracks.align:startToCursor", "tracks.align:endToSelEnd", "tracks.align:endToEnd",
+            "tracks.mixAndRender:true", "tracks.sort:name", "tracks.sort:time"), engine.calls)
+
+        // Check items backed by engine settings
+        assertFalse(MenuSpec.find("SyncLock", state())!!.checked!!(MenuState(snap, settings = runBlocking { fake.getSettings() })))
+        run("SyncLock")
+        assertTrue(runBlocking { fake.getSettings().syncLock } == true)
+        assertTrue(snap.has(io.github.sakkijarvenpolkka.audacity.engine.model.CommandFlags.SL))
+        run("MoveSelectionWithTracks")
+        assertTrue(runBlocking { fake.getSettings().moveSelectionWithTracks } == true)
 
         run("Resample")
         assertTrue(host.dialogs.last() is AppDialog.Resample)
@@ -257,14 +280,42 @@ class MenuActionsTest {
         val backup = host.requests.last() as HostRequest.CreateDocument
         assertEquals(CreatePurpose.BackupProject, backup.purpose)
         assertTrue(backup.suggestedName.endsWith(".aup3"))
-        if (snap.tracks.any { it.isLabel && it.labels.isNotEmpty() }) {
-            run("ExportLabels")
-            val labels = host.requests.last() as HostRequest.CreateDocument
-            val text = (labels.purpose as CreatePurpose.ExportLabels).text
-            assertTrue(text, text.lines().first().matches(Regex("\\d+\\.\\d{6}\t\\d+\\.\\d{6}\t.*")))
-        }
+        // Export Labels: the file type first (SubRip = 1), then the document
+        host.choiceAnswer = 1
+        run("ExportLabels")
+        assertTrue(host.dialogs.last() is AppDialog.Choice)
+        val labels = host.requests.last() as HostRequest.CreateDocument
+        assertEquals(CreatePurpose.ExportLabels("subrip", "labels.srt"), labels.purpose)
+        assertEquals("labels.srt", labels.suggestedName)
+        assertEquals("application/x-subrip", labels.mimeType)
+        val n = host.requests.size
+        host.choiceAnswer = null
+        run("ExportLabels")
+        assertEquals("cancelled type choice requests nothing", n, host.requests.size)
+        run("ImportLabels")
+        assertEquals(OpenPurpose.IMPORT_LABELS, (host.requests.last() as HostRequest.OpenDocuments).purpose)
         run("Manual")
         assertTrue((host.requests.last() as HostRequest.OpenUrl).url.startsWith("https://manual.audacityteam.org"))
+    }
+
+    @Test
+    fun compactProjectAsksWithTheCompactInfoNumbers() {
+        selectRange(0.5, 1.0)
+        run("Silence")
+        run("Silence")
+        val before = runBlocking { engine.history().states.size }
+        host.confirmAnswer = false
+        run("Compact")
+        val question = host.dialogs.last() as AppDialog.Confirm
+        assertTrue((question.message as UiText.Res).args.size == 3)
+        assertEquals("cancelled: nothing compacted", before, runBlocking { engine.history().states.size })
+        host.confirmAnswer = true
+        engine.calls.clear()
+        run("Compact")
+        assertEquals(listOf("project.compact"), engine.calls)
+        assertTrue(host.dialogs.last() is AppDialog.Info)
+        assertTrue(runBlocking { engine.history().states.size } < before)
+        assertEquals("Compact", snap.history.undo.ifEmpty { runBlocking { engine.history().states.last().shortDescription } })
     }
 
     @Test

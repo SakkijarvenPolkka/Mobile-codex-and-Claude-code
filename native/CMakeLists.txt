@@ -23,7 +23,7 @@ Targets for consumers:
 
 Hooks for other components (added when the directory exists):
   bridge/   C++ bridge (all platforms)
-  jni/      JNI glue (Android only)
+  jni/      JNI glue (Android; host when a JDK's jni.h is found)
   tests/    host tests (AUDACITY_ANDROID_BUILD_TESTS, host only)
 ]]
 
@@ -337,7 +337,7 @@ endforeach()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bridge/CMakeLists.txt")
    add_subdirectory(bridge)
 endif()
-if(ANDROID AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/jni/CMakeLists.txt")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/jni/CMakeLists.txt")
    add_subdirectory(jni)
 endif()
 if(AUDACITY_ANDROID_BUILD_TESTS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")

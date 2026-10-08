@@ -104,6 +104,8 @@ fun PreferencesScreen(vm: AppViewModel) {
             SectionHeader(stringResource(R.string.pref_recording))
             SwitchRow(stringResource(R.string.m_overdub), s.overdub ?: true, { set(Settings(overdub = it)) })
             SwitchRow(stringResource(R.string.m_sw_playthrough), s.swPlaythrough ?: false, { set(Settings(swPlaythrough = it)) })
+            SwitchRow(stringResource(R.string.pref_record_new_track), s.preferNewTrackRecord ?: false, { set(Settings(preferNewTrackRecord = it)) })
+            SwitchRow(stringResource(R.string.pref_detect_dropouts), s.dropoutDetection ?: true, { set(Settings(dropoutDetection = it)) })
 
             // ----- Quality (QualityPrefs) -----
             SectionHeader(stringResource(R.string.pref_quality))
@@ -127,7 +129,10 @@ fun PreferencesScreen(vm: AppViewModel) {
             val solo = listOf("Simple" to R.string.pref_solo_simple, "Multi" to R.string.pref_solo_multi)
             Dropdown(stringResource(R.string.pref_solo), solo.map { it.first }, s.soloMode, { k -> vm.string(solo.firstOrNull { it.first == k }?.second ?: R.string.pref_solo_simple) },
                 { set(Settings(soloMode = it)) }, Modifier.fillMaxWidth())
+            SwitchRow(stringResource(R.string.pref_select_all_on_none), s.selectAllOnNone ?: false, { set(Settings(selectAllOnNone = it)) })
             SwitchRow(stringResource(R.string.pref_clips_can_move), s.editClipsCanMove ?: false, { set(Settings(editClipsCanMove = it)) })
+            SwitchRow(stringResource(R.string.pref_paste_as_new_clips), s.pasteAsNewClips ?: false, { set(Settings(pasteAsNewClips = it)) })
+            SwitchRow(stringResource(R.string.m_sync_lock), s.syncLock ?: false, { set(Settings(syncLock = it)) })
 
             // ----- Effects -----
             SectionHeader(stringResource(R.string.pref_effects))
@@ -143,6 +148,12 @@ fun PreferencesScreen(vm: AppViewModel) {
                 { t -> vm.string(themes.first { it.first == t }.second) }, { t -> vm.uiPrefs.update { it.copy(theme = t) } }, Modifier.fillMaxWidth())
             SwitchRow(stringResource(R.string.m_show_clipping), prefs.showClipping, { v -> vm.uiPrefs.update { it.copy(showClipping = v) } })
             SwitchRow(stringResource(R.string.m_show_rms), prefs.showRms, { v -> vm.uiPrefs.update { it.copy(showRms = v) } })
+            // Language of the engine's strings (effect names, history, messages): "system" follows the app's locale at start
+            val info by vm.appInfo.collectAsState()
+            val languages = listOf("system") + (info?.languages ?: listOf("en"))
+            val systemLabel = stringResource(R.string.pref_engine_language_system)
+            Dropdown(stringResource(R.string.pref_engine_language), languages, s.language ?: "system",
+                { code -> if (code == "system") systemLabel else languageName(code) }, { set(Settings(language = it)) }, Modifier.fillMaxWidth())
             Text(stringResource(R.string.pref_language_hint), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
             if (Build.VERSION.SDK_INT >= 33) {
                 TextButton(onClick = { vm.request(HostRequest.AppLanguageSettings) }) { Text(stringResource(R.string.pref_language_button)) }
@@ -153,6 +164,12 @@ fun PreferencesScreen(vm: AppViewModel) {
             )
         }
     }
+}
+
+/** "ko" → "한국어" (the language's own name). */
+private fun languageName(code: String): String {
+    val locale = java.util.Locale.forLanguageTag(code)
+    return locale.getDisplayLanguage(locale).replaceFirstChar { it.titlecase(locale) }.ifEmpty { code }
 }
 
 @Composable

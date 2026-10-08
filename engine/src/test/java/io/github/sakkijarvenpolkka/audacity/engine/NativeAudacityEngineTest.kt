@@ -49,6 +49,8 @@ class NativeAudacityEngineTest {
         }
 
         override fun replyDialog(dialogId: Int, button: Int) { replies += dialogId to button }
+        val choiceReplies = mutableListOf<Pair<Int, List<Int>>>()
+        override fun replyDialogChoices(dialogId: Int, indices: IntArray) { choiceReplies += dialogId to indices.toList() }
         override fun cancelProgress(progressId: Int, stop: Boolean) {}
         override fun readTransport(out: DoubleArray): Boolean {
             if (missingJni) throw UnsatisfiedLinkError("no Java_..._readTransport")
@@ -192,6 +194,82 @@ class NativeAudacityEngineTest {
         e.replyDialog(2, 1)
         assertEquals(listOf(2 to 1), bridge.replies)
         assertTrue(e.pendingDialogs.value.isEmpty())
+    }
+
+    @Test
+    fun multiChoiceDialogsAreAnsweredWithIndices() = runBlocking {
+        val bridge = FakeBridge()
+        val e = engine(bridge)
+        e.start()
+        bridge.listener!!.onEvent("dialog", ("""{"id":5,"kind":"multiChoice","title":"Select stream(s) to import","choices":["a","b"],""" +
+            """"defaultChecked":[true,false],"buttons":["OK","Cancel"],"blocking":true}""").encodeToByteArray())
+        val d = withTimeout(5000) { e.pendingDialogs.first { it.isNotEmpty() } }.single()
+        assertTrue(d.isMultiChoice)
+        assertEquals(listOf(true, false), d.defaultChecked)
+        assertEquals(listOf(0), d.defaultIndices)
+        e.replyDialogChoices(5, listOf(1, 0))
+        assertEquals(listOf(5 to listOf(1, 0)), bridge.choiceReplies)
+        assertTrue(e.pendingDialogs.value.isEmpty())
+        // Unknown ids are forwarded too (the engine ignores ids it does not wait for)
+        e.replyDialogChoices(6, emptyList())
+        assertEquals(6 to emptyList<Int>(), bridge.choiceReplies.last())
+    }
+
+    @Test
+    fun revisedContractCommandsSendTheirArguments() = runBlocking {
+        val bridge = FakeBridge()
+        val e = engine(bridge)
+        bridge.respond = { cmd, _ ->
+            when (cmd) {
+                "project.rename" -> """{"ok":true,"result":{"path":"/files/Projects/B.aup3"},"generation":1}"""
+                "project.compact" -> """{"ok":true,"result":{"freedBytes":4096},"generation":2}"""
+                "project.compactInfo" -> """{"ok":true,"result":{"totalBytes":10,"usedBytes":4,"fileBytes":20,"freeBytes":-1},"generation":2}"""
+                "labels.edit" -> """{"ok":true,"result":{"index":4},"generation":3}"""
+                "labels.import" -> """{"ok":true,"result":{"trackId":9},"generation":4}"""
+                "labels.export" -> """{"ok":true,"result":{"path":"/c/l.txt","labels":3},"generation":4}"""
+                "audio.setDevices" -> """{"ok":true,"result":{"applied":false},"generation":4}"""
+                else -> """{"ok":true,"result":{},"generation":4}"""
+            }
+        }
+        assertEquals("/files/Projects/B.aup3", e.renameProject("/files/Projects/A.aup3", "B"))
+        assertEquals(4096L, e.compactProject())
+        val info = e.compactInfo()
+        assertEquals(6L, info.reclaimableBytes)
+        assertEquals(-1L, info.freeBytes)
+        e.select(1.0, 2.0, trackIds = listOf(3L), focus = 3L)
+        e.selectCommand("select.zeroCrossing")
+        e.muteAllTracks(true)
+        e.sortTracks("time")
+        e.alignTracks("endToEnd")
+        e.alignTracks("startToZero", moveSelection = true)
+        assertEquals(4, e.editLabel(7, 1, t0 = 5.0, generation = 3))
+        e.removeLabel(7, 0, generation = 3)
+        assertEquals(9L, e.importLabels("/c/a.srt"))
+        assertEquals(3, e.exportLabels("/c/l.txt", "subrip"))
+        assertFalse(e.setAudioDevices(listOf(io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec(
+            12, "USB", 11, isSource = true, isSink = false, channelCounts = listOf(2)))))
+        e.applyEffect("Effect_EQ", curve = io.github.sakkijarvenpolkka.audacity.engine.model.EqCurve(
+            listOf(io.github.sakkijarvenpolkka.audacity.engine.model.EqPoint(100.0, 3.0))))
+        assertEquals(
+            listOf(
+                "project.rename" to """{"path":"/files/Projects/A.aup3","newName":"B"}""",
+                "project.compact" to "{}",
+                "project.compactInfo" to "{}",
+                "select.set" to """{"t0":1.0,"t1":2.0,"trackIds":[3],"focus":3}""",
+                "select.zeroCrossing" to "{}",
+                "tracks.muteAll" to """{"mute":true}""",
+                "tracks.sort" to """{"by":"time"}""",
+                "tracks.align" to """{"mode":"endToEnd"}""",
+                "tracks.align" to """{"mode":"startToZero","moveSelection":true}""",
+                "labels.edit" to """{"trackId":7,"index":1,"generation":3,"t0":5.0}""",
+                "labels.remove" to """{"trackId":7,"index":0,"generation":3}""",
+                "labels.import" to """{"path":"/c/a.srt"}""",
+                "labels.export" to """{"path":"/c/l.txt","format":"subrip"}""",
+                "audio.setDevices" to """{"devices":[{"id":12,"name":"USB","type":11,"isSource":true,"isSink":false,"channelCounts":[2],"sampleRates":[]}]}""",
+                "effects.apply" to """{"id":"Effect_EQ","curve":{"points":[{"f":100.0,"dB":3.0}],"linearFreq":false}}""",
+            ),
+            bridge.calls.map { it.first to it.second },
+        )
     }
 
     @Test

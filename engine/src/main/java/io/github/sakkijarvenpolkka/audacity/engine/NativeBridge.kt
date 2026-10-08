@@ -1,5 +1,5 @@
 /*
- * Audacity Android port — JNI surface of libaudacity-bridge (API.md §2).
+ * Audacity Android port — JNI surface of libaudacity-jni (API.md §2).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -16,18 +16,26 @@ fun interface EngineListener {
 }
 
 /**
- * The JNI entry points of `libaudacity-bridge.so`, exactly as specified in
- * API.md §2. All strings cross JNI as standard UTF-8 byte arrays.
+ * The JNI entry points, exactly as specified in API.md §2. All strings cross
+ * JNI as standard UTF-8 byte arrays.
  *
- * The functions are instance methods of this object (JNI receives the
- * object instance as `jobject thiz`, symbol names
- * `Java_io_github_sakkijarvenpolkka_audacity_engine_NativeBridge_<name>`).
+ * Native side: `native/jni` builds `libaudacity-jni.so`, which links
+ * `libaudacity-bridge.so` (and through it every Audacity library). Its
+ * `JNI_OnLoad` binds the functions below with `RegisterNatives`, so the
+ * class name, the member names and their signatures are ABI (kept by
+ * consumer-rules.pro). The functions are instance methods of this object
+ * (JNI receives the object instance as `jobject thiz`).
  *
  * Never call an `external` function unless [isLoaded] is true: without the
  * library every call throws [UnsatisfiedLinkError].
  */
 object NativeBridge {
-    const val LIBRARY_NAME = "audacity-bridge"
+    const val LIBRARY_NAME = "audacity-jni"
+
+    /** System property with an absolute path of `libaudacity-jni.so` to load
+     *  instead of [LIBRARY_NAME] from the app's native library directory
+     *  (host JVM tests, see native/jni/README.md). */
+    const val LIBRARY_PATH_PROPERTY = "audacity.jni.library"
 
     /** Why loading failed (null when loaded or not attempted yet). */
     @Volatile
@@ -38,7 +46,10 @@ object NativeBridge {
      *  build with `-Paudacity.buildNative=false`) or failed to link. */
     val isLoaded: Boolean by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         try {
-            System.loadLibrary(LIBRARY_NAME)
+            // Loaded from this class: JNI_OnLoad finds the app classes with
+            // this class's loader
+            val path = System.getProperty(LIBRARY_PATH_PROPERTY)
+            if (path.isNullOrBlank()) System.loadLibrary(LIBRARY_NAME) else System.load(path)
             true
         } catch (e: UnsatisfiedLinkError) {
             loadError = e
@@ -63,6 +74,10 @@ object NativeBridge {
     /** Answers a blocking `dialog` event. Any thread. */
     external fun replyDialog(dialogId: Int, button: Int)
 
+    /** Answers a blocking `kind:"multiChoice"` dialog with the checked choice
+     *  indices (API.md §4.4; `replyDialog(id, -1)` cancels it). Any thread. */
+    external fun replyDialogChoices(dialogId: Int, indices: IntArray)
+
     /** Requests cancel (`stop=false`) or stop of a running progress. Any thread. */
     external fun cancelProgress(progressId: Int, stop: Boolean)
 
@@ -84,6 +99,12 @@ object NativeBridge {
 
     /** API.md §7.5. Background threads only. */
     external fun spectrogramColumns(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, rows: Int, out: ByteArray): Long
+
+    /** Not for the app: stops the engine thread (closing the project without
+     *  saving) and waits until it exited; [start] may be called again
+     *  afterwards. Host tests use it to shut down before the JVM exits.
+     *  Background threads only. */
+    external fun stop()
 }
 
 /** Seam over [NativeBridge] so that [NativeAudacityEngine] can be tested on
@@ -93,6 +114,8 @@ internal interface BridgeApi {
     fun start(config: ByteArray, listener: EngineListener): Boolean
     fun invoke(command: ByteArray, args: ByteArray): ByteArray
     fun replyDialog(dialogId: Int, button: Int)
+    /** Seams without multi-choice support (test fakes) cancel the dialog. */
+    fun replyDialogChoices(dialogId: Int, indices: IntArray) = replyDialog(dialogId, -1)
     fun cancelProgress(progressId: Int, stop: Boolean)
     fun readTransport(out: DoubleArray): Boolean
     fun readMeters(out: FloatArray): Boolean
@@ -108,6 +131,7 @@ internal object NativeBridgeApi : BridgeApi {
     override fun start(config: ByteArray, listener: EngineListener) = NativeBridge.start(config, listener)
     override fun invoke(command: ByteArray, args: ByteArray) = NativeBridge.invoke(command, args)
     override fun replyDialog(dialogId: Int, button: Int) = NativeBridge.replyDialog(dialogId, button)
+    override fun replyDialogChoices(dialogId: Int, indices: IntArray) = NativeBridge.replyDialogChoices(dialogId, indices)
     override fun cancelProgress(progressId: Int, stop: Boolean) = NativeBridge.cancelProgress(progressId, stop)
     override fun readTransport(out: DoubleArray) = NativeBridge.readTransport(out)
     override fun readMeters(out: FloatArray) = NativeBridge.readMeters(out)

@@ -28,6 +28,12 @@ internal data class IdResult(val id: Long)
 @Serializable
 internal data class LabelRef(val trackId: Long, val index: Int)
 
+@Serializable
+internal data class LabelIndex(val index: Int)
+
+@Serializable
+internal data class TrackIdResult(val trackId: Long)
+
 /** Encoding/decoding of the command protocol, shared by the native engine and tests. */
 object EngineProtocol {
     val EMPTY_ARGS: JsonObject = JsonObject(emptyMap())

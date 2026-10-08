@@ -39,6 +39,14 @@ sealed interface AppDialog {
         val allowEmpty: Boolean = false,
     ) : AppDialog
 
+    /** Pick one of [options] (radio buttons); [result] gets the index, null when cancelled. */
+    class Choice(
+        val title: UiText,
+        val options: List<UiText>,
+        val initial: Int = 0,
+        val result: CompletableDeferred<Int?> = CompletableDeferred(),
+    ) : AppDialog
+
     /** Time input (hh:mm:ss.mmm); [result] gets null when cancelled. */
     class TimeInput(
         val title: UiText,
@@ -86,7 +94,8 @@ data class ExportJob(
 sealed interface CreatePurpose {
     data class ExportAudio(val job: ExportJob) : CreatePurpose
     data object BackupProject : CreatePurpose
-    data class ExportLabels(val text: String) : CreatePurpose
+    /** Export Labels: `labels.export` writes [format] to a staging file that is copied to the document. */
+    data class ExportLabels(val format: String, val fileName: String) : CreatePurpose
 }
 
 /** Requests the Activity fulfils with activity-result launchers / intents. */
@@ -94,6 +103,8 @@ sealed interface HostRequest {
     data class OpenDocuments(val purpose: OpenPurpose, val mimeTypes: List<String>, val multiple: Boolean) : HostRequest
     data class CreateDocument(val purpose: CreatePurpose, val suggestedName: String, val mimeType: String) : HostRequest
     data class RecordPermission(val newTrack: Boolean) : HostRequest
+    /** POST_NOTIFICATIONS (API 33+) for the recording/playback notification. */
+    data object NotificationPermission : HostRequest
     data class OpenUrl(val url: String) : HostRequest
     data object AppLanguageSettings : HostRequest
 }

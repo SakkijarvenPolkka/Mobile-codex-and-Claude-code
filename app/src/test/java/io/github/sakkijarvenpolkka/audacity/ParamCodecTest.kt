@@ -7,8 +7,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.EffectParam
 import io.github.sakkijarvenpolkka.audacity.engine.model.EngineJson
 import io.github.sakkijarvenpolkka.audacity.engine.model.EqCurve
 import io.github.sakkijarvenpolkka.audacity.engine.model.EqPoint
-import io.github.sakkijarvenpolkka.audacity.files.LabelFiles
-import io.github.sakkijarvenpolkka.audacity.files.LabelLine
+import io.github.sakkijarvenpolkka.audacity.files.LabelFormat
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.EqAxes
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.SpectrumPlot
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.movePoint
@@ -131,16 +130,17 @@ class ParamCodecTest {
         assertEquals("A4", SpectrumPlot.pitchName(440.0))
         assertEquals("C4", SpectrumPlot.pitchName(261.63))
         assertEquals(3, SpectrumPlot.peakNear(listOf(0f, 1f, 2f, 5f, 1f), 1, 2))
-        assertEquals(listOf(128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536), SpectrumPlot.SIZES)
+        assertEquals(listOf(128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072), SpectrumPlot.SIZES)
+        assertEquals("cepstrum", SpectrumPlot.ALGORITHMS.last())
+        assertEquals(SpectrumPlot.ALGORITHMS.size, SpectrumPlot.ALGORITHM_LABELS.size)
     }
 
     @Test
-    fun labelFilesRoundTrip() {
-        val text = "1.000000\t2.500000\tIntro\n3.000000\t3.000000\tPoint\n\\\t100.0\t200.0\n4.5\tOld style\n"
-        val labels = LabelFiles.parse(text)
-        assertEquals(
-            listOf(LabelLine(1.0, 2.5, "Intro"), LabelLine(3.0, 3.0, "Point"), LabelLine(4.5, 4.5, "Old style")),
-            labels,
-        )
+    fun labelFormatsMatchTheEngineKeys() {
+        // labels.export formats of API.md §3.3 and the 3.7.9 file types
+        assertEquals(listOf("text", "subrip", "webvtt", "podcastChapters"), LabelFormat.entries.map { it.key })
+        assertEquals(listOf("labels.txt", "labels.srt", "labels.vtt", "labels.json"), LabelFormat.entries.map { it.fileName })
+        assertEquals(LabelFormat.SUBRIP, LabelFormat.ofKey("subrip"))
+        assertEquals(LabelFormat.TEXT, LabelFormat.ofKey("bogus"))
     }
 }

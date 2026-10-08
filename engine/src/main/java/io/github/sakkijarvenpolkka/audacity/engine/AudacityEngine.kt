@@ -15,8 +15,10 @@
 package io.github.sakkijarvenpolkka.audacity.engine
 
 import io.github.sakkijarvenpolkka.audacity.engine.model.AppInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.CompactInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.ContrastResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.DialogEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.EffectApplyResult
@@ -117,8 +119,14 @@ interface AudacityEngine {
     /** Answers a dialog: `button` indexes `buttons` (or `choices` for
      *  `kind:"choice"`), -1 = dismissed/cancelled. Call it for non-blocking
      *  dialogs too (they are only removed from [pendingDialogs]; the engine
-     *  does not expect a reply for them). */
+     *  does not expect a reply for them). For `kind:"multiChoice"`, -1
+     *  cancels and `button >= 0` accepts the `defaultChecked` choices. */
     fun replyDialog(dialogId: Int, button: Int)
+
+    /** Answers a `kind:"multiChoice"` dialog with the checked choice indices
+     *  (API.md §4.4; the engine sorts them and drops duplicates/out-of-range
+     *  values; empty = "none"). Cancel with `replyDialog(id, -1)`. */
+    fun replyDialogChoices(dialogId: Int, indices: List<Int>)
     fun cancelProgress(progressId: Int, stop: Boolean = false)
 
     /** Lock-free; safe on the UI thread every frame. */
@@ -149,6 +157,11 @@ interface AudacityEngine {
     suspend fun setTags(tags: List<Tag>)                             // project.tags.set
     suspend fun listProjects(): List<ProjectFileEntry>               // project.list
     suspend fun deleteProject(path: String)                          // project.delete
+    /** Renames a project of `filesDir/Projects` that is not open; returns the new path. */
+    suspend fun renameProject(path: String, newName: String): String // project.rename
+    /** File ▸ Compact Project (ask first with [compactInfo]); returns the freed bytes. */
+    suspend fun compactProject(): Long                               // project.compact
+    suspend fun compactInfo(): CompactInfo                           // project.compactInfo
 
     // ----- history -------------------------------------------------------
     suspend fun undo()                                               // history.undo
@@ -161,15 +174,23 @@ interface AudacityEngine {
     suspend fun setView(zoom: Double? = null, hpos: Double? = null)  // view.set
 
     // ----- selection -------------------------------------------------------
+    /** Time selection only (t0 == t1 = cursor). */
     suspend fun select(t0: Double, t1: Double)                       // select.set
+    /** Time selection plus the track part in one command (a waveform tap):
+     *  [trackIds] (when not null) replaces the track selection, [focus]
+     *  moves the focus; unknown ids fail with NOT_FOUND and change nothing. */
+    suspend fun select(t0: Double, t1: Double, trackIds: List<Long>?, focus: Long? = null) // select.set
     suspend fun selectAll()                                          // select.all
     suspend fun selectNone()                                         // select.none
     suspend fun selectTracks(ids: List<Long>, mode: String = "set")  // select.tracks
     suspend fun selectTrackHeader(id: Long, shift: Boolean, ctrl: Boolean) // select.trackHeader
-    /** Simple selection commands without arguments, e.g. "select.allTracks",
+    /** Selection commands without arguments: "select.allTracks",
      *  "select.startToCursor", "select.cursorToEnd", "select.trackStartToEnd",
+     *  "select.toProjectStart", "select.toProjectEnd",
      *  "select.cursorToTrackStart", "select.cursorToTrackEnd",
-     *  "select.prevClipBoundary", "select.nextClipBoundary". */
+     *  "select.prevClip", "select.nextClip",
+     *  "select.prevClipBoundary", "select.nextClipBoundary",
+     *  "select.zeroCrossing". */
     suspend fun selectCommand(command: String)
     suspend fun selectClip(trackId: Long, clipIndex: Int, generation: Long) // select.clip
     suspend fun focusTrack(id: Long)                                 // select.focus
@@ -190,24 +211,42 @@ interface AudacityEngine {
     suspend fun removeTracks(ids: List<Long>)                        // tracks.remove
     suspend fun mixAndRender(toNewTrack: Boolean)                    // tracks.mixAndRender
     suspend fun resample(rate: Int)                                  // tracks.resample
+    /** `final = false` while dragging: no history entry, no generation
+     *  bump; `final = true` on release: one consolidated "Volume" entry. */
     suspend fun setTrackGain(id: Long, gain: Double, final: Boolean) // tracks.setGain
     suspend fun setTrackPan(id: Long, pan: Double, final: Boolean)   // tracks.setPan
+    /** Updates the current undo state (no history entry), like 3.7.9. */
     suspend fun setTrackMute(id: Long, mute: Boolean)                // tracks.setMute
     suspend fun setTrackSolo(id: Long, solo: Boolean)                // tracks.setSolo
+    /** Tracks ▸ Mute/Unmute ▸ Mute/Unmute All Tracks. */
+    suspend fun muteAllTracks(mute: Boolean)                         // tracks.muteAll
     suspend fun renameTrack(id: Long, name: String)                  // tracks.rename
     suspend fun moveTrack(id: Long, to: String)                      // tracks.move
     /** "tracks.makeStereo" | "tracks.splitStereo" | "tracks.splitStereoToMono" | "tracks.swapChannels" */
     suspend fun trackChannelCommand(command: String, id: Long)
     suspend fun setTrackRate(id: Long, rate: Int)                    // tracks.setRate
     suspend fun setTrackFormat(id: Long, format: String)             // tracks.setFormat
-    suspend fun alignTracks(mode: String)                            // tracks.align
+    /** [mode]: "startToZero" | "startToCursor" | "startToSelEnd" |
+     *  "endToCursor" | "endToSelEnd" | "endToEnd" | "together";
+     *  [moveSelection] null = the `moveSelectionWithTracks` setting. */
+    suspend fun alignTracks(mode: String, moveSelection: Boolean? = null) // tracks.align
+    /** [by]: "time" | "name". */
+    suspend fun sortTracks(by: String)                               // tracks.sort
 
     // ----- clips / labels ----------------------------------------------------
     suspend fun moveClip(trackId: Long, clipIndex: Int, generation: Long, newStart: Double, toTrackId: Long? = null) // clips.move
     suspend fun renameClip(trackId: Long, clipIndex: Int, generation: Long, name: String) // clips.rename
     suspend fun addLabel(title: String = ""): Pair<Long, Int>        // labels.add
-    suspend fun editLabel(trackId: Long, index: Int, title: String? = null, t0: Double? = null, t1: Double? = null) // labels.edit
-    suspend fun removeLabel(trackId: Long, index: Int)               // labels.remove
+    /** Returns the label's index after the edit (time edits re-sort the
+     *  labels). A [generation] older than the current one fails with STALE. */
+    suspend fun editLabel(trackId: Long, index: Int, title: String? = null, t0: Double? = null, t1: Double? = null,
+                          generation: Long? = null): Int            // labels.edit
+    suspend fun removeLabel(trackId: Long, index: Int, generation: Long? = null) // labels.remove
+    /** File ▸ Import ▸ Labels: a text or SubRip file in app storage; returns the new label track. */
+    suspend fun importLabels(path: String): Long                     // labels.import
+    /** File ▸ Export Other ▸ Export Labels: [format] "text" | "subrip" | "webvtt" | "podcastChapters";
+     *  returns the number of labels written. */
+    suspend fun exportLabels(path: String, format: String = "text"): Int // labels.export
 
     // ----- effects / analyze ---------------------------------------------------
     suspend fun effects(): EffectList                                // effects.list
@@ -216,11 +255,15 @@ interface AudacityEngine {
     suspend fun loadEffectPreset(id: String, kind: String, name: String? = null, index: Int? = null): EffectDescription // effects.loadPreset
     suspend fun saveEffectPreset(id: String, name: String)           // effects.savePreset
     suspend fun deleteEffectPreset(id: String, name: String)         // effects.deletePreset
-    suspend fun applyEffect(id: String, params: Map<String, JsonElement>? = null, duration: Double? = null): EffectApplyResult // effects.apply
-    suspend fun previewEffect(id: String, params: Map<String, JsonElement>? = null, duration: Double? = null) // effects.preview
+    suspend fun applyEffect(id: String, params: Map<String, JsonElement>? = null, duration: Double? = null,
+                            curve: EqCurve? = null): EffectApplyResult // effects.apply
+    suspend fun previewEffect(id: String, params: Map<String, JsonElement>? = null, duration: Double? = null,
+                              curve: EqCurve? = null)               // effects.preview
     suspend fun stopPreview()                                        // effects.stopPreview
     suspend fun repeatLastEffect(): EffectApplyResult                // effects.repeatLast
     suspend fun captureNoiseProfile()                                // effects.noiseReduction.captureProfile
+    /** [algorithm]: "spectrum" | "autocorrelation" | "cubeRootAutocorrelation" |
+     *  "enhancedAutocorrelation" | "cepstrum"; [size] a power of two 128 … 131072. */
     suspend fun plotSpectrum(algorithm: String, window: String, size: Int): SpectrumResult // analyze.spectrum
     suspend fun contrast(fg0: Double, fg1: Double, bg0: Double, bg1: Double): ContrastResult // analyze.contrast
 
@@ -243,6 +286,9 @@ interface AudacityEngine {
     suspend fun skipToEnd()                                          // transport.skipToEnd
     suspend fun monitor(enabled: Boolean)                            // transport.monitor
     suspend fun audioDevices(): AudioDevices                         // audio.devices
+    /** Injects the Android device list (applied now when idle, else when the
+     *  stream stops); returns true when applied at once. */
+    suspend fun setAudioDevices(devices: List<AudioDeviceSpec>): Boolean // audio.setDevices
     suspend fun setRecordPermission(granted: Boolean)                // audio.permission
     suspend fun latency(): LatencyInfo                               // audio.latency
 

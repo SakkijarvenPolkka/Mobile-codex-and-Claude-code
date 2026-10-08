@@ -337,7 +337,10 @@ void OggImportFileHandle::Import(
 
    for (auto& stream : mStreams)
    {
-      ImportUtils::FinalizeImport(outTracks, std::move(*stream));
+      // Android port: links the user did not select are empty padding
+      // entries (see Init); dereferencing them crashed.
+      if (stream)
+         ImportUtils::FinalizeImport(outTracks, std::move(*stream));
    }
    mStreams.clear();
 

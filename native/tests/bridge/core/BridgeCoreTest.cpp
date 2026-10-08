@@ -981,14 +981,19 @@ void TestKorean(Sink &sink)
 
 void TestRealtimeEntryPoints()
 {
-   // No audio/display module installed yet: "not ready" answers
+   // The audio and display modules install the realtime readers and the
+   // display providers: the entry points answer once the engine is ready.
    double transport[16];
-   CHECK(!aubridge::ReadTransport(transport, 16));
+   CHECK(aubridge::ReadTransport(transport, 16));
+   CHECK(transport[0] == 0); // stopped
    float meters[14];
-   CHECK(!aubridge::ReadMeters(meters, 14));
+   CHECK(aubridge::ReadMeters(meters, 14));
+   // Too-small buffers are rejected instead of overrun.
+   CHECK(!aubridge::ReadTransport(transport, 4));
    float columns[3 * 256];
-   CHECK(aubridge::WaveColumns(1, 0, 0, 0, 256, columns, 3 * 256) == -3);
-   CHECK(aubridge::WaveSamples(1, 0, 0, 1).empty());
+   // No track with this id: -1 (unknown track), never -3 (not ready).
+   CHECK(aubridge::WaveColumns(987654321, 0, 0, 0, 256, columns, 3 * 256) == -1);
+   CHECK(aubridge::WaveSamples(987654321, 0, 0, 1).empty());
    CHECK(aubridge::PpsForLevel(0) == 1.0);
    CHECK(aubridge::PpsForLevel(8) == 2.0);
 }

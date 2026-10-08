@@ -89,6 +89,7 @@ import io.github.sakkijarvenpolkka.audacity.menu.ContextMenus
 import io.github.sakkijarvenpolkka.audacity.menu.MenuItem
 import io.github.sakkijarvenpolkka.audacity.menu.MenuSpec
 import io.github.sakkijarvenpolkka.audacity.menu.MenuState
+import io.github.sakkijarvenpolkka.audacity.ui.dialogs.ChoiceDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.ConfirmDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.ContrastDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.DeviceInfoDialog
@@ -392,6 +393,7 @@ fun DialogHost(vm: AppViewModel) {
                 is AppDialog.Confirm -> ConfirmDialog(d, vm)
                 is AppDialog.TextInput -> TextInputDialog(d, vm)
                 is AppDialog.TimeInput -> TimeInputDialog(d, vm)
+                is AppDialog.Choice -> ChoiceDialog(d, vm)
                 is AppDialog.SaveChanges -> SaveChangesDialog(d, vm)
                 is AppDialog.Recovery -> RecoveryDialog(d, vm)
                 is AppDialog.Effect -> EffectDialog(d, vm)

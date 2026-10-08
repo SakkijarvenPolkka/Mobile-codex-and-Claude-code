@@ -69,13 +69,15 @@ import kotlin.math.roundToInt
 
 /** Plot Spectrum options (FreqWindow.cpp:211-258) and helpers (pure; unit-tested). */
 object SpectrumPlot {
-    val ALGORITHMS = listOf("spectrum", "autocorrelation", "cubeRootAutocorrelation", "enhancedAutocorrelation")
-    val ALGORITHM_LABELS = listOf(R.string.ps_alg_spectrum, R.string.ps_alg_autocorr, R.string.ps_alg_cuberoot, R.string.ps_alg_enhanced)
+    val ALGORITHMS = listOf("spectrum", "autocorrelation", "cubeRootAutocorrelation", "enhancedAutocorrelation", "cepstrum")
+    val ALGORITHM_LABELS = listOf(R.string.ps_alg_spectrum, R.string.ps_alg_autocorr, R.string.ps_alg_cuberoot, R.string.ps_alg_enhanced,
+        R.string.ps_alg_cepstrum)
     val WINDOWS = listOf("rectangular", "bartlett", "hamming", "hann", "blackman", "blackmanHarris", "welch", "gaussian25", "gaussian35", "gaussian45")
     /** WindowFuncName (lib-fft/FFT.cpp). */
     val WINDOW_LABELS = listOf("Rectangular", "Bartlett", "Hamming", "Hann", "Blackman", "Blackman-Harris", "Welch",
         "Gaussian(a=2.5)", "Gaussian(a=3.5)", "Gaussian(a=4.5)")
-    val SIZES = (7..16).map { 1 shl it }
+    /** 128 … 131072 (FreqWindow.cpp sizes). */
+    val SIZES = (7..17).map { 1 shl it }
 
     private val NOTES = listOf("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
 
@@ -297,11 +299,20 @@ fun ContrastDialog(d: AppDialog, vm: AppViewModel) {
         result?.let { r ->
             Column(Modifier.padding(top = 12.dp)) {
                 Text(stringResource(R.string.ct_result), fontWeight = FontWeight.Bold)
-                Text(stringResource(R.string.ct_fg_rms, dbText(r.foregroundDb)))
-                Text(stringResource(R.string.ct_bg_rms, dbText(r.backgroundDb)))
-                Text(stringResource(R.string.ct_difference, dbText(r.differenceDb)))
+                // Digital silence arrives as -1000 dB with ...Silent = true (JSON has no -inf)
+                val fg = if (r.foregroundSilent) Double.NEGATIVE_INFINITY else r.foregroundDb
+                val bg = if (r.backgroundSilent) Double.NEGATIVE_INFINITY else r.backgroundDb
+                val diff = when {
+                    r.foregroundSilent && r.backgroundSilent -> Double.NaN
+                    r.foregroundSilent -> Double.NEGATIVE_INFINITY
+                    r.backgroundSilent -> Double.POSITIVE_INFINITY
+                    else -> r.differenceDb
+                }
+                Text(stringResource(R.string.ct_fg_rms, dbText(fg)))
+                Text(stringResource(R.string.ct_bg_rms, dbText(bg)))
+                Text(stringResource(R.string.ct_difference, dbText(diff)))
                 Text(
-                    stringResource(if (r.passes) R.string.ct_pass else R.string.ct_fail),
+                    r.verdict.ifEmpty { stringResource(if (r.passes) R.string.ct_pass else R.string.ct_fail) },
                     color = if (r.passes) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -310,8 +321,11 @@ fun ContrastDialog(d: AppDialog, vm: AppViewModel) {
     }
 }
 
-private fun dbText(v: Double): String =
-    if (v.isInfinite() || v.isNaN()) (if (v < 0) "-∞" else "∞") else String.format(Locale.ROOT, "%.1f", v)
+private fun dbText(v: Double): String = when {
+    v.isNaN() -> "?"
+    v.isInfinite() -> if (v < 0) "-∞" else "∞"
+    else -> String.format(Locale.ROOT, "%.1f", v)
+}
 
 @Composable
 private fun RangeRow(title: String, t0: String, t1: String, on0: (String) -> Unit, on1: (String) -> Unit, useSelection: () -> Unit) {

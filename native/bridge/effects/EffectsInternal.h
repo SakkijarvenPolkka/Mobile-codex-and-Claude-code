@@ -35,6 +35,7 @@
 #include "ComponentInterfaceSymbol.h"
 #include "EffectInterface.h"
 #include "Identifier.h"
+#include "PluginProvider.h"   // PluginID
 #include "TranslatableString.h"
 
 class AudacityProject;
@@ -106,6 +107,11 @@ void NoiseReductionSet(EffectPlugin &effect, const NoiseReductionValues &values)
 //! Amplify: peak of the selection after Init (0 when unknown)
 double AmplifyPeak(EffectPlugin &effect);
 
+//! PluginID of the built-in with that symbol (empty when not registered)
+PluginID BuiltinId(const ComponentInterfaceSymbol &symbol);
+//! PluginID of Noise Reduction
+PluginID NoiseReductionId();
+
 // ---------------------------------------------------------------------------
 // EffectLabels.cpp
 // ---------------------------------------------------------------------------
@@ -171,7 +177,8 @@ std::string TypeName(EffectType type);
 //! Captures OK-only message boxes, error dialogs and Nyquist debug output
 //! (critic.md C18: they become `result.message` instead of `dialog`
 //! events) and notices cancel/stop of the progress dialogs, while alive.
-//! Installs a forwarding BasicUI::Services; nests.
+//! Interposes a forwarding BasicUI::Services (one per process, never
+//! deleted); nests; engine thread only.
 class CaptureScope final {
 public:
    CaptureScope();
@@ -184,17 +191,39 @@ public:
    //! Captured texts joined with blank lines (empty when none)
    std::string Message() const;
    bool HasMessage() const;
-private:
    struct State;
+private:
    std::shared_ptr<State> mState;
-   std::shared_ptr<State> mPrevious;
-   void *mPreviousServices = nullptr;
+   void *mPreviousServices = nullptr;   //!< the services we replaced
+   void *mPreviousState = nullptr;      //!< enclosing capture's state
+   bool mInstalled = false;             //!< outermost scope
 };
 //! Appends a message to the innermost active capture (engine thread);
 //! returns false when no capture is active
 bool CaptureMessage(const std::string &text);
 
 void RegisterApplyCommands(ModuleRegistry &registry);
+
+//! Sets the context fields EffectBase::DoEffect sets before its dialog
+//! (factory, project rate, the project's TrackList, mT0/mT1 from the
+//! quantized selection, track counts) for work outside DoEffect (preview,
+//! Amplify's peak); drops the track list again on destruction
+class EffectContext final {
+public:
+   EffectContext(Effect &effect, AudacityProject &project);
+   ~EffectContext();
+   EffectContext(const EffectContext &) = delete;
+   EffectContext &operator=(const EffectContext &) = delete;
+private:
+   Effect &mEffect;
+};
+
+//! Amplify: linear peak of the selected audio (nullopt for other effects
+//! or without a time selection on wave tracks)
+std::optional<double> SelectionPeak(const Loaded &fx);
+//! Amplify "Defaults": ratio = 1/peak of the selection (LoadFactoryDefaults
+//! with the effect context); false without an audio selection
+bool LoadAmplifyDefaults(const Loaded &fx);
 
 // ---------------------------------------------------------------------------
 // EffectPreview.cpp
@@ -215,8 +244,13 @@ void RegisterAnalyzerCommands(ModuleRegistry &registry);
 // ---------------------------------------------------------------------------
 //! Shortest round-trip text of a double, C locale
 std::string FormatNumber(double value);
-//! Requires a time selection on selected wave tracks
+//! Requires a time selection on selected wave tracks (menu flags
+//! TimeSelected | WaveTracksSelected); honours /GUI/SelectAllOnNone
+//! @param name the command, for 3.7.9's message
+//! @param noiseReduction Noise Reduction's own message
 //! @throws BridgeError NO_SELECTION
+void RequireAudioSelection(AudacityProject &project,
+   const TranslatableString &name, bool noiseReduction = false);
 void RequireAudioSelection(AudacityProject &project);
 
 } // namespace effects

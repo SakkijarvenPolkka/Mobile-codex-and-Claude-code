@@ -15,17 +15,18 @@
  *   Edit: Pitch and Speed..., Render Pitch and Speed, Pitch Up/Down (no clip
  *         stretching commands), Typing Creates New Labels (soft keyboard),
  *         Labeled Audio ▸ (no label-region edit commands).
- *   Select: In All Sync-Locked Tracks, Spectral ▸, At Zero Crossings.
+ *   Select: In All Sync-Locked Tracks, Spectral ▸.
  *   View: Mixer, Toolbars ▸, Beats and Measures, Extra Menus.
  *   Transport: Timer Record, Punch and Roll, Scrubbing ▸, sound-activated
  *         recording, Continuous scrolling (pinned head).
- *   Tracks: Add Time Track, Align End to End, Sort Tracks ▸, Sync-Lock,
- *         Move Selection with Tracks.
+ *   Tracks: Add Time Track.
  *   Generate/Effect/Analyze/Tools: Plugin Manager, Add Realtime Effects, Get
  *         more effects, Macros, Reset Configuration, Run Benchmark.
  *   Help: Generate Support Data, MIDI Device Info, audio.com account, Check
  *         for Updates.
- * Android additions: File ▸ Projects... (project manager).
+ * Android additions: File ▸ Projects... (project manager); File ▸ Compact
+ * Project (commented out in 3.7.9's FileMenus.cpp, Bug 2600; phones need the
+ * space back), with the desktop's ProjectFileManager::Compact question.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -45,7 +46,8 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
 import io.github.sakkijarvenpolkka.audacity.engine.model.TrackState
-import io.github.sakkijarvenpolkka.audacity.files.LabelFiles
+import io.github.sakkijarvenpolkka.audacity.files.LabelFormat
+import io.github.sakkijarvenpolkka.audacity.util.TimeCodec
 import io.github.sakkijarvenpolkka.audacity.util.UiText
 import kotlin.math.abs
 import kotlin.math.max
@@ -137,14 +139,12 @@ object MenuSpec {
                     h.request(HostRequest.CreateDocument(CreatePurpose.BackupProject, "$name.aup3", "application/octet-stream"))
                 },
             ),
+            item("Compact", R.string.m_compact, NB or PO) { h -> compactProject(h) },
             SEP,
             item("Export", R.string.m_export_audio, NB or WE, ctrl(Key.E, "E", shift = true)) { it.open(AppDialog.Export()) },
             sub(
                 "ExportOther", R.string.m_export_other,
-                item("ExportLabels", R.string.m_export_labels, NB or LE) { h ->
-                    val text = LabelFiles.export(snap(h))
-                    h.request(HostRequest.CreateDocument(CreatePurpose.ExportLabels(text), "labels.txt", "text/plain"))
-                },
+                item("ExportLabels", R.string.m_export_labels, NB or LE) { h -> exportLabels(h) },
             ),
             sub(
                 "Import", R.string.m_import,
@@ -152,7 +152,7 @@ object MenuSpec {
                     it.request(HostRequest.OpenDocuments(OpenPurpose.IMPORT_AUDIO, IMPORT_MIME_TYPES, multiple = true))
                 },
                 item("ImportLabels", R.string.m_import_labels, NB or PO) {
-                    it.request(HostRequest.OpenDocuments(OpenPurpose.IMPORT_LABELS, listOf("text/*", "application/octet-stream"), multiple = false))
+                    it.request(HostRequest.OpenDocuments(OpenPurpose.IMPORT_LABELS, LabelFormat.IMPORT_MIME_TYPES, multiple = false))
                 },
             ),
             SEP,
@@ -266,8 +266,8 @@ object MenuSpec {
                     val b = clipBoundaries(s).firstOrNull { it > s.selection.t1 + EPS }
                     if (b != null) h.engine.select(s.selection.t0, b)
                 },
-                item("SelPrevClip", R.string.m_sel_prev_clip, WE, key(Key.Comma, ",", alt = true)) { h -> selectNeighbourClip(h, next = false) },
-                item("SelNextClip", R.string.m_sel_next_clip, WE, key(Key.Period, ".", alt = true)) { h -> selectNeighbourClip(h, next = true) },
+                item("SelPrevClip", R.string.m_sel_prev_clip, WE, key(Key.Comma, ",", alt = true)) { it.engine.selectCommand("select.prevClip") },
+                item("SelNextClip", R.string.m_sel_next_clip, WE, key(Key.Period, ".", alt = true)) { it.engine.selectCommand("select.nextClip") },
             ),
             SEP,
             item("SelCursorStoredCursor", R.string.m_sel_cursor_stored, TE) { h ->
@@ -280,6 +280,9 @@ object MenuSpec {
                 val head = tr.headTime(System.nanoTime())
                 h.storedCursor = if (tr.isActive && !head.isNaN()) head else snap(h).selection.t0
             },
+            SEP,
+            // ES on desktop; the engine also needs the audio idle (NB)
+            item("ZeroCross", R.string.m_zero_crossings, NB or ES, key(Key.Z, "Z")) { it.engine.selectCommand("select.zeroCrossing") },
         ),
     )
 
@@ -430,8 +433,8 @@ object MenuSpec {
             SEP,
             sub(
                 "MuteUnmute", R.string.m_mute_unmute,
-                item("MuteAllTracks", R.string.m_mute_all, TE, ctrl(Key.U, "U")) { h -> setMute(h, playable(snap(h).tracks), true) },
-                item("UnmuteAllTracks", R.string.m_unmute_all, TE, ctrl(Key.U, "U", shift = true)) { h -> setMute(h, playable(snap(h).tracks), false) },
+                item("MuteAllTracks", R.string.m_mute_all, TE, ctrl(Key.U, "U")) { it.engine.muteAllTracks(true) },
+                item("UnmuteAllTracks", R.string.m_unmute_all, TE, ctrl(Key.U, "U", shift = true)) { it.engine.muteAllTracks(false) },
                 item("MuteTracks", R.string.m_mute_tracks, ES, ctrl(Key.U, "U", alt = true)) { h -> setMute(h, playable(snap(h).selectedTracks), true) },
                 item("UnmuteTracks", R.string.m_unmute_tracks, ES, ctrl(Key.U, "U", shift = true, alt = true)) { h -> setMute(h, playable(snap(h).selectedTracks), false) },
             ),
@@ -444,14 +447,31 @@ object MenuSpec {
             SEP,
             sub(
                 "Align", R.string.m_align_tracks,
+                item("Align_EndToEnd", R.string.m_align_end_to_end, NB or ES) { it.engine.alignTracks("endToEnd") },
                 item("Align_Together", R.string.m_align_together, NB or ES) { it.engine.alignTracks("together") },
                 SEP,
+                // moveSelection = the /GUI/MoveSelectionWithTracks setting (engine default)
                 item("Align_StartToZero", R.string.m_align_start_to_zero, NB or ES) { it.engine.alignTracks("startToZero") },
                 item("Align_StartToSelStart", R.string.m_align_start_to_sel_start, NB or ES) { it.engine.alignTracks("startToCursor") },
                 item("Align_StartToSelEnd", R.string.m_align_start_to_sel_end, NB or ES) { it.engine.alignTracks("startToSelEnd") },
                 item("Align_EndToSelStart", R.string.m_align_end_to_sel_start, NB or ES) { it.engine.alignTracks("endToCursor") },
                 item("Align_EndToSelEnd", R.string.m_align_end_to_sel_end, NB or ES) { it.engine.alignTracks("endToSelEnd") },
+                SEP,
+                item("MoveSelectionWithTracks", R.string.m_move_selection_with_tracks, checked = { it.settings?.moveSelectionWithTracks ?: false }) { h ->
+                    val cur = h.engine.getSettings().moveSelectionWithTracks ?: false
+                    h.updateSettings(Settings(moveSelectionWithTracks = !cur))
+                },
             ),
+            sub(
+                "Sort", R.string.m_sort_tracks,
+                item("SortByTime", R.string.m_sort_by_time, TE) { it.engine.sortTracks("time") },
+                item("SortByName", R.string.m_sort_by_name, TE) { it.engine.sortTracks("name") },
+            ),
+            SEP,
+            item("SyncLock", R.string.m_sync_lock, checked = { it.settings?.syncLock ?: false }) { h ->
+                val cur = h.engine.getSettings().syncLock ?: false
+                h.updateSettings(Settings(syncLock = !cur))
+            },
         ),
     )
 
@@ -605,6 +625,9 @@ object MenuSpec {
             item("CursorShortJumpRight", R.string.m_cursor_short_jump_right, PO, key(Key.Period, ".")) { h -> jump(h, 1.0) },
             item("CursorLongJumpLeft", R.string.m_cursor_long_jump_left, PO, key(Key.Comma, ",", shift = true)) { h -> jump(h, -15.0) },
             item("CursorLongJumpRight", R.string.m_cursor_long_jump_right, PO, key(Key.Period, ".", shift = true)) { h -> jump(h, 15.0) },
+            // SelectMenus.cpp SelStart / SelEnd (Extra ▸ Selection)
+            item("SelStart", R.string.m_sel_to_start, PO, key(Key.MoveHome, "Home", shift = true)) { it.engine.selectCommand("select.toProjectStart") },
+            item("SelEnd", R.string.m_sel_to_end, PO, key(Key.MoveEnd, "End", shift = true)) { it.engine.selectCommand("select.toProjectEnd") },
         )
     }
 
@@ -666,12 +689,32 @@ object MenuSpec {
     fun clipBoundaries(s: Snapshot): List<Double> =
         clipTracks(s).flatMap { t -> t.clips.flatMap { listOf(it.start, it.end) } }.distinct().sorted()
 
-    private suspend fun selectNeighbourClip(h: MenuHost, next: Boolean) {
-        val s = snap(h)
-        val t0 = s.selection.t0
-        val clips = clipTracks(s).flatMap { it.clips }.sortedBy { it.start }
-        val c = if (next) clips.firstOrNull { it.start > t0 + EPS } else clips.lastOrNull { it.start < t0 - EPS }
-        if (c != null) h.engine.select(c.start, c.end)
+    /**
+     * File ▸ Compact Project: the question of ProjectFileManager::Compact
+     * with the numbers of project.compactInfo, then project.compact and the
+     * "Compacting actually freed %s" message.
+     */
+    private suspend fun compactProject(h: MenuHost) {
+        val info = h.engine.compactInfo()
+        val free = if (info.freeBytes >= 0) TimeCodec.formatBytes(info.freeBytes) else "?"
+        val d = AppDialog.Confirm(
+            UiText.Res(R.string.compact_title),
+            UiText.Res(R.string.compact_question, listOf(free, TimeCodec.formatBytes(info.fileBytes), TimeCodec.formatBytes(info.reclaimableBytes))),
+            UiText.Res(R.string.btn_yes),
+        )
+        h.open(d)
+        if (!d.result.await()) return
+        val freed = h.engine.compactProject()
+        h.open(AppDialog.Info(UiText.Res(R.string.compact_title), UiText.Res(R.string.compact_freed, listOf(TimeCodec.formatBytes(freed)))))
+    }
+
+    /** File ▸ Export Other ▸ Export Labels...: the file type, then the document. */
+    private suspend fun exportLabels(h: MenuHost) {
+        val formats = LabelFormat.entries
+        val d = AppDialog.Choice(UiText.Res(R.string.lf_title), formats.map { UiText.Res(it.label) })
+        h.open(d)
+        val f = formats.getOrNull(d.result.await() ?: return) ?: return
+        h.request(HostRequest.CreateDocument(CreatePurpose.ExportLabels(f.key, f.fileName), f.fileName, f.mime))
     }
 
     private suspend fun renameClipAtCursor(h: MenuHost) {
@@ -709,6 +752,7 @@ object MenuSpec {
 
     private fun playable(tracks: List<TrackState>) = tracks.filter { it.isWave }
 
+    /** Mute/Unmute Tracks (selected): no engine command; per track like the TCP buttons. */
     private suspend fun setMute(h: MenuHost, tracks: List<TrackState>, mute: Boolean) {
         for (t in tracks) if (t.mute != mute) h.engine.setTrackMute(t.id, mute)
     }

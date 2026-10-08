@@ -1825,7 +1825,11 @@ void AudioIO::AudioThread(std::atomic<bool> &finish)
       else
       {
          if (    (lastState == State::eLoopRunning)
-              || (lastState == State::eMonitoring ) )
+              || (lastState == State::eMonitoring )
+              // Android port: also acknowledge a stop requested right after a
+              // one-time exchange (seek), else StopStream waits forever in
+              // WaitForAudioThreadStopped (fixed the same way in Audacity 4).
+              || (lastState == State::eOnce ) )
          {
             // Main thread has told us to stop; (actually: to neither process "once" nor "loop running")
             // acknowledge that we received the order and that no more processing will be done.

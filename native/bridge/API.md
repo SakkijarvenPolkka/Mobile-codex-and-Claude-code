@@ -33,7 +33,11 @@ the porting notes; the parts that matter for the contract are summarised here.
 ## 2. JNI surface
 
 Kotlin: `object io.github.sakkijarvenpolkka.audacity.engine.NativeBridge`.
-Native: `native/jni/` (Android only). All strings cross JNI as **UTF-8
+Native: `native/jni/` → `libaudacity-jni.so` (its only export is
+`JNI_OnLoad`, which binds the functions below with `RegisterNatives`; it
+links `libaudacity-bridge.so`, whose DT_NEEDED closure holds every Audacity
+library and module; also built on the host for the JVM tests, see
+`native/jni/README.md`). All strings cross JNI as **UTF-8
 `ByteArray`s** (JNI's `NewStringUTF` uses *modified* UTF-8 and breaks file
 names with emoji).
 
@@ -54,6 +58,19 @@ names with emoji).
 `interface EngineListener { fun onEvent(type: String, payload: ByteArray) }`
 (`type` is plain ASCII, `payload` UTF-8 JSON).
 
+Outside the app surface, `external fun stop()` stops the engine thread and
+waits for it (closing the project without saving); `start` may be called
+again afterwards. Host tests only (background thread); the app never stops
+the engine.
+
+Argument errors of the JNI layer itself: a null/too small array or `count`,
+`rows` outside §7's limits return `-1` from the display functions (the Java
+array is left untouched, as for every negative status except `-2`), `false`
+from `readTransport`/`readMeters`; `invoke` with a null command answers an
+`INVALID_ARGS` envelope (`generation` 0); `replyDialogChoices` with a null
+array cancels. A Java exception thrown by `onEvent` is logged and cleared
+(the engine goes on).
+
 Kotlin implementation notes (`engine/`, binding for the JNI glue):
 
 * `EngineListener` is a Kotlin `fun interface` in package
@@ -63,9 +80,11 @@ Kotlin implementation notes (`engine/`, binding for the JNI glue):
   `@JvmStatic`): the JNI functions
   `Java_io_github_sakkijarvenpolkka_audacity_engine_NativeBridge_<name>` receive
   the object instance as second argument (`jobject thiz`), not a `jclass`.
-* `System.loadLibrary("audacity-bridge")` is attempted once, guarded
-  (`NativeBridge.isLoaded`); without the library the app falls back to the
-  in-memory `FakeAudacityEngine`.
+* `System.loadLibrary("audacity-jni")` is attempted once, guarded
+  (`NativeBridge.isLoaded`); without the library (or when `JNI_OnLoad` finds
+  a declaration that does not match) the app falls back to the in-memory
+  `FakeAudacityEngine`. The system property `audacity.jni.library` (an
+  absolute path, host JVM tests) makes it `System.load` that file instead.
 * `NativeAudacityEngine` runs `invoke` on one "audacity-invoke" thread and the
   display functions on a separate "audacity-display" thread; events are
   decoded on an "audacity-events" thread, and a typed call returns only after
@@ -243,6 +262,9 @@ snapshot (3.7.9 treats mute/solo this way).
 | `debug.makeTestTrack` | `{seconds?=1, frequency?=440, channels?=1, rate?=project rate, amplitude?=0.5}` | `{id}` | M. Appends a sine-tone WaveTrack ("Test Tone N"), one undo state. |
 | `debug.ask` | `{message?, title?, cancel?:bool, choices?:[..], multiChoice?:bool, defaultChecked?:[bool]}` | `{result:"yes"\|"no"\|"cancel"\|"none"}` or `{choice}`; with `multiChoice:true` (+ `choices`) `{choices:[int]}` or `{result:"cancel"}` | I. Asks through BasicUI (blocking `dialog`), or `kind:"multiChoice"` through the spine's `Dialogs::ChooseMany`. |
 | `debug.progress` | `{seconds?=1}` | `{stopped:bool}` | I, L. Runs a BasicUI progress; `CANCELLED` when cancelled. |
+| `debug.addEnvelopePoint` | `{trackId, t, value}` (absolute time inside a clip; value 0 … 2) | `{clipIndex}` | M (display module). Adds/replaces a point of that clip's gain envelope (`Envelope::InsertOrReplace`), "Adjusted envelope." / "Envelope". `NOT_FOUND` when no clip is at `t`. |
+| `debug.stretchClip` | `{trackId, clipIndex, ratio}` (0.1 … 10) | `{}` | M (display module). `WaveClip::StretchBy(ratio)`: the clip keeps its start (it may overlap the next clip), "Stretched clip" / "Stretch Clip". |
+| `debug.recording` | `{action:"start", trackId?, newChannels?=1, t0?=0}` \| `{action:"append", seconds, frequency?=440}` \| `{action:"commit"}` \| `{action:"cancel"}` | `{}` | M (display module). Simulates a recording on the engine thread, without audio: `start` registers pending tracks like 3.7.9's `DoRecord` (the pending copy of `trackId` and/or `newChannels` new tracks — 2 = one stereo track — each with an empty clip at `t0`), `append` appends a sine (amplitude 0.5) to every target without flushing (the tail stays in the append buffer), `commit` flushes and applies the pending tracks ("Recorded Audio" / "Record"), `cancel` drops them. `INVALID_ARGS` when a recording is (not) being simulated. |
 
 #### select / playRegion (edit module)
 
@@ -356,53 +378,54 @@ Label references with a `generation` older than the current one fail with
 |---|---|---|---|
 | `effects.list` | – | `{effects:[EffectInfo], menus:{generate:[MenuSection], effect:[MenuSection], analyze:[MenuSection], tools:[MenuSection]}}` (§5.4) | I |
 | `effects.describe` | `{id}` | `EffectDescription` (§5.5) — current parameter values | I |
-| `effects.setParams` | `{id, params:{key:value,...}, duration?:seconds, curve?:{points:[{f,dB}], linearFreq}}` | `EffectDescription` (validated; unknown/invalid → `INVALID_ARGS`, nothing changed). `params` may be partial: the engine merges it into the current parameter string (missing keys would otherwise reset to defaults). `curve` only for the EQ effects. | I |
-| `effects.loadPreset` | `{id, kind:"factory"\|"user"\|"defaults", name?, index?}` | `EffectDescription`. For the EQ effects the built-in curves (`curves` of §5.5) are loaded with `kind:"factory", name`. | I |
-| `effects.savePreset` | `{id, name}` | `{}` | I |
-| `effects.deletePreset` | `{id, name}` | `{}` | I |
-| `effects.apply` | `{id, params?:{...}, duration?:seconds, curve?}` | `{applied:bool, message?:string}` | M, L. `params`/`curve` (if present) are applied with `effects.setParams` semantics first. Generators with a point selection insert `duration` seconds at the cursor. Analyzers may add label tracks and/or return `message`. |
-| `effects.preview` | `{id, params?, duration?}` | `{}` | starts asynchronous preview playback (≈6 s, Audacity's `/AudioIO/EffectsPreviewLen`); ends with a `transport` event |
-| `effects.stopPreview` | – | `{}` | I |
-| `effects.repeatLast` | – | `{applied, message?}` | M, L |
-| `effects.lastApplied` | – | `{id?, name?}` | I |
-| `effects.noiseReduction.captureProfile` | – (uses the current selection) | `{}` | – step 1 of Noise Reduction |
-| `analyze.spectrum` | `{algorithm:"spectrum"\|"autocorrelation"\|"cubeRootAutocorrelation"\|"enhancedAutocorrelation"\|"cepstrum", window:"rectangular"\|"bartlett"\|"hamming"\|"hann"\|"blackman"\|"blackmanHarris"\|"welch"\|"gaussian25"\|"gaussian35"\|"gaussian45", size:int (power of two 128…131072)}` | `{rate, binHz (spectrum) or binSeconds (autocorr/cepstrum), values:[float], minValue, maxValue, warning?}` (dB for spectrum). The analysed length is capped by the engine (phones: Audacity allows up to 2^27 samples = 1.5 GB of buffers); `warning` says when the selection was truncated. | L |
-| `analyze.contrast` | `{foreground:{t0,t1}, background:{t0,t1}}` | `{foregroundDb, backgroundDb, differenceDb, passes:bool}` | – |
+| `effects.setParams` | `{id, params:{key:value,...}, duration?:seconds, curve?:{points:[{f,dB}], linearFreq}}` | `EffectDescription` (validated; unknown/invalid → `INVALID_ARGS`, nothing changed). `params` may be partial: the engine merges it into the current parameter string (missing keys would otherwise reset to defaults). Keys with spaces may also be sent with `_` (automation-string form). `duration` (0 < d ≤ 86400) only for generators (it becomes the "last used duration"), `curve` (≤ 200 points, f in (0, 10⁶] Hz, dB in [−10⁴, 10⁴], sorted by f) only for the EQ effects; otherwise `INVALID_ARGS`. | I |
+| `effects.loadPreset` | `{id, kind:"factory"\|"user"\|"defaults", name?, index?}` | `EffectDescription`. For the EQ effects the built-in curves (`curves` of §5.5) are loaded with `kind:"factory", name`. Amplify `"defaults"` with an audio selection = ratio 1/peak of the selection (3.7.9's dialog), else the stored factory defaults. `NOT_FOUND` for an unknown preset name/index; Noise Reduction has only `"defaults"`. | I |
+| `effects.savePreset` | `{id, name}` | `{}` | I. `INVALID_ARGS` for an empty name or one with `/`, `\`, `=` or control characters; an existing preset of that name is replaced. `UNSUPPORTED` for Noise Reduction. |
+| `effects.deletePreset` | `{id, name}` | `{}` | I. `NOT_FOUND` when there is no such user preset. |
+| `effects.apply` | `{id, params?:{...}, duration?:seconds, curve?}` | `{applied:bool, message?:string}` | M, L. `params`/`curve`/`duration` (if present) are applied with `effects.setParams` semantics first. Generators insert `duration` seconds at the cursor (or, with a time selection and no `duration`, replace the selection); without a selected wave track a new track is created. Process effects and analyzers need a time selection on selected wave tracks (`NO_SELECTION` with 3.7.9's message; with `selectAllOnNone` all audio is selected first). `applied:false` + `message` = the effect refused or found nothing to do (nothing changed, e.g. Click Removal "not effective", Amplify that would clip without "Allow clipping", Auto Duck without a control track or with a selection not longer than both outer fades, Noise Reduction without a captured profile). Analyzers/Nyquist may add label tracks and/or return their result as `message` (e.g. Measure RMS: no history entry then). Cancel through `cancelProgress` → `CANCELLED`, the project is rolled back. Library exceptions → `FAILED`. The Nyquist Prompt runs `Command` like a macro step: the code's `;type` decides the type, its `;control`s are set from the nested `Parameters` string. |
+| `effects.preview` | `{id, params?, duration?, curve?}` | `{message?}` | L, not M. Port of 3.7.9's `EffectPreview`, non-blocking: renders ≈ `/AudioIO/EffectsPreviewLen` (6 s) of the selection into temporary tracks (progress "Preparing preview" with Stop → `CANCELLED`), starts playback and returns; `params`… as for `apply`. Same selection rules as `apply` (generators need none). A running preview is replaced; any other stream → `AUDIO_BUSY`. Emits `transport` `{state:"playing", reason:"preview"}` and, when it ends by itself, through `effects.stopPreview`, `transport.stop`, closing the project or `Stop()`, `{state:"stopped", reason:"preview"}`. The project is not changed. `FAILED` when the device cannot be opened (3.7.9 text). |
+| `effects.stopPreview` | – | `{}` | I. No-op without a preview. |
+| `effects.repeatLast` | – | `{applied, message?}` | M, L. Repeats the last applied **process** effect (Effect ▸ Repeat Last Effect) with its current settings; `NOT_FOUND` when none was applied in this project. Generators/analyzers/tools are repeated with `effects.apply {id}` of `lastGenerator`/`lastAnalyzer`/`lastTool`. |
+| `effects.lastApplied` | – | `{id?, name?}` | I. The last successfully applied effect of any type in this project (`{}` when none). |
+| `effects.noiseReduction.captureProfile` | – (uses the current selection) | `{message?}` | – step 1 of Noise Reduction ("Get Noise Profile"): tracks unchanged, no history entry, not repeatable. `NO_SELECTION` (3.7.9's Noise Reduction text), `FAILED` (e.g. selection too short). The profile lives in memory until the engine stops (as on desktop). |
+| `analyze.spectrum` | `{algorithm?:"spectrum"\|"autocorrelation"\|"cubeRootAutocorrelation"\|"enhancedAutocorrelation"\|"cepstrum" = "spectrum", window?:"rectangular"\|"bartlett"\|"hamming"\|"hann"\|"blackman"\|"blackmanHarris"\|"welch"\|"gaussian25"\|"gaussian35"\|"gaussian45" = "hann", size?:int (power of two 128…131072) = 1024}` | `{rate, binHz (spectrum) or binSeconds (autocorr/cepstrum), values:[float], minValue, maxValue, algorithm, size, warning?}`. `values[i]` is at `i·binHz` Hz (spectrum, dB, size/2 values, clamped to −max(90, `/GUI/EnvdBRange`) dB like the desktop plot) or lag/quefrency `i·binSeconds` (size/2 values); `minValue/maxValue` = the desktop plot's y range. The sum of all channels of the selected wave tracks (same rate required, else `FAILED`) is analysed, capped by the engine at 2²³ samples (the desktop allows 2²⁷ samples = 1.5 GB of buffers); `warning` (3.7.9's text) says when the selection was truncated. `NO_SELECTION` without a time selection on wave tracks, `FAILED` "Not enough data selected." when the selection is shorter than `size`. | L |
+| `analyze.contrast` | `{foreground:{t0,t1}, background:{t0,t1}}` | `{foregroundDb, backgroundDb, differenceDb, passes:bool, verdict, foregroundSilent, backgroundSilent}` | – Measures the RMS of the two ranges of the **one** selected wave track (`NO_SELECTION` "Please select an audio track." / "You can only measure one track at a time."; `FAILED` with 3.7.9's message for an empty range). `differenceDb` = fg − bg; `passes` and the translated `verdict` follow `src/effects/Contrast.cpp` (fg and bg ≤ 0 dB, bg ≤ fg, \|difference\| > 20 dB). Digital silence (−∞ dB, which JSON cannot carry) is reported as −1000 dB with `…Silent:true`. |
 
 #### import / export (io module)
 
 | command | args | result | flags |
 |---|---|---|---|
-| `import.formats` | – | `{groups:[{description, extensions:[..]}], extensions:[..]}` | I |
-| `import.files` | `{paths:[..], newProject:bool=false}` (real paths in `cacheDir/import/...`, original file names kept) | `{trackIds:[..], messages:[..]}` | M, L. With `newProject` a new project is created first. Each file is one undo entry ("Imported 'name'"). |
-| `export.formats` | – | `{formats:[ExportFormat]}` (§5.6) | I |
-| `export.defaults` | `{formatKey}` | `{hasSelection, defaultChannels, maxChannels, defaultRate, rates:[..]}` | I |
-| `export.options` | `{formatKey}` | `ExportOptions` (§5.6) — opens/refreshes the options session | I |
-| `export.setOption` | `{formatKey, id, value:{t,v}}` | `ExportOptions` | I |
-| `export.run` | `{path, formatKey, range:"project"\|"selection", channels:int, rate:int, skipSilenceAtStart?:bool}` | `{path}` | L. `path` is a staging path (`cacheDir/export/<uuid>/<name>.<ext>`) that must not exist yet; Kotlin copies the result to the SAF Uri. |
+| `import.formats` | – | `{groups:[{description, extensions:[..]}], extensions:[..]}` (one group per import plug-in in probing order; `extensions` = all of them, lower case, without `aup3`) | I (no project needed) |
+| `import.files` | `{paths:[..], newProject:bool=false}` (absolute real paths in `cacheDir/import/...`, original file names kept: they name the tracks, the undo entry and an empty temporary project) | `{trackIds:[..], messages:[..]}` | M, L. Port of 3.7.9 `ProjectFileManager::Import`/`DoImport`/`AddImportedTracks` (no tempo detection). Files are imported in name order (case-insensitive); each one is one undo entry "Imported '<file name>'" (all its tracks selected, earlier tracks deselected, the last track focused; muted when the project has a soloed track; the project's tags are merged like 3.7.9: PCM/MP3 add tags, FLAC/Ogg/WavPack replace them, undone with the entry). The first import into an empty project also sets the project rate to the rate of the first imported track (Audacity ≤ 3.3 behaviour; 3.7.9 keeps the project rate) and, for a temporary project, its name. A file that fails is skipped: its message (the importers' own messages + 3.7.9's "not recognized" text, file name instead of the staging path) goes to `messages`, and the command fails with that error only when nothing was imported (`FAILED`; `NOT_FOUND` missing file; `INVALID_ARGS` `.aup3`, directories, relative paths, empty `paths`). Multi-stream files (chained Ogg, several audio tracks of an MP4/MKV) ask with a `multiChoice` dialog "Select stream(s) to import" (all checked); cancel or an empty choice = `CANCELLED`. `progress` per file (cancellable, stoppable: Stop keeps the audio decoded so far). `CANCELLED` ends the batch (files before it stay imported unless `newProject`). With `newProject` the files go into a fresh project that replaces the current one (closed without saving, like `project.new`) only when something was imported; otherwise the current project is untouched. Needs a project unless `newProject`. |
+| `export.formats` | – | `{formats:[ExportFormat]}` (§5.6), registry order, keys unique | I (no project needed) |
+| `export.defaults` | `{formatKey}` | `{hasSelection, defaultChannels, maxChannels, defaultRate, rates:[..]}` | I. Port of `ExportFilePanel`/`ExportAudioDialog`: `hasSelection` = `ExportUtils::HasSelectedAudio` (time selection and selected audible tracks); `defaultChannels` 2 when an exported track is stereo or panned, else 1; `maxChannels` = min(2, format's maxChannels); `rates` = the options session's list, or (format without a list) 8000 … 384000 plus the wanted rate; `defaultRate` = the project's preferred export rate (last successful export), else the highest track rate, else the project rate — taken when offered, else the smallest offered rate above it, else the highest. |
+| `export.options` | `{formatKey}` | `ExportOptions` (§5.6) — (re)opens the format's options session from the preferences | I (no project needed). `NOT_FOUND` for an unknown key. |
+| `export.setOption` | `{formatKey, id, value:{t,v}}` | `ExportOptions` (full refresh: other options, the rate list and the format's extension may change, e.g. MP3 bit-rate mode, PCM "Other" header) | I (no project needed). `INVALID_ARGS` for an unknown `id`, a malformed value, a tag other than the option's, an enum value that is not a choice, a range value outside `[min, max]`, a `readOnly` option. Stored in the preferences at once (survives restarts). |
+| `export.run` | `{path, formatKey, range:"project"\|"selection", channels:int, rate:int, skipSilenceAtStart?:bool}` | `{path, stopped:bool}` | L. `path` is an absolute staging path (`cacheDir/export/<uuid>/<name>.<ext>`, directory existing) that must not exist yet (`INVALID_ARGS`); Kotlin copies the result to the SAF Uri. Uses the format's options session (`export.options` state). `channels` 1 … `maxChannels` of `export.defaults` (mono/stereo mix-down; no custom channel mapping); `rate` must be in the session's rate list (any rate 1000 … 768000 when it has none), else `INVALID_ARGS`. `range:"selection"` = `ExportAudioDialog`'s selection range (`NO_SELECTION` without selected audio); `skipSilenceAtStart` starts at the first exported track's start. `FAILED` "All audio is muted." / "All selected audio is muted.", "There is no audio to export" (no wave tracks / empty range), and the exporters' messages. Progress `"Export"` with the exporter's status; Cancel → `CANCELLED`, Stop → a valid shorter file (`stopped:true`). The output is deleted on every failure and on cancel. Tags = the project's tags (MP3 gets none: `canMetaData:false`, no libid3tag). WavPack's correction file is always off. On success the rate becomes the project's preferred export rate. |
 
 #### transport / audio (audio module)
 
 | command | args | result | flags |
 |---|---|---|---|
-| `transport.play` | `{loop?:bool=false, t0?, t1?}` | `{}` | No args = Space (`PlayCurrentRegion`): loops the play region if it is active, else plays the selection, or cursor → end. `loop:true` = if the play region is inactive, set it to the selection (or the whole project for a point selection) and activate it, then play looped (Transport ▸ Looping ▸ Enable + Space). `t0` (and optional `t1`) = Quick-Play: plays `[t0, t1 or project end]` once, never loops, does not change the play region. |
-| `transport.stop` | – | `{}` | I. Stops playback/recording/preview/monitoring. Recording is finalised (one undo entry "Recorded Audio"). |
-| `transport.pause` | – | `{}` | I. Toggles pause. |
-| `transport.record` | `{newTrack:bool}` | `{}` | `newTrack:false` = desktop *Record* (R): records into the selected wave tracks (same rate, channel count = `recordChannels`) starting at max(cursor, end of those tracks); if none fit, into new tracks at the cursor; with a time selection after that start, stops at the selection end. `newTrack:true` = *Record New Track* (Shift+R). Fails `UNSUPPORTED` without microphone permission. |
-| `transport.seek` | `{t}` | `{}` | I. While playing: jump; while stopped: moves the cursor (= `select.set`). |
-| `transport.skipToStart` / `transport.skipToEnd` | – | `{}` | S |
-| `transport.monitor` | `{enabled:bool}` | `{}` | I. Input level monitoring without recording. |
-| `audio.devices` | – | `{outputs:[AudioDevice], inputs:[AudioDevice], current:{output, input, recordChannels}}` | I |
-| `audio.permission` | `{recordPermission:bool}` | `{}` | I |
-| `audio.latency` | – | `{outputLatencyMs, inputLatencyMs, correctionMs}` (`correctionMs` = value actually used: measured duplex offset + user trim) | I |
-| `audio.setDevices` | `{devices:[{id, name, type, isSource, isSink, channelCounts:[..], sampleRates:[..]}]}` | `{}` | I (applied when idle). Kotlin passes `AudioManager.getDevices()`; native code cannot enumerate Android devices. Without it only "Default Output/Input" exist. |
+| `transport.play` | `{loop?:bool=false, t0?, t1?}` | `{started:bool}` (false: nothing to play, e.g. no audio tracks) | No args = Space (`PlayCurrentRegion` with the `DefaultPlaybackPolicy`): loops the play region if it is active, else plays the selection, or cursor → end. The inactive play region follows the selection (3.7.9 ruler), so the snapshot's inactive `playRegion` equals the selection. `loop:true` = if the play region is inactive, set it to the selection (or the whole project for a point selection) and activate it, then play looped (Transport ▸ Looping ▸ Enable + Space). `t0` (and optional `t1`) = Quick-Play: plays `[t0, t1 or project end]` once, never loops, does not change the play region (`t1` without `t0` or `t1 < t0` → `INVALID_ARGS`). `AUDIO_BUSY` while this project plays/records (use `transport.seek`); a monitoring stream is replaced. `FAILED` when the device cannot be opened (3.7.9 text + the AAudio error). |
+| `transport.stop` | – | `{}` | I. Stops playback/recording/effect preview/monitoring. Recording is finalised (one undo entry "Recorded Audio"; with dropouts also a "Dropouts" label track in the same entry and a non-blocking warning `dialog`, like 3.7.9). |
+| `transport.pause` | – | `{toggled:bool}` | I. Toggles pause of this project's playback/recording (paused recording discards input; the clip continues). Nothing playing → no-op (`toggled:false`). |
+| `transport.record` | `{newTrack:bool}` | `{}` | Port of 3.7.9 *OnRecord*: `newTrack:false` = desktop *Record* (R): records into the selected wave tracks (all one rate, else `FAILED` "…same sampling rate"; channel count = `recordChannels`) starting at max(cursor, end of those tracks); if none of the selected fit, into the first fitting wave track(s) of the project at that rate (`ChooseExistingRecordingTracks`), else into new tracks at the cursor; with a time selection that ends after that start, stops at the selection end. `newTrack:true` = *Record New Track* (Shift+R): new track(s) (`recordChannels` 2 = one stereo track) at the selection start, limited to a time selection. `preferNewTrackRecord` swaps the two (3.7.9). With `overdub` the other wave tracks play. `UNSUPPORTED` without microphone permission, `FAILED` when the device cannot be opened. Before each recording the engine writes `/AudioIO/LatencyCorrection` = −(measured duplex offset of the current output/input devices) + `latencyCorrectionMs` when other tracks play, else 0. During recording pending new tracks have synthetic ids ≤ −2 (−(2 + index among them)), tracks recorded into show their growing pending copy, and snapshots follow at ≤ 5 Hz (generation bumped). |
+| `transport.seek` | `{t}` | `{}` | I, S. While playing (also paused): jump (applied by the audio callback; readTransport shows `t` at once); while recording: ignored; while stopped: moves the cursor (= `select.set {t, t}`). `t < 0` → 0. |
+| `transport.skipToStart` / `transport.skipToEnd` | – | `{}` | S. Stopped: cursor to 0 / to the project end (3.7.9 *Cursor to Project Start/End*, no scrolling). While this project plays (or is paused): moves the play head like `transport.seek` (the fake engine's behaviour); `AUDIO_BUSY` while recording or while another stream (effect preview) runs. |
+| `transport.monitor` | `{enabled:bool}` | `{}` | I (needs a project). Input level monitoring without recording (capture meter). `UNSUPPORTED` without microphone permission; no-op while playing/recording; `FAILED` when the input cannot be opened. Not "busy" (edits are allowed); `transport.play/record` replace it. |
+| `audio.devices` | – | `{outputs:[AudioDevice], inputs:[AudioDevice], current:{output, input, recordChannels}, pending:bool}` (`pending`: an `audio.setDevices` list waits for the stream to stop) | I |
+| `audio.permission` | `{recordPermission:bool}` | `{}` | I. Revoking stops monitoring and a recording (committed; `transport` reason `"device"`). Snapshot flag `RECORD_PERMISSION`. |
+| `audio.latency` | – | `{outputLatencyMs, inputLatencyMs, correctionMs, duplexOffsetMs, measured:bool, userTrimMs}` — latencies of the running/last stream (else the device defaults); `correctionMs` = the `/AudioIO/LatencyCorrection` an overdub would use now = −`duplexOffsetMs` + `userTrimMs` (Audacity's sign: negative shifts the recording earlier); `duplexOffsetMs` is measured by the AAudio host API during every recording with playback and stored per output/input device pair (`measured:false` = estimate: another route's measurement or the device latencies) | I |
+| `audio.setDevices` | `{devices:[{id, name, type, isSource, isSink, channelCounts:[..], sampleRates:[..]}]}` | `{applied:bool}` | I (applied now when no stream is open, else when it stops: `PaAAudio_SetDeviceList` + `Pa_Terminate/Pa_Initialize` + `HandleDeviceChange`). Kotlin passes `AudioManager.getDevices()`; native code cannot enumerate Android devices. Without it only "Default Output/Input" exist. Device names are `"<type label>: <name>"` (`type` = `AudioDeviceInfo.TYPE_*`; a string `type` is used as the label), made unique with `" (id N)"`; telephony/SCO/earpiece/HDMI-ARC/tuner/internal types are not offered. `channelCounts` empty = 2, `sampleRates` pick the native rate. |
+| `audio.debugSamples` | `{trackId, channel?=0, t0, t1}` | `{rate, t0, values:[float]}` (≤ 2 000 000 samples) | Tests/diagnostics only (not for production UI). |
 
 #### display (display module, besides the binary JNI calls)
 
 | command | args | flags |
 |---|---|---|
-| `display.setViewportWidth` | `{px}` | I |
-| `display.trimCaches` | `{budgetBytes}` | I |
+| `display.setViewportWidth` | `{px}` (1 … 65536: the widest track view in pixels; sizes the per-clip column caches) → `{}` | I |
+| `display.trimCaches` | `{budgetBytes}` (≥ 0) → `{bytes}`: frees the least recently used display caches (waveform columns, spectrogram elements) until their estimated size is ≤ `budgetBytes` (0 frees all; e.g. from `onTrimMemory`); `bytes` = the estimate afterwards. Independently the engine keeps the caches under 32 MiB after every display call. | I |
 
 ## 4. Events (native → Kotlin)
 
@@ -613,9 +636,18 @@ invalid (`INVALID_ARGS`). `syncLock` also switches the open project
 ```
 
 `MenuSection = { "title": "Volume and Compression" | null, "ids": [effect ids in display order] }`
-— the port of Audacity's default effects-menu grouping
-(`EffectsMenuDefaults.xml` sections, then the rest grouped by publisher).
-`title:null` = no header.
+— the port of `MenuHelper::PopulateEffectsMenu` for the `effectsGroupBy`
+setting (default: the `EffectsMenuDefaults.xml` sections, then the rest
+grouped by publisher; Generate/Analyze/Tools: the bundled effects sorted by
+name, then the rest by publisher). A titled section is a desktop submenu;
+`title:null` = items directly in the menu (Kotlin separates consecutive
+sections). Titles of the `EffectsMenuDefaults.xml` groups are their English
+msgids (Kotlin translates them); publisher/type titles are names. Every
+listed effect appears exactly once in the menus of its type. `name` and
+`description` are translated (engine language); `id` is the desktop
+PluginID (Nyquist ids contain the `.ny` path). Hidden effects (Stereo To
+Mono) are not listed. Bundled = built-in, Nyquist Prompt, or a `.ny` below
+`pluginsDir`/`nyquistDir`.
 
 ### 5.5 EffectDescription
 
@@ -654,8 +686,25 @@ invalid (`INVALID_ARGS`). `syncLock` also switches the open project
     scalar parameters; extra `curve: {points:[{f, dB}], linearFreq:bool}` and
     `curves:[names]` (built-in curves); `effects.setParams` accepts `curve`.
   * `"autoDuck"` — needs a control track below the selected tracks.
-* `nyquist` (Nyquist plug-ins): `{controls:[{key,label,kind,...}]}` richer
-  metadata (labels from the `.ny` header); `params` mirrors it.
+* `nyquist` (Nyquist plug-ins): `{controls:[{key,label,kind,type,...}]}`
+  richer metadata in `.ny` order (labels from the `.ny` header, translated
+  when the file was loaded): `type` is the Nyquist control type (`"int"`,
+  `"float"`, `"int-text"`, `"float-text"`, `"time"`, `"choice"`,
+  `"string"`, `"file"`, `"text"`), plus `ticks` (slider steps) and
+  `fileTypes:[{description, extensions}]`; `"text"` rows are static text
+  (`label` only) and are not in `params`, which mirrors the other controls.
+  The Nyquist Prompt has `nyquist:{controls:[], prompt:true}` and the string
+  params `Command` (the code) and `Parameters` (nested automation string
+  for the code's `;control`s).
+* Amplify adds `peak`: the linear peak of the selected audio (null without
+  an audio selection); the desktop dialog shows "New Peak Amplitude" =
+  ratio·peak and refuses to apply a clipping ratio unless `AllowClipping`.
+* `min`/`max` are left out when the library's bound means "unbounded"
+  (FLT_MAX, INT_MAX, Nyquist `nil`); numbers declared as float literals are
+  reported in their short form (0.003162).
+* Generators: `supportsDuration:true` (built-in generators; Nyquist
+  generators set their own length) and `duration` = the selection length
+  with a time selection, else the last used duration (default 30 s).
 
 ### 5.6 ExportFormat / ExportOptions
 
@@ -677,6 +726,13 @@ invalid (`INVALID_ARGS`). `syncLock` also switches the open project
 
 Value tags: `"i"` int, `"d"` double, `"b"` bool, `"s"` string. Editors reject
 type mismatches, so always send back the tag you received.
+
+`key` is the description msgid (stable, English); `description` its
+translation. Option `id`s are not 0…n−1 (PCM uses libsndfile major types:
+WAV "Encoding" is `0x10000`, "Other uncompressed files" has the "Header" `0`
+plus one "Encoding" per header, only the selected header's visible). Hidden
+options are still exported with their values. WavPack's "Create
+Correction(.wvc) File" (`id` 3) is reported `hidden`, `readOnly`, `false`.
 
 ## 6. Realtime data
 
@@ -701,6 +757,15 @@ type mismatches, so always send back the tag you received.
 Kotlin extrapolates `display time + (now − sampledAt)/1e9` while playing or
 recording (not paused), clamped to the loop end / play end.
 
+Engine side (audio module): published by the engine tick (~20 Hz) and after
+every transport command. Display time = stream time − the measured output
+latency while output plays (never left of where play started or a seek
+landed, never backwards except at a loop wrap; frozen while paused), = stream
+time for recording without playback. Stream/display time are NaN for a
+stream this project did not start through the transport (effect preview,
+state 1) and for monitoring. 4–6 are 0 unless looping; 7 is 0 when stopped;
+12 is 0 unless recording.
+
 ### 6.5 `readMeters(out: FloatArray)` layout
 
 `readMeters` resets the accumulators, so there must be exactly **one**
@@ -711,8 +776,11 @@ consumer per process (the editor's shared meter reader).
   recPeakL, recPeakR, recRmsL, recRmsR, recClipL, recClipR,
   playChannels, recChannels]` — linear amplitudes since the previous call
 (peaks are maxima, RMS over the interval; clip flags 0/1 are sticky until
-`transport.play`/`transport.record` starts). Ballistics (decay, peak hold) are
-done in Kotlin.
+`transport.play`/`transport.record`/`transport.monitor` starts; a clip is 3
+consecutive samples at full scale, like 3.7.9's meter). The playback meter
+sees the post-volume output (2 channels), the capture meter the input
+(`recordChannels`). `playChannels`/`recChannels` are 0 while that side has no
+stream. Ballistics (decay, peak hold) are done in Kotlin.
 
 ### 6.6 Microphone permission
 
@@ -730,44 +798,87 @@ and informs the engine with `audio.permission`.
   level just below it scaled horizontally by `zoom / pps(level)` ∈ [1, 1.09).
 * Absolute columns: column `c` covers time `[c/pps, (c+1)/pps)`. Kotlin asks
   for 256-column tiles (`firstColumn` multiple of 256, `count` = 256) and
-  translates by `−hpos·pps` when drawing.
+  translates by `−hpos·pps` when drawing. Any `firstColumn` and
+  `1 ≤ count ≤ 65536` work; a column has the same value whatever tiles were
+  requested before (adjacent tiles join seamlessly).
+* A clip occupies the columns `[floor(0.5 + pps·start), max(first + 1,
+  floor(0.5 + pps·(end − 0.99·stretchRatio/rate))))` (snapshot `clips[]`;
+  port of `ClipParameters::GetClipRect`). Its samples are cached on the clip's
+  own sequence-local grid, placed at `floor(0.5 + pps·sequenceStart)`: like
+  3.7.9, the waveform may be drawn up to ½ column early or late.
 * Column vs sample mode is decided **per clip**: a clip is drawn from columns
   while `pps ≤ 0.5 · clip.rate / clip.stretchRatio` (snapshot `clips[]`,
   `WaveformView.cpp:860`), otherwise from individual samples (§7.4) for that
   clip's visible range.
+* Track ids: the snapshot's `id`. While recording into a NEW track the
+  library keeps the track in the list with the unassigned id (−1); the
+  snapshot and the display calls name it with the synthetic id `−(2 + k)`,
+  k = its position among those pending new tracks in track order (the order
+  of `tracks[]`), stable until the recording is committed (then it gets a
+  real id). Display calls for a real id draw the track's pending recording
+  copy while recording into it (`PendingTracks::SubstitutePendingChangedTrack`).
+  A synthetic id with no such track, `−1`, or a non-wave track → `-1`.
+  (3.7.9 gives a new *stereo* recording track a real id at once; it is drawn
+  as a recording target too, like every track with uncommitted samples.)
+  (Native: `display/DisplayTracks.h`.)
 
 ### 7.2 `waveColumns(trackId, channel, zoomLevel, firstColumn, count, out)`
 
 * `out` has size ≥ `3·count`: `[min_0..min_{count-1}, max_0.., rms_0..]`,
   linear, **before** the clip envelope (multiply with §7.3 when drawing).
-  `NaN` where there is no audio (gaps between clips).
-* Returns the track's `waveVersion` (≥ 0) on success, or a negative status:
-  `-1` no such track/channel, `-2` partial data (recording tail, re-request
-  soon; data in `out` is valid where not NaN — returned as `-(2)` only when
-  nothing could be filled), `-3` engine not ready (or busy for > 250 ms),
-  `-4` only when **every** clip intersecting the range needs sample mode.
-  Columns of sample-mode clips are `NaN`. `waveVersion` is always in
-  `[0, 2^62)`; bit 62 of a non-negative return is set when the tile is
-  partial (recording tail): Kotlin re-requests it on the next poll.
+  `NaN` where there is no audio (gaps between clips, outside the track).
+  Values are 3.7.9's `WaveDataCache` columns: extremes and RMS over the
+  column's samples (at ≥ 256 samples per column over whole 256 / 65536-sample
+  summary frames), adjacent columns extended to touch (filled bars).
+* Returns the track's `waveVersion` (≥ 0, the snapshot value; for the
+  pending copy while recording, its own) on success, or a negative status:
+  `-1` no such track/channel or invalid arguments (level outside
+  [−160, 160], `count` ∉ [1, 65536], `|firstColumn|` > 2^60, `out` too
+  small), `-2` partial data
+  (recording tail, re-request soon; data in `out` is valid where not NaN —
+  returned as `-(2)` only when nothing could be filled), `-3` engine not
+  ready (or busy for > 250 ms), `-4` only when **every** clip intersecting
+  the range needs sample mode. Columns of sample-mode clips are `NaN`; a
+  range with no clip at all returns the version (all `NaN`), not `-4`.
+  `waveVersion` is always in `[0, 2^62)`; bit 62 of a non-negative return
+  is set when the tile is partial: while recording, the tile holds the
+  growing (rightmost) clip's uncommitted tail or reaches past its current
+  end. Kotlin re-requests it on the next poll.
 
 ### 7.3 `envelopeColumns(trackId, zoomLevel, firstColumn, count, out)`
 
 Gain of the clip envelope at the centre of each column (`out` size ≥ count),
-`NaN` outside clips. Same return convention as §7.2.
+`NaN` outside clips (same clip columns as §7.2, for sample-mode clips too).
+Same return convention as §7.2 (never `-4`).
 
 ### 7.4 `waveSamples(trackId, channel, t0, t1)`
 
 Returns `null` on error, else little-endian binary:
 `int32 runCount; runCount × { int32 clipIndex; float64 firstSampleTime; float64 samplePeriod; int32 n; float32 values[n]; float32 envelope[n] }`.
+One run per clip intersecting `[t0, t1]` (`clipIndex` as in `clips[]`):
+the clip's samples `floor((t0 − start)·r) … ceil((t1 − start)·r)` (play
+relative, r = rate / stretchRatio, clamped to the clip), raw values and the
+envelope gain at each sample time; `samplePeriod` = 1/r. While recording the
+uncommitted tail is included. Errors (`null`): unknown track/channel,
+`t1 < t0`, non-finite times, or more than 2^20 samples in total (not a
+sample-mode range). No clip in the range = zero runs.
 
 ### 7.5 `spectrogramColumns(trackId, channel, zoomLevel, firstColumn, count, rows, out)`
 
 `out` size ≥ `count·rows`, column-major (`out[c·rows + r]`, r = 0 lowest
-frequency), unsigned 8-bit normalised magnitude (0 = ≤ −range dB, 255 = 0 dB)
-using Audacity's default spectrogram settings (window 2048 Hann, range 80 dB,
-gain 20 dB, **linear** frequency scale 0 … rate/2 — a v1 simplification of
-3.7.9's Mel default; the editor draws a linear axis). Colour mapping is done in
-Kotlin. Returns as §7.2 (`-5` = spectrogram unsupported).
+frequency), unsigned 8-bit normalised magnitude using Audacity's spectrogram
+settings (defaults: window 2048 Hann, zero padding 2, range 80 dB, gain
+20 dB; STFT) with a **linear** frequency scale 0 … rate/2 (row r covers
+`[r, r+1)·rate/(2·rows)`; a v1 simplification of 3.7.9's Mel default; the
+editor draws a linear axis): `255·clamp((dB + gain + range)/range, 0, 1)`
+of the strongest FFT bin of the row (3.7.9 `findValue`), so 0 = ≤ −100 dB and
+255 = ≥ −20 dB with the defaults (a full-scale sine is about −6 dB). The
+window is centred one sample after the column's left edge
+(`fillWhere` with its half-sample bias) and zero-padded outside the clip's
+audio. Columns outside clips are 0. `1 ≤ rows ≤ 4096`. Colour mapping is
+done in Kotlin. Returns as §7.2 (`-5` = spectrogram unsupported, not used in
+v1; never `-4`). While recording only committed audio is analysed (the tail
+is partial).
 
 ## 8. Threading rules summary (native)
 
