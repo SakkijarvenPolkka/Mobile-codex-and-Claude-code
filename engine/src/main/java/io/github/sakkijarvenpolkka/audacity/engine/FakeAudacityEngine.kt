@@ -44,6 +44,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevice
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipState
+import io.github.sakkijarvenpolkka.audacity.engine.model.ClipTrimResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardState
 import io.github.sakkijarvenpolkka.audacity.engine.model.CommandFlags
@@ -81,6 +82,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectState
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.SpectrumResult
+import io.github.sakkijarvenpolkka.audacity.engine.model.SplitResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Tag
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
 import io.github.sakkijarvenpolkka.audacity.engine.model.TrackState
@@ -121,6 +123,7 @@ import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 import kotlin.math.sqrt
 
 class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : AudacityEngine {
@@ -157,6 +160,9 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
     private var clipboard: FakeClipboard? = null
     private var nextTrackId = 1L
     private var lastPickedTrack: Long? = null
+    /** The clips.trim drag in progress: valid while [generation] does not change. */
+    private class TrimDrag(val trackId: Long, val clipIndex: Int, val generation: Long, val leftFrames: Int, val rightFrames: Int)
+    private var trimDrag: TrimDrag? = null
     private var lastEffect: FxDef? = null
     private var lastGenerator: FxDef? = null
     private var lastAnalyzer: FxDef? = null
@@ -454,7 +460,7 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             channels = t.channels, rate = t.rate, format = t.format, gain = t.gain, pan = t.pan, mute = t.mute, solo = t.solo,
             start = if (t.clips.isEmpty()) 0.0 else t.start, end = if (t.clips.isEmpty()) 0.0 else t.end,
             waveVersion = t.waveVersion,
-            clips = t.clips.mapIndexed { i, c -> ClipState(i, c.name, c.start, c.end, 0.0, 0.0, 1.0, c.rate) },
+            clips = t.clips.mapIndexed { i, c -> ClipState(i, c.name, c.start, c.end, c.trimLeft, c.trimRight, 1.0, c.rate) },
         )
     } else {
         TrackState(
@@ -1392,6 +1398,27 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         pushState("Pasted from the clipboard", "Paste")
     }
 
+    /** edit.splitAt: Split at one point, one "Split" entry, the cursor moves
+     *  to the split point; nothing to split = nothing changes. */
+    override suspend fun splitAt(t: Double, trackIds: List<Long>?): SplitResult = cmd {
+        if (!t.isFinite()) fail(ErrorCodes.INVALID_ARGS, "argument 't' must be a finite number")
+        val targets: List<FTrack> = if (trackIds != null) {
+            if (trackIds.isEmpty()) fail(ErrorCodes.INVALID_ARGS, "argument 'trackIds' must not be empty")
+            trackIds.distinct().map { id -> work.track(id)?.takeIf { it.isWave } ?: fail(ErrorCodes.NOT_FOUND, "no wave track $id") }
+        } else {
+            work.selectedTracks.filter { it.isWave }.ifEmpty { work.tracks.filter { Edits.splitsAt(it, t) } }
+        }
+        val split = targets.filter { Edits.splitsAt(it, t) }
+        if (split.isEmpty()) return@cmd SplitResult(0, emptyList())
+        // The cursor goes to the split boundary of the first split track
+        val cursor = split.first().clips.first { c -> c.start < t && c.end > t }.let { c -> c.timeOf(c.index(t)) }
+        val ids = split.map { it.id }.toSet()
+        work = work.mapTracks { if (it.id in ids) Edits.splitAt(it, t) else it }
+        setSelection(cursor, cursor)
+        pushState("Split", "Split")
+        SplitResult(split.size, split.map { it.id })
+    }
+
     override suspend fun clipboardInfo(): ClipboardInfo = cmd(needsProject = false, allowBusy = true) {
         val cb = clipboard
         if (cb == null) ClipboardInfo() else ClipboardInfo(false, cb.t0, cb.t1, cb.tracks.size)
@@ -1757,6 +1784,66 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         pushState("Renamed clip to '$name'", "Rename Clip")
     }
 
+    /** clips.trim (API.md §3.3): absolute trims, clamped to the clip's audio,
+     *  its neighbours and one frame; final = false is a live preview without
+     *  history entry or generation bump, final = true pushes one entry for
+     *  the whole drag. */
+    override suspend fun trimClip(trackId: Long, clipIndex: Int, generation: Long, trimLeft: Double?,
+                                  trimRight: Double?, final: Boolean): ClipTrimResult = cmd {
+        if (trimLeft == null && trimRight == null) fail(ErrorCodes.INVALID_ARGS, "trimLeft and/or trimRight is required")
+        if (trimLeft?.isFinite() == false || trimRight?.isFinite() == false) fail(ErrorCodes.INVALID_ARGS, "trims must be finite")
+        clipRef(trackId, clipIndex, generation)
+        // A new drag cancels an unfinished live drag of another clip
+        val previous = trimDrag
+        if (previous == null || previous.generation != this.generation ||
+            previous.trackId != trackId || previous.clipIndex != clipIndex) {
+            if (previous != null && previous.generation == this.generation) {
+                work.track(previous.trackId)?.let { t ->
+                    t.clips.getOrNull(previous.clipIndex)?.let { c ->
+                        work = work.replace(t.withClips(t.clips.map { if (it === c) c.retrimmed(previous.leftFrames, previous.rightFrames) else it }))
+                    }
+                }
+            }
+            val c = work.track(trackId)!!.clips[clipIndex]
+            trimDrag = TrimDrag(trackId, clipIndex, this.generation, c.trimLeftFrames, c.trimRightFrames)
+        }
+        val drag = trimDrag!!
+        val track = work.track(trackId)!!
+        val clip = track.clips[clipIndex]
+        val rate = clip.rate
+        val total = clip.totalFrames
+        val seqStart = clip.sequenceStart
+        fun frames(seconds: Double): Int = (seconds * rate).coerceIn(-1e9, 1e9).roundToLong().toInt()
+        // Frame limits relative to the first frame of the clip's audio
+        val lo = track.clips.getOrNull(clipIndex - 1)?.let { ceil((it.end - seqStart) * rate - 1e-6).toInt() }?.coerceIn(0, total) ?: 0
+        val hi = track.clips.getOrNull(clipIndex + 1)?.let { floor((it.start - seqStart) * rate + 1e-6).toInt() }?.coerceIn(lo, total) ?: total
+        var left = trimLeft?.let { frames(it).coerceIn(lo, hi) } ?: clip.trimLeftFrames
+        var right = trimRight?.let { (total - frames(it)).coerceIn(lo, hi) } ?: (total - clip.trimRightFrames)
+        if (right - left < 1) {
+            if (trimLeft != null && trimRight == null) left = max(lo, right - 1)
+            else {
+                right = min(hi, left + 1)
+                left = max(lo, min(left, right - 1))
+            }
+        }
+        val updated = clip.retrimmed(left, total - right)
+        work = work.replace(track.withClips(track.clips.map { if (it === clip) updated else it }))
+        val result = ClipTrimResult(updated.trimLeft, updated.trimRight, updated.start, updated.end)
+        if (!final) {
+            publish()
+            return@cmd result
+        }
+        trimDrag = null
+        val dl = abs(updated.trimLeftFrames - drag.leftFrames) / rate
+        val dr = abs(updated.trimRightFrames - drag.rightFrames) / rate
+        when {
+            dl == 0.0 && dr == 0.0 -> publish()
+            dl >= dr -> pushState("Adjust left trim by ${fmt(dl)} seconds", "Trim by ${fmt(dl)}s")
+            else -> pushState("Adjust right trim by ${fmt(dr)} seconds", "Trim by ${fmt(dr)}s")
+        }
+        result
+    }
+
     override suspend fun addLabel(title: String): Pair<Long, Int> = cmd(allowBusy = true) {
         // OnAddLabel at the selection; OnAddLabelPlaying at the play position
         // while this project plays or records
@@ -1764,6 +1851,19 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
             val t = position(now())
             TimeRange(t, t)
         } else work.selection
+        addLabelLocked(title, sel)
+    }
+
+    /** labels.add at an explicit position: the selection is neither used nor changed. */
+    override suspend fun addLabel(title: String, t0: Double, t1: Double?): Pair<Long, Int> = cmd(allowBusy = true) {
+        val end = t1 ?: t0
+        if (!t0.isFinite() || !end.isFinite() || t0 < 0 || end < t0) {
+            fail(ErrorCodes.INVALID_ARGS, "label times must satisfy 0 <= t0 <= t1")
+        }
+        addLabelLocked(title, TimeRange(t0, end))
+    }
+
+    private fun addLabelLocked(title: String, sel: TimeRange): Pair<Long, Int> {
         // The focused label track, else the first selected one, else a new one
         var track = work.track(work.focusedId ?: -1L)?.takeIf { it.isLabel } ?: work.selectedTracks.firstOrNull { it.isLabel }
         if (track == null) {
@@ -1774,7 +1874,7 @@ class FakeAudacityEngine(private val config: FakeConfig = FakeConfig()) : Audaci
         val updated = track.copy(selected = true).withLabels(track.labels + label)
         work = work.replace(updated).copy(focusedId = updated.id)
         pushState("Added label", "Label")
-        updated.id to updated.labels.indexOfFirst { it === label }
+        return updated.id to updated.labels.indexOfFirst { it === label }
     }
 
     /** A label reference (API.md §3.3): an older generation is STALE. */

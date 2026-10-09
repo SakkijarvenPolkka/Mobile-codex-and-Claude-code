@@ -90,7 +90,8 @@ fun ConfirmDialog(d: AppDialog.Confirm, vm: AppViewModel) {
 fun TextInputDialog(d: AppDialog.TextInput, vm: AppViewModel) {
     var value by rememberSaveable(d) { mutableStateOf(d.initial) }
     val focus = remember { FocusRequester() }
-    val ok = d.allowEmpty || value.isNotBlank()
+    val tooLong = d.tooLong(value)
+    val ok = d.accepts(value)
     fun submit() {
         if (!ok) return
         d.result.complete(value)
@@ -105,6 +106,8 @@ fun TextInputDialog(d: AppDialog.TextInput, vm: AppViewModel) {
             OutlinedTextField(
                 value = value, onValueChange = { value = it }, singleLine = true,
                 label = { Text(d.label.text()) },
+                isError = tooLong,
+                supportingText = if (tooLong) ({ Text(stringResource(R.string.msg_name_too_long)) }) else null,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { submit() }),
                 modifier = Modifier

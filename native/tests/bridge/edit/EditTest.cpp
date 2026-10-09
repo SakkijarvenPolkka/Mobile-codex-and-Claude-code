@@ -19,8 +19,13 @@
      crossings of the sine/cosine channels), rate, format, resample, mix
      and render
    * clips.*: move (clamped at neighbours, to another track, resampling),
-     rename, STALE references
-   * labels.*: add/edit (re-sort)/remove, STALE, import/export round trips
+     rename, STALE references; trim (live final:false updates without
+     history entry, one entry per drag, clamping to the audio, the
+     neighbours and one sample, cancelled drags, undo)
+   * edit.splitAt: selected tracks / explicit tracks / tracks at t when
+     nothing is selected, one undo entry, no empty clips, errors
+   * labels.*: add (also at an explicit position)/edit (re-sort)/remove,
+     STALE, import/export round trips
      (text, SubRip), WebVTT/JSON export, Unicode titles
 
   Exit code 0 on success.  BRIDGE_TEST_VERBOSE=1 prints the events.
@@ -1402,6 +1407,303 @@ void TestClips()
 }
 
 // ---------------------------------------------------------------------------
+//! history.list: the long description of the current state
+std::string CurrentDescription()
+{
+   auto r = Call("history.list");
+   CHECK(Ok(r));
+   if (!Ok(r))
+      return {};
+   const auto current = r["result"].value("current", -1);
+   for (const auto &state : r["result"]["states"])
+      if (state.value("index", -2) == current)
+         return state.value("description", "");
+   return {};
+}
+
+void TestSplitAt()
+{
+   std::fprintf(stderr, "== edit.splitAt\n");
+   NewProject();
+   const auto a = Tone(3.0);
+   const auto b = Tone(3.0);
+
+   // Default: the selected wave tracks; the cursor moves to t
+   SelectOnly({ a });
+   SetSel(0.25, 0.75);
+   {
+      const auto before = Snap();
+      const auto h = HistoryCount();
+      auto r = REQ("edit.splitAt", { { "t", 1.5 } });
+      CHECK(r.value("splits", -1) == 1);
+      CHECK(r["trackIds"] == json::array({ a }));
+      const auto after = Snap();
+      CHECK(ClipCount(after, a) == 2);
+      CHECK(ClipCount(after, b) == 1);
+      CHECK(ClipIs(after, a, 0, 0.0, 1.5));
+      CHECK(ClipIs(after, a, 1, 1.5, 3.0));
+      CHECK(SelectionIs(after, 1.5, 1.5));
+      CHECK(Selected(after, a) && !Selected(after, b));
+      CHECK(HistoryCount() == h + 1);
+      CHECK(Gen() > before["generation"].get<uint64_t>());
+      CHECK(UndoName() == "Split");
+      CHECK(CurrentDescription() == "Split");
+      CheckUndoRedo("edit.splitAt", before, after);
+      // Undo restores one clip
+      REQ("history.undo");
+      CHECK(ClipCount(Snap(), a) == 1);
+      REQ("history.redo");
+      CHECK(ClipCount(Snap(), a) == 2);
+   }
+   // Again at (almost) the same point: nothing to split -- no empty clip,
+   // no history entry, the selection is kept
+   {
+      SetSel(0.5, 0.5);
+      const auto h = HistoryCount();
+      const auto g = Gen();
+      auto r = REQ("edit.splitAt", { { "t", 1.5 + 1e-7 } });
+      CHECK(r.value("splits", -1) == 0);
+      CHECK(r["trackIds"] == json::array());
+      const auto snap = Snap();
+      CHECK(ClipCount(snap, a) == 2);
+      CHECK(SelectionIs(snap, 0.5, 0.5));
+      CHECK(HistoryCount() == h);
+      // Beyond the end and in front of the audio
+      CHECK(REQ("edit.splitAt", { { "t", 10.0 } }).value("splits", -1) == 0);
+      CHECK(REQ("edit.splitAt", { { "t", -1.0 } }).value("splits", -1) == 0);
+      CHECK(HistoryCount() == h);
+      // ... and the clip references stay valid
+      CHECK(Gen() == g);
+   }
+   // Explicit tracks (one entry for both), whatever is selected
+   {
+      const auto before = Snap();
+      const auto h = HistoryCount();
+      auto r = REQ("edit.splitAt", { { "t", 2.0 }, { "trackIds", { b, a, b } } });
+      CHECK(r.value("splits", -1) == 2);
+      CHECK(r["trackIds"] == json::array({ b, a }));
+      const auto after = Snap();
+      CHECK(ClipCount(after, a) == 3);
+      CHECK(ClipCount(after, b) == 2);
+      CHECK(ClipIs(after, a, 2, 2.0, 3.0));
+      CHECK(ClipIs(after, b, 0, 0.0, 2.0));
+      CHECK(SelectionIs(after, 2.0, 2.0));
+      CHECK(Selected(after, a) && !Selected(after, b));
+      CHECK(HistoryCount() == h + 1);
+      CheckUndoRedo("edit.splitAt trackIds", before, after);
+   }
+   // No track selected: the tracks whose clips contain t
+   {
+      const auto c = Tone(1.0);
+      REQ("select.none");
+      const auto snap0 = Snap();
+      CHECK(!Selected(snap0, a) && !Selected(snap0, b) && !Selected(snap0, c));
+      auto r = REQ("edit.splitAt", { { "t", 2.5 } });
+      CHECK(r.value("splits", -1) == 2);
+      CHECK(r["trackIds"] == json::array({ a, b }));
+      const auto after = Snap();
+      CHECK(ClipCount(after, a) == 4);
+      CHECK(ClipCount(after, b) == 3);
+      CHECK(ClipCount(after, c) == 1);
+      CHECK(SelectionIs(after, 2.5, 2.5));
+      // ... still no track selected
+      CHECK(!Selected(after, a) && !Selected(after, b));
+      REQ("history.undo");
+      // c only
+      r = REQ("edit.splitAt", { { "t", 0.5 }, { "trackIds", { c } } });
+      CHECK(r["trackIds"] == json::array({ c }));
+      CHECK(ClipCount(Snap(), c) == 2);
+      // Stereo tracks split both channels
+      const auto st = Tone(2.0, 2);
+      r = REQ("edit.splitAt", { { "t", 1.0 }, { "trackIds", { st } } });
+      CHECK(r.value("splits", -1) == 1);
+      CHECK(ClipCount(Snap(), st) == 2);
+      CHECK(ClipIs(Snap(), st, 1, 1.0, 2.0));
+   }
+   // Errors
+   const auto lt = REQ("tracks.add", { { "kind", "label" } }).value("id", int64_t(-1));
+   CHECK(Err("edit.splitAt") == "INVALID_ARGS");
+   CHECK(Err("edit.splitAt", { { "t", "x" } }) == "INVALID_ARGS");
+   CHECK(Err("edit.splitAt", { { "t", 1.0 }, { "trackIds", json::array() } })
+      == "INVALID_ARGS");
+   CHECK(Err("edit.splitAt", { { "t", 1.0 }, { "trackIds", { 987654 } } })
+      == "NOT_FOUND");
+   CHECK(Err("edit.splitAt", { { "t", 1.0 }, { "trackIds", { lt } } })
+      == "NOT_FOUND");
+}
+
+double TrimOf(const json &snap, int64_t id, size_t index, const char *key)
+{
+   auto c = Clip(snap, id, index);
+   return c.contains(key) ? c[key].get<double>() : -1.0;
+}
+
+json Trim(int64_t track, int clipIndex, json extra)
+{
+   extra["trackId"] = track;
+   extra["clipIndex"] = clipIndex;
+   extra["generation"] = Gen();
+   return extra;
+}
+
+void TestClipTrim()
+{
+   std::fprintf(stderr, "== clips.trim\n");
+   NewProject();
+   const auto a = Tone(3.0);
+   const auto before = Snap();
+   const int rate = Clip(before, a, 0).value("rate", 44100);
+   const double sample = 1.0 / rate;
+   const auto g0 = Gen();
+   const auto h0 = HistoryCount();
+
+   // Live drag (final:false): model change only
+   {
+      auto r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.5 },
+         { "final", false } }));
+      CHECK(Near(r["trimLeft"].get<double>(), 0.5));
+      CHECK(Near(r["start"].get<double>(), 0.5, 1e-4));
+      CHECK(Near(r["end"].get<double>(), 3.0, 1e-4));
+      CHECK(Gen() == g0);
+      CHECK(HistoryCount() == h0);
+      const auto snap = Snap();
+      CHECK(ClipIs(snap, a, 0, 0.5, 3.0));
+      CHECK(Near(TrimOf(snap, a, 0, "trimLeft"), 0.5));
+      CHECK(TrackOf(snap, a)["waveVersion"] != TrackOf(before, a)["waveVersion"]);
+   }
+   {
+      const auto from = gSink->Count();
+      REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.6 }, { "final", false } }));
+      REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.75 }, { "final", false } }));
+      // the last value arrives in a snapshot event (trailing, <= 10 Hz)
+      auto ev = gSink->WaitFor("snapshot", 3s, from, [&](const json &snap) {
+         return Near(TrimOf(snap, a, 0, "trimLeft"), 0.75);
+      });
+      CHECK_MSG(ev.has_value(), "no snapshot with the last live trim");
+      CHECK(Gen() == g0);
+   }
+   // final:true: ONE entry for the whole drag, measured from its start
+   {
+      auto r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", 1.0 },
+         { "final", true } }));
+      CHECK(Near(r["trimLeft"].get<double>(), 1.0));
+      CHECK(Gen() > g0);
+      CHECK(HistoryCount() == h0 + 1);
+      CHECK(UndoName() == "Trim by 1.00s");
+      CHECK(CurrentDescription() == "Adjust left trim by 1.00 seconds");
+      const auto after = Snap();
+      CHECK(ClipIs(after, a, 0, 1.0, 3.0));
+      CheckUndoRedo("clips.trim left", before, after);
+      // STALE: the generation of the drag
+      CHECK(Err("clips.trim", { { "trackId", a }, { "clipIndex", 0 },
+         { "generation", g0 }, { "trimLeft", 0.0 } }) == "STALE");
+   }
+   // Right border; final defaults to true
+   {
+      const auto b4 = Snap();
+      REQ("clips.trim", Trim(a, 0, { { "trimRight", 0.5 } }));
+      CHECK(UndoName() == "Trim by 0.50s");
+      CHECK(CurrentDescription() == "Adjust right trim by 0.50 seconds");
+      const auto after = Snap();
+      CHECK(ClipIs(after, a, 0, 1.0, 2.5));
+      CHECK(Near(TrimOf(after, a, 0, "trimLeft"), 1.0));
+      CHECK(Near(TrimOf(after, a, 0, "trimRight"), 0.5));
+      CheckUndoRedo("clips.trim right", b4, after);
+   }
+   // Clamped to the clip's audio
+   {
+      auto r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", -5.0 },
+         { "trimRight", -1.0 } }));
+      CHECK(Near(r["trimLeft"].get<double>(), 0.0));
+      CHECK(Near(r["trimRight"].get<double>(), 0.0));
+      CHECK(ClipIs(Snap(), a, 0, 0.0, 3.0));
+      // At least one sample stays
+      r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", 10.0 } }));
+      CHECK(Near(r["start"].get<double>(), 3.0 - sample, 1e-9));
+      CHECK(Near(r["end"].get<double>(), 3.0, 1e-9));
+      r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.0 },
+         { "trimRight", 10.0 } }));
+      CHECK(Near(r["start"].get<double>(), 0.0, 1e-9));
+      CHECK(Near(r["end"].get<double>(), sample, 1e-9));
+      // Whole samples
+      r = REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.1 + 0.3 * sample },
+         { "trimRight", 0.0 } }));
+      CHECK(Near(r["trimLeft"].get<double>() * rate,
+         std::rint(r["trimLeft"].get<double>() * rate), 1e-6));
+      REQ("clips.trim", Trim(a, 0, { { "trimLeft", 0.0 } }));
+      CHECK(ClipIs(Snap(), a, 0, 0.0, 3.0));
+   }
+   // Neighbours: a split hides audio that trimming brings back, up to the
+   // neighbouring clip
+   {
+      REQ("edit.splitAt", { { "t", 1.5 }, { "trackIds", { a } } });
+      CHECK(ClipCount(Snap(), a) == 2);
+      const auto h = HistoryCount();
+      // Clip 1 cannot grow over clip 0, clip 0 not over clip 1: no change,
+      // no entry
+      auto r = REQ("clips.trim", Trim(a, 1, { { "trimLeft", 0.0 } }));
+      CHECK(Near(r["start"].get<double>(), 1.5, 1e-9));
+      r = REQ("clips.trim", Trim(a, 0, { { "trimRight", 0.0 } }));
+      CHECK(Near(r["end"].get<double>(), 1.5, 1e-9));
+      CHECK(HistoryCount() == h);
+      // Shorten clip 0 to [0, 1), then clip 1 can grow to 1.0
+      REQ("clips.trim", Trim(a, 0, { { "trimRight", 2.0 } }));
+      r = REQ("clips.trim", Trim(a, 1, { { "trimLeft", 0.0 } }));
+      CHECK(Near(r["start"].get<double>(), 1.0, 1e-9));
+      CHECK(Near(r["trimLeft"].get<double>(), 1.0, 1e-9));
+      const auto snap = Snap();
+      CHECK(ClipIs(snap, a, 0, 0.0, 1.0));
+      CHECK(ClipIs(snap, a, 1, 1.0, 3.0));
+      CHECK(HistoryCount() == h + 2);
+   }
+   // A drag that returns to its start: no entry, the snapshot shows the
+   // original geometry
+   {
+      const auto h = HistoryCount();
+      REQ("clips.trim", Trim(a, 1, { { "trimLeft", 1.4 }, { "final", false } }));
+      CHECK(ClipIs(Snap(), a, 1, 1.4, 3.0));
+      const auto from = gSink->Count();
+      auto env = Call("clips.trim", Trim(a, 1, { { "trimLeft", 1.0 } }));
+      CHECK(Ok(env));
+      auto ev = SnapshotEventSince(from, env);
+      CHECK(ClipIs(ev, a, 1, 1.0, 3.0));
+      CHECK(HistoryCount() == h);
+   }
+   // An unfinished live drag of another clip is cancelled by the next
+   // drag: only the finished one is in the entry
+   {
+      const auto h = HistoryCount();
+      const auto b4 = Snap();
+      REQ("clips.trim", Trim(a, 0, { { "trimRight", 2.5 }, { "final", false } }));
+      CHECK(ClipIs(Snap(), a, 0, 0.0, 0.5));
+      REQ("clips.trim", Trim(a, 1, { { "trimRight", 0.25 }, { "final", false } }));
+      CHECK(ClipIs(Snap(), a, 0, 0.0, 1.0));
+      REQ("clips.trim", Trim(a, 1, { { "trimRight", 0.5 }, { "final", true } }));
+      const auto after = Snap();
+      CHECK(ClipIs(after, a, 0, 0.0, 1.0));
+      CHECK(ClipIs(after, a, 1, 1.0, 2.5));
+      CHECK(HistoryCount() == h + 1);
+      CHECK(CurrentDescription() == "Adjust right trim by 0.50 seconds");
+      CheckUndoRedo("clips.trim cancels another drag", b4, after);
+   }
+   // A live drag whose generation is gone (undo in between) starts over
+   {
+      REQ("clips.trim", Trim(a, 1, { { "trimLeft", 1.2 }, { "final", false } }));
+      REQ("history.undo");
+      const auto snap = Snap();
+      CHECK(ClipIs(snap, a, 1, 1.0, 3.0));
+      REQ("clips.trim", Trim(a, 1, { { "trimLeft", 1.25 } }));
+      CHECK(CurrentDescription() == "Adjust left trim by 0.25 seconds");
+   }
+   // Errors
+   CHECK(Err("clips.trim", Trim(a, 0, json::object())) == "INVALID_ARGS");
+   CHECK(Err("clips.trim", Trim(a, 0, { { "trimLeft", "x" } })) == "INVALID_ARGS");
+   CHECK(Err("clips.trim", Trim(a, 9, { { "trimLeft", 0.0 } })) == "NOT_FOUND");
+   CHECK(Err("clips.trim", { { "trackId", a }, { "clipIndex", 0 },
+      { "trimLeft", 0.0 } }) == "INVALID_ARGS");
+}
+
+// ---------------------------------------------------------------------------
 json LabelsOf(const json &snap, int64_t id)
 {
    auto t = TrackOf(snap, id);
@@ -1498,6 +1800,47 @@ void TestLabels()
          { "title", "Start" } });
       CHECK(r.value("index", -1) == 0);
       CHECK(HistoryCount() == h);
+   }
+   // At an explicit position (e.g. the play head): the selection is not
+   // used and not changed
+   {
+      SetSel(0.1, 0.2);
+      const auto before = Snap();
+      auto r = REQ("labels.add", { { "title", "Here" }, { "t0", 2.25 } });
+      CHECK(r.value("trackId", int64_t(-1)) == lt);
+      auto after = Snap();
+      CHECK(SelectionIs(after, 0.1, 0.2));
+      auto labels = LabelsOf(after, lt);
+      const auto index = r.value("index", -1);
+      CHECK(index >= 0 && index < int(labels.size()));
+      if (index >= 0 && index < int(labels.size())) {
+         CHECK(labels[index].value("title", "") == "Here");
+         CHECK(Near(labels[index]["t0"].get<double>(), 2.25));
+         CHECK(Near(labels[index]["t1"].get<double>(), 2.25));
+      }
+      CHECK(UndoName() == "Label");
+      CheckUndoRedo("labels.add at t0", before, after);
+      r = REQ("labels.add", { { "title", "Range" }, { "t0", 0.5 }, { "t1", 0.8 } });
+      after = Snap();
+      CHECK(SelectionIs(after, 0.1, 0.2));
+      labels = LabelsOf(after, lt);
+      const auto i2 = r.value("index", -1);
+      CHECK(i2 >= 0 && i2 < int(labels.size()));
+      if (i2 >= 0 && i2 < int(labels.size())) {
+         CHECK(labels[i2].value("title", "") == "Range");
+         CHECK(Near(labels[i2]["t0"].get<double>(), 0.5));
+         CHECK(Near(labels[i2]["t1"].get<double>(), 0.8));
+      }
+      const auto h = HistoryCount();
+      CHECK(Err("labels.add", { { "t1", 1.0 } }) == "INVALID_ARGS");
+      CHECK(Err("labels.add", { { "t0", 1.0 }, { "t1", 0.5 } }) == "INVALID_ARGS");
+      CHECK(Err("labels.add", { { "t0", -1.0 } }) == "INVALID_ARGS");
+      CHECK(Err("labels.add", { { "t0", "x" } }) == "INVALID_ARGS");
+      CHECK(HistoryCount() == h);
+      // The checks below expect the labels from before
+      REQ("history.undo");
+      REQ("history.undo");
+      CHECK(SameLabels(LabelsOf(Snap(), lt), LabelsOf(before, lt), 1e-9));
    }
    CHECK(Err("labels.edit", { { "trackId", lt }, { "index", 9 }, { "title", "x" } })
       == "NOT_FOUND");
@@ -1652,6 +1995,8 @@ int main()
    TestRateFormatMix();
    TestAlign();
    TestClips();
+   TestSplitAt();
+   TestClipTrim();
    TestLabels();
 
    aubridge::Stop();

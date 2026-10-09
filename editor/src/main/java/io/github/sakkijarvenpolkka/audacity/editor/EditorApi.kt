@@ -25,7 +25,9 @@ sealed interface ContextTarget {
 
 /**
  * Requests from the editor that need the app (menus, dialogs, permissions).
- * All methods are called on the main thread.
+ * All methods are called on the main thread. Methods with a body are
+ * optional (added after the first release; the defaults keep older
+ * implementations compiling).
  */
 interface EditorCallbacks {
     /** The ⋯ button (or a long-press) of a track control panel. */
@@ -50,6 +52,11 @@ interface EditorCallbacks {
     fun onRenameClip(trackId: Long, clipIndex: Int, generation: Long) {
         onContextMenu(ContextTarget.Clip(trackId, clipIndex, generation))
     }
+
+    /** The "Effects" button of [MobileEditBar]: show a quick list of the
+     *  frequently used effects for the selection (the app's effect sheet).
+     *  The default does nothing (the button is then inert). */
+    fun onQuickEffects() {}
 }
 
 /** Test tags of the editor's main areas (Compose UI tests). */
@@ -57,4 +64,8 @@ object EditorTags {
     const val TRACK_PANEL: String = "aued_track_panel"
     const val WAVE_AREA: String = "aued_wave_area"
     const val RULER: String = "aued_ruler"
+    /** The [MobileEditBar] row. */
+    const val MOBILE_EDIT_BAR: String = "aued_mobile_edit_bar"
+    /** The razor-tool banner shown over the track panel while [EditTool.SPLIT] is active. */
+    const val SPLIT_TOOL_BANNER: String = "aued_split_tool_banner"
 }

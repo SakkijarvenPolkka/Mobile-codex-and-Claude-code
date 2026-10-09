@@ -26,7 +26,11 @@
  *         for Updates.
  * Android additions: File ▸ Projects... (project manager); File ▸ Compact
  * Project (commented out in 3.7.9's FileMenus.cpp, Bug 2600; phones need the
- * space back), with the desktop's ProjectFileManager::Compact question.
+ * space back), with the desktop's ProjectFileManager::Compact question;
+ * File ▸ Share Audio... (Android share sheet, not audio.com); Edit ▸ Audio
+ * Clips ▸ Split at Play Head (the mobile ✂ button); View ▸ Snapping, Snap to
+ * Grid, Stop at Track End and Split Tool (the editor's mobile settings; the
+ * desktop has the Snapping toolbar and the tools toolbar for these).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -40,15 +44,22 @@ import io.github.sakkijarvenpolkka.audacity.CreatePurpose
 import io.github.sakkijarvenpolkka.audacity.HostRequest
 import io.github.sakkijarvenpolkka.audacity.OpenPurpose
 import io.github.sakkijarvenpolkka.audacity.R
+import io.github.sakkijarvenpolkka.audacity.engine.EngineException
 import io.github.sakkijarvenpolkka.audacity.engine.model.CommandFlags
 import io.github.sakkijarvenpolkka.audacity.engine.model.EffectInfo
+import io.github.sakkijarvenpolkka.audacity.engine.model.ErrorCodes
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
 import io.github.sakkijarvenpolkka.audacity.engine.model.TrackState
+import io.github.sakkijarvenpolkka.audacity.engine.model.TransportSample
 import io.github.sakkijarvenpolkka.audacity.files.LabelFormat
+import io.github.sakkijarvenpolkka.audacity.prefs.UiPrefsState
 import io.github.sakkijarvenpolkka.audacity.util.TimeCodec
 import io.github.sakkijarvenpolkka.audacity.util.UiText
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -142,6 +153,8 @@ object MenuSpec {
             item("Compact", R.string.m_compact, NB or PO) { h -> compactProject(h) },
             SEP,
             item("Export", R.string.m_export_audio, NB or WE, ctrl(Key.E, "E", shift = true)) { it.open(AppDialog.Export()) },
+            // Android: the share sheet (3.7.9's Share Audio uploads to audio.com)
+            item("ShareAudio", R.string.m_share_audio, NB or WE) { it.open(AppDialog.Share) },
             sub(
                 "ExportOther", R.string.m_export_other,
                 item("ExportLabels", R.string.m_export_labels, NB or LE) { h -> exportLabels(h) },
@@ -193,6 +206,8 @@ object MenuSpec {
             sub(
                 "ClipsMenu", R.string.m_audio_clips,
                 item("Split", R.string.m_split, NB or WS, ctrl(Key.I, "I")) { edit(it, "edit.split") },
+                // The mobile ✂: stops playback and splits at the play head (else at the cursor)
+                item("SplitAtPlayHead", R.string.m_split_at_play_head, WE or PO) { h -> splitAtPlayHead(h) },
                 item("SplitNew", R.string.m_split_new, NB or TS or WS) { edit(it, "edit.splitNew") },
                 SEP,
                 item("Join", R.string.m_join, JC, ctrl(Key.J, "J")) { edit(it, "edit.join") },
@@ -334,6 +349,20 @@ object MenuSpec {
             },
             item("ShowRMS", R.string.m_show_rms, checked = { it.showRms }) { h ->
                 h.uiPrefs.update { p -> p.copy(showRms = !p.showRms) }
+            },
+            SEP,
+            // Mobile editing (EditorState): the desktop's Snapping toolbar and tools toolbar
+            item("Snapping", R.string.m_snapping, checked = { it.snapEnabled }) { h ->
+                editorPrefs(h) { p -> p.copy(snapEnabled = !p.snapEnabled) }
+            },
+            item("SnapToGrid", R.string.m_snap_to_grid, checked = { it.snapEnabled && it.snapToGrid }) { h ->
+                editorPrefs(h) { p -> if (p.snapEnabled && p.snapToGrid) p.copy(snapToGrid = false) else p.copy(snapEnabled = true, snapToGrid = true) }
+            },
+            item("StopAtTrackEnd", R.string.m_stop_at_track_end, checked = { it.stopAtTrackEnd }) { h ->
+                editorPrefs(h) { p -> p.copy(stopAtTrackEnd = !p.stopAtTrackEnd) }
+            },
+            item("SplitTool", R.string.m_split_tool, checked = { it.splitTool }) { h ->
+                editorPrefs(h) { p -> p.copy(splitTool = !p.splitTool) }
             },
         ),
     )
@@ -748,6 +777,40 @@ object MenuSpec {
             if (e.isCollapsed(t.id)) e.toggleCollapsed(t.id)
             e.setTrackHeight(t.id, each)
         }
+    }
+
+    /** Changes the editor settings of the UI preferences and applies them to the editor at once. */
+    private fun editorPrefs(h: MenuHost, transform: (UiPrefsState) -> UiPrefsState) {
+        h.uiPrefs.update(transform)
+        h.editor?.let { h.uiPrefs.value.applyTo(it) }
+    }
+
+    /**
+     * Edit ▸ Audio Clips ▸ Split at Play Head (the mobile ✂): `edit.splitAt`
+     * at the play head while playing (playback stops first: edits need the
+     * audio idle), else at the cursor. Not while recording.
+     */
+    private suspend fun splitAtPlayHead(h: MenuHost) {
+        val tr = h.engine.readTransport()
+        if (tr.state == TransportSample.STATE_RECORDING || tr.state == TransportSample.STATE_PAUSED_RECORD) {
+            h.message(UiText.Res(R.string.why_audio_busy))
+            return
+        }
+        val head = tr.headTime(System.nanoTime())
+        val t = max(0.0, if (tr.isActive && !head.isNaN()) head else snap(h).selection.t0)
+        if (tr.isActive) {
+            h.engine.stop()
+            withTimeoutOrNull(2_000L) { h.engine.transportState.first { it.state == "stopped" } }
+        }
+        val r = try {
+            h.engine.splitAt(t)
+        } catch (e: EngineException) {
+            // The stream may still be stopping
+            if (e.code != ErrorCodes.AUDIO_BUSY || !tr.isActive) throw e
+            delay(150L)
+            h.engine.splitAt(t)
+        }
+        if (r.splits == 0) h.message(UiText.Res(R.string.msg_nothing_to_split))
     }
 
     private fun playable(tracks: List<TrackState>) = tracks.filter { it.isWave }

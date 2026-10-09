@@ -141,6 +141,13 @@ without it), the `TimeSignatureRestorer` undo extension, the `Clipboard`.
 * `SetStreamFinalizer(fn(AudacityProject&))`: the spine calls it before a
   `NeedsIdleAudio` command when the project's stream drained but was not
   stopped/finalized yet.
+* `SetRecordingPreparer(fn(AudacityProject&))` (display module) /
+  `RunRecordingPreparer(project)` (audio module, after the pending tracks of
+  a recording are registered and before `AudioIO::StartStream`): attach
+  per-clip objects to the recording targets' clips while no other thread
+  uses them. Once AudioIO captures, its thread iterates the attachments of
+  those clips (`WaveTrack::Append` → `WaveClip::MarkChanged`): never create a
+  `WaveClip` attachment of a capture target then.
 
 ## 5. Threading rules
 
@@ -163,8 +170,10 @@ without it), the `TimeSignatureRestorer` undo extension, the `Clipboard`.
 
 ## 6. Bootstrap order (Engine.cpp)
 
-env (`HOME`, `XDG_*_HOME`, `TMPDIR`, `SQLITE_TMPDIR`, `WX_AUDACITY_DATA_DIR`) →
-`wxInitialize` on the engine thread → BasicUI services → `InitializeSQL` →
+`Start()` (caller's thread, before the engine thread exists): env (`HOME`,
+`XDG_*_HOME`, `TMPDIR`, `SQLITE_TMPDIR`, `WX_AUDACITY_DATA_DIR`), published as
+a new `environ` array instead of `setenv()` (other app threads may `getenv()`
+concurrently) → engine thread: directories → `wxInitialize` → BasicUI services → `InitializeSQL` →
 logger (wxLog → `log` events) → path list, default temp dir → preferences
 (`filesDir/audacity/audacity.cfg`, mobile defaults on first run) → language
 (`Language::Apply`: catalog from `<configDir>/locale`, C locale fixups) →

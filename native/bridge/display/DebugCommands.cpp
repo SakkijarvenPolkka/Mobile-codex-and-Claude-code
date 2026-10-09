@@ -6,11 +6,11 @@
   DebugCommands.cpp
 
   Test-only commands of the display module (API.md "debug" table):
-  debug.addEnvelopePoint, debug.stretchClip and debug.recording, which
+  debug.addEnvelopePoint, debug.stretchClip, debug.recording, which
   simulates a recording on the engine thread (pending tracks as
   ProjectAudioManager::DoRecord makes them, samples appended without
   flushing) so the display data of recording targets can be tested without
-  an audio device.
+  an audio device, and debug.displayCaches (cache statistics).
 
 **********************************************************************/
 #include "Modules.h"
@@ -19,6 +19,7 @@
 #include <memory>
 #include <vector>
 
+#include "ClipDisplayCache.h"
 #include "DisplayInternal.h"
 #include "DisplayTracks.h"
 #include "Edit.h"
@@ -192,6 +193,16 @@ json Recording(const json &args)
    Fail(ErrorCode::INVALID_ARGS, "unknown action '" + action + "'");
 }
 
+//! debug.displayCaches -> {bytes, detached}: the estimated size of the
+//! display caches, and how many caches are kept beside clips of live
+//! capture targets (clips without an attachment prepared before the
+//! capture started, ClipDisplayCache::ForRequest)
+json DisplayCaches(const json &)
+{
+   return json{ { "bytes", DisplayCacheBytes() },
+      { "detached", DetachedCacheCount() } };
+}
+
 } // namespace
 
 void RegisterDebugCommands(ModuleRegistry &registry)
@@ -200,6 +211,7 @@ void RegisterDebugCommands(ModuleRegistry &registry)
    registry.AddCommand("debug.addEnvelopePoint", AddEnvelopePoint, m);
    registry.AddCommand("debug.stretchClip", StretchClip, m);
    registry.AddCommand("debug.recording", Recording, m);
+   registry.AddCommand("debug.displayCaches", DisplayCaches);
 }
 
 } // namespace aubridge::display

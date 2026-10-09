@@ -81,5 +81,14 @@ void CheckOptionalGeneration(const json &args);
 //! A rate for 3.7.9's "Changed '%s' to %s Hz" ("%.3f")
 wxString FormatRate(double rate);
 
+//! Snapshots of live drags without history entry (tracks.setGain/setPan,
+//! clips.trim with final:false): at most every 100 ms, the last change
+//! arrives in a trailing snapshot from the tick handler
+void ThrottledSnapshot();
+//! Drops a pending trailing snapshot (the command emits its own)
+void CancelThrottledSnapshot();
+//! Resets the throttle and installs its tick handler (once per Start())
+void RegisterSnapshotThrottle(ModuleRegistry &registry);
+
 } // namespace edit
 } // namespace aubridge

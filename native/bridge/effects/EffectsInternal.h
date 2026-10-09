@@ -118,7 +118,9 @@ PluginID NoiseReductionId();
 struct ParamLabel {
    std::string label;      //!< translated, mnemonics stripped
    std::string unit;       //!< translated
-   std::string display;    //!< "" | "dB"
+   std::string display;    //!< "" | "dB" | "ratio"
+   //! display "ratio" of a pitch (EffectDescription param `semitones`)
+   bool semitones = false;
    //! int parameters that are really a choice (Loudness NormalizeTo):
    //! translated labels of values 0..n-1
    std::vector<std::string> intChoices;

@@ -316,6 +316,23 @@ changed).
 
 `edit.clipboardInfo` → `{empty, t0, t1, trackCount}` (I).
 
+`edit.splitAt` `{t, trackIds?:[..]}` → `{splits, trackIds:[..]}` (**M** when
+something is split) —
+split at one point without touching the time selection first (the mobile
+"split" button at the cursor/play head, the razor tool's tap). Splits the
+clips of the given wave tracks (default: the selected wave tracks; when no
+track is selected, every wave track with a clip at `t`) at `t` (snapped to
+each track's sample grid, `WaveTrack::SplitAt`) in **one** "Split" / "Split"
+entry (3.7.9 *Split*), and moves the cursor (point selection) to the split
+point (snapped to the first split track's grid); the track selection is
+unchanged. `trackIds` of the result = the tracks that were split (request
+order). A track without a clip that strictly contains `t` (a gap, a clip
+boundary, before/after the audio) is skipped; when nothing is split the
+command changes nothing (`splits:0`, no history entry, selection kept, no
+generation bump).
+`INVALID_ARGS` for a missing/non-finite `t` or `trackIds:[]`, `NOT_FOUND`
+for an unknown id or a track that is not a wave track.
+
 Preconditions are the 3.7.9 menu flags; when they are missing the command
 fails with `NO_SELECTION`: cut, delete, copy, duplicate, splitCut,
 splitDelete, detachAtSilences need a time selection and selected editable
@@ -363,7 +380,8 @@ strings ("Cut", "Paste", "Delete", "Cut and leave gap", "Split Delete",
 |---|---|---|
 | `clips.move` | `{trackId, clipIndex, generation, newStart, toTrackId?}` → `{trackId, clipIndex, start}` (where the clip ended up) | M (time shift; snaps nothing). Port of 3.7.9's clip drag for one clip: the offset is a whole number of samples; in the same track the clip stops at its neighbours (`start` tells where; no history entry when it cannot move); into another wave track with the same channel count (else `INVALID_ARGS`) it fits within a 20 px tolerance at the current zoom or fails with `FAILED`, and is resampled to that track's rate. "Time shifted tracks/clips right/left %.02f seconds" / "Moved clips to another track", "Move Clip". |
 | `clips.rename` | `{trackId, clipIndex, generation, name}` | M ("Modified Clip Name" / "Clip Name Edit"; nothing when unchanged) |
-| `labels.add` | `{title?:string}` at the selection — at the play position while this project plays or records (3.7.9 *Add Label at Playback Position*) — in the focused label track, else the first selected label track, else a new label track (selected and focused) → `{trackId, index}` | M, I |
+| `clips.trim` | `{trackId, clipIndex, generation, trimLeft?, trimRight?, final?:bool=true}` → `{trimLeft, trimRight, start, end}` (the clip afterwards) | M for `final:true` (see below). Non-destructive trim of one clip (3.7.9 clip border drag in trim mode, `WaveClipAdjustBorderHandle`). `trimLeft`/`trimRight` are **absolute** trim amounts in seconds, like the snapshot's clip fields: the hidden audio before the play start / after the play end, so the play start = (`start` − `trimLeft` of the snapshot) + new `trimLeft`. At least one of them; each is rounded to whole samples of the track's rate and clamped like the desktop drag: within the clip's audio, not over the neighbouring clips, the clip keeps at least one sample. `final:false` (while dragging): model change only, snapshot throttled ≤ 10 Hz (a trailing snapshot follows), no history entry, **no generation bump** (the clip reference stays valid during the drag). `final:true` (on release): one history entry for the whole drag, measured from the trims the clip had when the drag's first update arrived: "Adjust left trim by %.02f seconds" / "Adjust right trim by %.02f seconds", short "Trim by %.02fs" (3.7.9; an update that moves both borders is named after the larger movement); no entry when the clip ends where the drag started (to cancel a drag send its initial values with `final:true`). A drag lasts while the generation does not change; a live drag of another clip that never got its `final:true` is cancelled (its clip gets its trims back) when a new one starts. Commands in between that keep the generation (e.g. `select.*`) store the previewed geometry in the current undo state. Not while audio is busy (`AUDIO_BUSY`, like 3.7.9). `STALE`/`NOT_FOUND` as for every clip reference, `INVALID_ARGS` without `trimLeft`/`trimRight` or for non-finite values. |
+| `labels.add` | `{title?:string, t0?, t1?}` at `[t0, t1]` when `t0` is given (`t1` defaults to `t0`; `t1` without `t0`, `t0 < 0` or `t1 < t0` → `INVALID_ARGS`; the time selection is neither used nor changed — e.g. the play head the UI shows while playing/recording), else at the selection — at the play position while this project plays or records (3.7.9 *Add Label at Playback Position*) — in the focused label track, else the first selected label track, else a new label track (selected and focused) → `{trackId, index}` | M, I |
 | `labels.edit` | `{trackId, index, generation?, title?, t0?, t1?}` → `{index}` (new position: time edits re-sort with `LabelTrack::SortLabels`) | M ("Modified Label" / "Label Edit"; no entry when nothing changes; `t1 < t0` → `INVALID_ARGS`) |
 | `labels.remove` | `{trackId, index, generation?}` | M ("Deleted Label" / "Label Edit") |
 | `labels.import` | `{path}` (text or SubRip `.srt` file in app storage) → `{trackId}` | M. Port of *File ▸ Import ▸ Labels* (new label track named after the file, the only selected track). `NOT_FOUND` for a missing file; `.vtt`/`.json` → `UNSUPPORTED` (3.7.9's `LabelTrack::Import` cannot read them); unreadable lines are skipped with a non-blocking `dialog`. |
@@ -682,6 +700,19 @@ Mono) are not listed. Bundled = built-in, Nyquist Prompt, or a `.ny` below
 * `label`, `unit`, `display` come from a per-effect table in the bridge (the
   libraries do not carry labels); fall back to `key`. `display:"dB"` means the
   UI should show/edit `20·log10(value)` (e.g. Amplify ratio).
+  `display:"ratio"` marks a percent-change parameter that the UI shows and
+  edits as a multiplier `r = 1 + value/100` (1.25 ⇔ +25 %, 0.65 ⇔ −35 %)
+  and sends back as `value = (r − 1)·100`; `min`/`max` (always present for
+  these) are percents, so the multiplier range is `1 + min/100 … 1 + max/100`
+  (Change Tempo `Percentage` −95 … 3000 → ×0.05 … ×31; Change Pitch
+  `Percentage` −99 … 3000 → ×0.01 … ×31; Change Speed and Pitch
+  `Percentage` −99 … 4900 → ×0.01 … ×50; Sliding Stretch
+  `RatePercentChangeStart/End` −90 … 500 → ×0.1 … ×6 and
+  `PitchPercentChangeStart/End` −50 … 100 → ×0.5 … ×2). `unit` stays the
+  label of the raw value (`"%"`, or the desktop's caption) and is not shown
+  next to a multiplier. Pitch ratios also carry `semitones:true`: the UI may
+  show `12·log2(r)` semitones beside the multiplier (Change Pitch,
+  Sliding Stretch pitch percent).
 * `special` values and their extra fields:
   * `"noiseReduction"` — two-step effect; `params` are its preference-backed
     settings (Noise reduction dB, Sensitivity, Frequency smoothing bands,

@@ -5,6 +5,8 @@
  * Layout (notes/ui-reference.md §5.1, §9): below 600 dp width a compact
  * header row is shown above each track (phone portrait); from 600 dp the
  * desktop TCP column (124/150 dp) and vertical ruler are shown at the left.
+ * Over the tracks: the snap guide and trim edge of a drag, and a banner
+ * while the razor tool (EditTool.SPLIT) is active.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -21,10 +23,12 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -50,12 +54,15 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -92,12 +99,18 @@ fun EditorScreen(engine: AudacityEngine, state: EditorState, callbacks: EditorCa
     val painter = remember(cache, measurer) { TrackPainter(cache, measurer) }
     val actions = remember(engine) { TrackActions(engine, scope) { e -> controller.callbacks.onMessage(e.message ?: e.toString()) } }
     val currentSnapshot by rememberUpdatedState(snapshot)
+    val snapTick = rememberSnapTick()
+    val nothingToSplit = stringResource(R.string.aued_nothing_to_split)
+    val notWhileRecording = stringResource(R.string.aued_why_recording)
 
     SideEffect {
         controller.callbacks = callbacks
         controller.density = density
         controller.painter = painter
         controller.haptic = { haptics.performHapticFeedback(HapticFeedbackType.LongPress) }
+        controller.snapTick = snapTick
+        controller.nothingToSplit = nothingToSplit
+        controller.notWhileRecording = notWhileRecording
         state.selectionT0 = snapshot.selection.t0
         state.selectionT1 = snapshot.selection.t1
         state.projectEnd = snapshot.projectEnd
@@ -112,11 +125,13 @@ fun EditorScreen(engine: AudacityEngine, state: EditorState, callbacks: EditorCa
         playEnd = { max(currentSnapshot.projectEnd, currentSnapshot.selection.t1) },
         onFrame = { h ->
             state.streamingHeadTime = if (h.isStreaming) h.time else Double.NaN
+            state.headTime = if (h.isActive) h.time else Double.NaN
             if (h.isStreaming) state.followHead(h.time)
         },
     )
 
     ViewPersistence(engine, state, snapshot)
+    LoopEndClamp(engine, state, snapshot, head)
 
     BoxWithConstraints(modifier.background(pal.trackBackground)) {
         val metrics = remember(maxWidth) { EditorMetrics.forWidth(maxWidth.value) }
@@ -158,6 +173,31 @@ private fun TimelineCorner(snapshot: Snapshot, callbacks: EditorCallbacks, modif
         }
     }
 }
+
+/**
+ * Keeps an active loop (play region) inside the audio while
+ * [EditorState.stopAtTrackEnd] is on: when the audio got shorter than the
+ * loop (delete, undo of a recording), its end is moved to the project end.
+ * Only when stopped and not dragging; each correction is sent once.
+ */
+@Composable
+private fun LoopEndClamp(engine: AudacityEngine, state: EditorState, snapshot: Snapshot, head: HeadState) {
+    val pr = snapshot.playRegion
+    val end = snapshot.projectEnd
+    val stopAtEnd = state.stopAtTrackEnd
+    val sent = remember { doubleArrayOf(Double.NaN, Double.NaN) }
+    LaunchedEffect(pr, end, stopAtEnd, head.isActive) {
+        if (!stopAtEnd || !pr.active || head.isActive || state.gestureActive) return@LaunchedEffect
+        if (!(end > 0.0) || pr.t1 <= end + LOOP_END_TOLERANCE || pr.t0 >= end - LOOP_END_TOLERANCE) return@LaunchedEffect
+        if (sent[0] == pr.t1 && sent[1] == end) return@LaunchedEffect
+        sent[0] = pr.t1
+        sent[1] = end
+        runCatching { engine.setPlayRegion(pr.t0, end, true) }
+    }
+}
+
+/** Loop ends closer than this to the project end are left alone (sample rounding). */
+private const val LOOP_END_TOLERANCE = 1e-3
 
 /**
  * Persists zoom/scroll with `engine.setView` (debounced) and adopts a view
@@ -219,6 +259,12 @@ private fun TrackPanel(
         prevClip = stringResource(R.string.aued_a11y_prev_clip),
         nextClip = stringResource(R.string.aued_a11y_next_clip),
         clipMenu = stringResource(R.string.aued_a11y_clip_menu),
+        cursorLeft = stringResource(R.string.aued_a11y_cursor_left),
+        cursorRight = stringResource(R.string.aued_a11y_cursor_right),
+        selectClip = stringResource(R.string.aued_a11y_select_clip),
+        split = stringResource(R.string.aued_a11y_split),
+        nothingToSplit = stringResource(R.string.aued_nothing_to_split),
+        notWhileRecording = stringResource(R.string.aued_why_recording),
     )
     val scope = rememberCoroutineScope()
     val currentLayout by rememberUpdatedState(layout)
@@ -280,7 +326,7 @@ private fun TrackPanel(
                 contentDescription = panelDescription
                 // The gestures have no TalkBack equivalent: selection and the
                 // clip menu as custom actions
-                customActions = panelActions(engine, scope, callbacks, actionLabels) { currentSnapshot }
+                customActions = panelActions(engine, state, scope, callbacks, actionLabels) { currentSnapshot }
             }
             .pointerInput(controller) { panelGestures(controller) }
             .pointerInput(controller) { panelWheel(controller) },
@@ -344,6 +390,7 @@ private fun TrackPanel(
                     painter.paint(this, params)
                 }
                 PlayHeadOverlay(state, head, layout, Modifier.fillMaxSize())
+                DragOverlay(state, controller, layout, Modifier.fillMaxSize())
                 if (snapshot.tracks.isEmpty()) {
                     Text(
                         stringResource(R.string.aued_no_tracks),
@@ -365,6 +412,10 @@ private fun TrackPanel(
                 )
             }
         }
+        if (state.tool == EditTool.SPLIT) {
+            // Over everything (also the header rows): the tool must stay visible.
+            SplitToolBanner(state, Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp))
+        }
     }
 }
 
@@ -383,6 +434,58 @@ private fun PlayHeadOverlay(state: EditorState, head: HeadState, layout: PanelLa
             if (head.isRecording) pal.recordHead else pal.playHead,
             Offset(x, 0f), Offset(x, bottom), strokeWidth = max(1f, density),
         )
+    }
+}
+
+/** Snap guide (full-height line at the snapped time) and the border of a clip being trimmed. */
+@Composable
+private fun DragOverlay(state: EditorState, controller: PanelController, layout: PanelLayout, modifier: Modifier) {
+    val pal = LocalAudacityColors.current
+    Canvas(modifier) {
+        val bottom = min(size.height, (layout.contentHeight - state.vposDp) * density)
+        if (bottom <= 0f) return@Canvas
+        val edge = controller.trimEdge
+        if (edge != null) {
+            val g = layout.geom(edge.trackId)
+            val x = ((edge.time - state.hpos) * state.pps * density).toFloat()
+            if (g != null && x >= -4f && x <= size.width + 4f) {
+                val top = (g.bodyTop - state.vposDp) * density
+                val b = (g.bottom - state.vposDp) * density
+                drawLine(pal.accent, Offset(x, top), Offset(x, b), strokeWidth = 3f * density)
+            }
+        }
+        val guide = state.snapGuide
+        if (!guide.isNaN()) {
+            val x = ((guide - state.hpos) * state.pps * density).toFloat()
+            if (x >= -2f && x <= size.width + 2f) {
+                drawLine(pal.snapGuide, Offset(x, 0f), Offset(x, bottom), strokeWidth = max(1f, density))
+            }
+        }
+    }
+}
+
+/** Banner of the razor tool: what a tap does; tap it to go back to selecting. */
+@Composable
+private fun SplitToolBanner(state: EditorState, modifier: Modifier) {
+    val pal = LocalAudacityColors.current
+    val exit = stringResource(R.string.aued_split_tool_exit)
+    Row(
+        modifier
+            .testTag(EditorTags.SPLIT_TOOL_BANNER)
+            .padding(horizontal = 16.dp)
+            .background(pal.accent, RoundedCornerShape(24.dp))
+            .clickable(role = Role.Button, onClickLabel = exit) { state.tool = EditTool.SELECT }
+            .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
+            .heightIn(min = 48.dp)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(AudacityIcons.Split, null, tint = Color.White, modifier = Modifier.size(20.dp))
+        Text(
+            stringResource(R.string.aued_split_tool_banner), color = Color.White, fontSize = 13.sp,
+            modifier = Modifier.padding(horizontal = 8.dp).weight(1f, fill = false),
+        )
+        Text(stringResource(R.string.aued_split_tool_done), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -507,11 +610,28 @@ internal fun prefetch(
     cache.trim(level)
 }
 
-private class PanelActionLabels(val selectAll: String, val prevClip: String, val nextClip: String, val clipMenu: String)
+private class PanelActionLabels(
+    val selectAll: String,
+    val prevClip: String,
+    val nextClip: String,
+    val clipMenu: String,
+    val cursorLeft: String,
+    val cursorRight: String,
+    val selectClip: String,
+    val split: String,
+    val nothingToSplit: String,
+    val notWhileRecording: String,
+)
 
-/** Accessibility actions of the track panel (TalkBack: actions menu). */
+/**
+ * Accessibility actions of the track panel (TalkBack: actions menu): the
+ * gestures' equivalents — move the cursor by one grid step (the ruler's
+ * minor tick), select / split the clip at the cursor, select all, previous /
+ * next clip, the clip menu.
+ */
 private fun panelActions(
     engine: AudacityEngine,
+    state: EditorState,
     scope: CoroutineScope,
     callbacks: EditorCallbacks,
     labels: PanelActionLabels,
@@ -521,7 +641,32 @@ private fun panelActions(
         scope.engineCall({ e -> callbacks.onMessage(e.message ?: e.toString()) }, block)
         return true
     }
+    fun moveCursor(direction: Int): Boolean {
+        val s = snapshot()
+        val from = if (direction < 0) s.selection.t0 else s.selection.t1
+        val t = Snapper.clamp(from + direction * Snapper.gridStep(state.pps), s.projectEnd, state.stopAtTrackEnd)
+        return call {
+            engine.select(t, t)
+            state.scrollToTime(t)
+        }
+    }
     return listOf(
+        CustomAccessibilityAction(labels.cursorLeft) { moveCursor(-1) },
+        CustomAccessibilityAction(labels.cursorRight) { moveCursor(1) },
+        CustomAccessibilityAction(labels.selectClip) {
+            val s = snapshot()
+            when (val target = contextTargetAtCursor(s)) {
+                is ContextTarget.Clip -> call { engine.selectClip(target.trackId, target.clipIndex, target.generation) }
+                else -> call { engine.selectCommand("select.nextClip") }
+            }
+        },
+        CustomAccessibilityAction(labels.split) {
+            val t = snapshot().selection.t0
+            call {
+                val r = EditActions.splitAt(engine, t, null, labels.notWhileRecording)
+                if (r.splits == 0) callbacks.onMessage(labels.nothingToSplit)
+            }
+        },
         CustomAccessibilityAction(labels.selectAll) { call { engine.selectAll() } },
         CustomAccessibilityAction(labels.prevClip) { call { engine.selectCommand("select.prevClip") } },
         CustomAccessibilityAction(labels.nextClip) { call { engine.selectCommand("select.nextClip") } },

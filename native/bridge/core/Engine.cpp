@@ -14,9 +14,12 @@
      GetXDGTargetDir), so the bridge sets XDG_* (and HOME, TMPDIR,
      SQLITE_TMPDIR, WX_AUDACITY_DATA_DIR) from the start configuration
      before wx and FileNames are touched -- no PlatformCompatibility
-     replacement and no lib-files patch is needed.  Consequence: those
-     directories are cached per process (FileNames statics); a restart in
-     the same process must use the same configuration paths.
+     replacement and no lib-files patch is needed.  Start() exports them on
+     the caller's thread before the engine thread exists, without setenv()
+     (ExportEnvironment: other threads of the app may call getenv() at any
+     time).  Consequence: those directories are cached per process
+     (FileNames statics); a restart in the same process must use the same
+     configuration paths.
    * FileNames::InitializePathList() is not called: with __WXGTK__ it adds
      the current directory, the executable's directories and
      INSTALL_PREFIX/share and overrides the default temp dir with
@@ -27,16 +30,23 @@
 **********************************************************************/
 #include "Engine.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cerrno>
 #include <clocale>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <dlfcn.h>
 #include <future>
 #include <mutex>
+#include <string>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
+
+extern char **environ;
 
 // The Audacity build defines _WX_APP_H_BASE_ for every target ("don't use
 // app.h", upstream apply_wxbase_restrictions); the bridge is the application
@@ -188,7 +198,7 @@ void MakeDirs(const std::string &path, mode_t mode = 0755)
       throw Fatal("not a directory: " + path);
 }
 
-void PrepareEnvironment(const Paths &paths)
+void MakeDirectories(const Paths &paths)
 {
    MakeDirs(paths.configDir);
    MakeDirs(paths.sessionDir, 0700);
@@ -196,23 +206,70 @@ void PrepareEnvironment(const Paths &paths)
    MakeDirs(paths.importDir);
    MakeDirs(paths.exportDir);
    MakeDirs(paths.projectsDir);
+}
 
-   const auto set = [](const char *key, const std::string &value) {
-      ::setenv(key, value.c_str(), 1);
+//! The process environment the libraries read (see the file comment)
+std::vector<std::pair<std::string, std::string>> EngineEnvironment(
+   const Paths &paths)
+{
+   return {
+      // HOME: wxGetHomeDir, FileNames' legacy ~/.audacity-data check
+      { "HOME", paths.filesDir },
+      // FileNames::ConfigDir() == DataDir() == filesDir/audacity
+      { "XDG_CONFIG_HOME", paths.filesDir },
+      { "XDG_DATA_HOME", paths.filesDir },
+      // FileNames::CacheDir() / StateDir() (unused by the compiled
+      // libraries)
+      { "XDG_CACHE_HOME", paths.cacheDir },
+      { "XDG_STATE_HOME", paths.noBackupDir },
+      // SQLite and wx temporary files (must precede the first SQLite temp
+      // file: SQLite keeps the getenv() pointer)
+      { "TMPDIR", paths.tmpDir },
+      { "SQLITE_TMPDIR", paths.tmpDir },
+      // wxStandardPaths::GetDataDir() -> FileNames::ResourcesDir()
+      { "WX_AUDACITY_DATA_DIR", paths.configDir },
    };
-   // HOME: wxGetHomeDir, FileNames' legacy ~/.audacity-data check
-   set("HOME", paths.filesDir);
-   // FileNames::ConfigDir() == DataDir() == filesDir/audacity
-   set("XDG_CONFIG_HOME", paths.filesDir);
-   set("XDG_DATA_HOME", paths.filesDir);
-   // FileNames::CacheDir() / StateDir() (unused by the compiled libraries)
-   set("XDG_CACHE_HOME", paths.cacheDir);
-   set("XDG_STATE_HOME", paths.noBackupDir);
-   // SQLite and wx temporary files (must precede the first SQLite temp file)
-   set("TMPDIR", paths.tmpDir);
-   set("SQLITE_TMPDIR", paths.tmpDir);
-   // wxStandardPaths::GetDataDir() -> FileNames::ResourcesDir()
-   set("WX_AUDACITY_DATA_DIR", paths.configDir);
+}
+
+//! setenv() for every variable of `vars`, safe against a concurrent
+//! getenv() on another thread.  The app process runs many threads before
+//! the engine starts (UI, RenderThread, binder, ART daemons) and any of
+//! them may call getenv() (tzset() reads TZ for localtime()).  setenv()
+//! (bionic's and glibc's) reallocates the `environ` array when it adds a
+//! variable and frees the old one, so such a getenv() could read freed
+//! memory.  Instead, a complete new array is built and published with one
+//! pointer store; the old array and all strings are never freed (a few
+//! hundred bytes per start whose paths differ from the current values; a
+//! restart with the same paths changes nothing).  Called by Start() on the
+//! caller's thread, before the engine thread exists.
+void ExportEnvironment(
+   const std::vector<std::pair<std::string, std::string>> &vars)
+{
+   const bool upToDate = std::all_of(vars.begin(), vars.end(),
+      [](const auto &var) {
+         const char *current = ::getenv(var.first.c_str());
+         return current && var.second == current;
+      });
+   if (upToDate)
+      return;
+   const auto replaced = [&vars](const char *entry) {
+      const char *equals = std::strchr(entry, '=');
+      const size_t length = equals ? size_t(equals - entry) : std::strlen(entry);
+      return std::any_of(vars.begin(), vars.end(), [&](const auto &var) {
+         return var.first.size() == length &&
+            std::strncmp(entry, var.first.data(), length) == 0;
+      });
+   };
+   std::vector<char *> entries;
+   for (char **p = ::environ; p && *p; ++p)
+      if (!replaced(*p))
+         entries.push_back(*p);
+   for (const auto &[key, value] : vars)
+      entries.push_back(::strdup((key + "=" + value).c_str()));
+   entries.push_back(nullptr);
+   auto array = new char *[entries.size()];
+   std::copy(entries.begin(), entries.end(), array);
+   __atomic_store_n(&::environ, array, __ATOMIC_RELEASE);
 }
 
 std::string LibraryPath()
@@ -414,8 +471,9 @@ void Bootstrap(const std::string &configJson)
       auto config = StartConfig::Parse(configJson);
       const auto &paths = config.paths;
 
-      // 0. Process environment: before wx, SQLite and FileNames caching
-      PrepareEnvironment(paths);
+      // 0. Directories (the process environment that points to them was
+      // exported by Start(), before this thread existed)
+      MakeDirectories(paths);
       Session::Get().SetConfig(config);
       std::srand(unsigned(std::time(nullptr)));
 
@@ -551,6 +609,8 @@ void Shutdown()
    state.ready = false;
    auto &registry = ModuleRegistry::Get();
    try {
+      // Closing compacts the project (SQLite temporary files)
+      Session::Get().EnsureWorkDirectories();
       Session::Get().Reset();
       registry.RunBeforeShutdown();
       Clipboard::Get().Clear();
@@ -603,6 +663,15 @@ bool Start(const std::string &configJson, std::shared_ptr<EventSink> sink)
    auto &engine = EngineThread::Get();
    if (engine.IsRunning())
       return false;
+   // The process environment, before wx, SQLite and FileNames read it on
+   // the engine thread, and from this thread, before the engine thread and
+   // the threads it starts (AudioIO, ...) exist
+   try {
+      ExportEnvironment(EngineEnvironment(StartConfig::Parse(configJson).paths));
+   }
+   catch (...) {
+      // A malformed configuration: Bootstrap reports it (engine.failed)
+   }
    Events::SetSink(std::move(sink));
    if (!engine.Start([configJson] { Bootstrap(configJson); },
                      [] { Shutdown(); })) {

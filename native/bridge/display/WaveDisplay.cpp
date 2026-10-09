@@ -195,7 +195,7 @@ int64_t WaveColumns(int64_t trackId, int channel, int zoomLevel,
       if (lookB - lookA < 2)
          lookB = lookA + 2;   // only when lookA == 0: stays in element 0
 
-      auto &cache = ClipDisplayCache::Get(clip);
+      auto &cache = ClipDisplayCache::ForRequest(clips[i], resolved.liveCapture);
       cache.Sync(clip, resolved.recording);
       cache.Touch();
       used = &cache;

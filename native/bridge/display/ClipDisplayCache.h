@@ -30,7 +30,10 @@
 
   Recording: nothing is attached to a clip of a track AudioIO captures into
   while the capture runs (the AudioIO thread iterates that clip's
-  attachments); ForRequest hands out a cache kept beside the clip instead.
+  attachments).  The audio module has the caches of the recording targets'
+  clips attached before AudioIO::StartStream (PrepareForCapture, through
+  display::PrepareForRecording); ForRequest uses those, and a cache kept
+  beside the clip for any other clip of a capture target.
 
   Everything except the WaveClipListener notifications is engine thread
   only.
@@ -96,11 +99,18 @@ public:
    //! into the clip's track (DisplayTrack::liveCapture), so the AudioIO
    //! thread iterates the clip's attachments (WaveTrack::Append ->
    //! WaveClip::MarkChanged); creating one now would resize that vector
-   //! under it.  Such a clip uses a cache kept beside it instead (it only
-   //! misses MarkChanged, which Sync ignores for recording targets), until
-   //! the capture ends; then the clip gets its attachment.
+   //! under it.  Such a clip uses its attachment only when PrepareForCapture
+   //! created it before the capture started, else a cache kept beside it
+   //! (it only misses MarkChanged, which Sync ignores for recording
+   //! targets) until the capture ends; then the clip gets its attachment.
    static ClipDisplayCache &ForRequest(
       const std::shared_ptr<const WaveClip> &clip, bool liveCapture);
+
+   //! Creates the attachment of `clip` before AudioIO captures into its
+   //! track (display::PrepareForRecording, before AudioIO::StartStream), so
+   //! that ForRequest may use it during the capture.  No-op while a capture
+   //! runs.  Engine thread only.
+   static void PrepareForCapture(const std::shared_ptr<const WaveClip> &clip);
 
    ClipDisplayCache();
    ~ClipDisplayCache() override;

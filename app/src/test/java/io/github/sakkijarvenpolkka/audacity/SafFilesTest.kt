@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 package io.github.sakkijarvenpolkka.audacity
 
+import android.content.Context
+import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.audacity.files.InsufficientSpaceException
 import io.github.sakkijarvenpolkka.audacity.files.SafFiles
+import io.github.sakkijarvenpolkka.audacity.files.SourceTooLargeException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -17,6 +21,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -89,6 +94,43 @@ class SafFilesTest {
         val small = ByteArrayOutputStream()
         SafFiles.pump(ByteArray(1000).inputStream(), small, 1000, 1000) { _, _ -> }
         assertEquals(1000, small.size())
+    }
+
+    @Test
+    fun aSourceOfUnknownSizeIsCutAtTheHardLimit() = runBlocking {
+        val cr = ApplicationProvider.getApplicationContext<Context>().contentResolver
+        val uri = Uri.parse("content://test.provider/audio/endless.wav")
+        shadowOf(cr).registerInputStream(uri, object : InputStream() {
+            override fun read(): Int = 0
+            override fun read(b: ByteArray, off: Int, len: Int): Int = len
+        })
+        val dest = File(tmp.root, "import/uuid/endless.wav")
+        try {
+            // Plenty of free space: only the limit for sources without a size stops it
+            SafFiles.copyUriToFile(cr, uri, dest, maxBytes = 64L shl 20, unknownSizeLimit = 2L shl 20)
+            fail("no limit")
+        } catch (e: SourceTooLargeException) {
+            assertEquals(2L shl 20, e.limit)
+        }
+        assertFalse("the partial copy is removed", dest.exists())
+        // Without the hard limit, the free space stops it
+        try {
+            SafFiles.copyUriToFile(cr, uri, dest, maxBytes = 3L shl 20, unknownSizeLimit = Long.MAX_VALUE)
+            fail("no limit")
+        } catch (_: InsufficientSpaceException) {
+        }
+        assertFalse(dest.exists())
+    }
+
+    @Test
+    fun projectFilesAreDeletedWithTheirCompanions() = runBlocking {
+        val aup3 = File(tmp.root, "Projects/Song.aup3").apply { parentFile!!.mkdirs(); writeText("x") }
+        val wal = File(aup3.path + "-wal").apply { writeText("x") }
+        val shm = File(aup3.path + "-shm").apply { writeText("x") }
+        val other = File(tmp.root, "Projects/Song (2).aup3").apply { writeText("x") }
+        SafFiles.deleteProjectFiles(aup3)
+        assertFalse(aup3.exists() || wal.exists() || shm.exists())
+        assertTrue(other.exists())
     }
 
     @Test

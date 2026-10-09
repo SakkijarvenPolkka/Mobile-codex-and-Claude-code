@@ -90,6 +90,7 @@ struct ParamDef {
    std::string nyquistType;
    std::string label, unit, display;
    std::vector<std::string> intChoices;   //!< int parameters shown as a choice
+   bool semitones = false;   //!< display "ratio" of a pitch
 };
 
 std::string KindName(ParamDef::Kind kind, bool intChoice)
@@ -392,6 +393,7 @@ std::vector<ParamDef> Schema(const Loaded &fx)
          p.unit = label->unit;
          p.display = label->display;
          p.intChoices = label->intChoices;
+         p.semitones = label->semitones;
       }
       if (p.label.empty())
          p.label = ToUtf8(p.key);
@@ -478,6 +480,8 @@ json ParamJson(const ParamDef &p)
    }
    j["unit"] = p.unit;
    j["display"] = p.display;
+   if (p.semitones)
+      j["semitones"] = true;
    return j;
 }
 

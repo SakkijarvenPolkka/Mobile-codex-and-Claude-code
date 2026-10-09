@@ -36,6 +36,10 @@ internal class EditorMetrics(val compact: Boolean, val large: Boolean) {
     val channelSeparator: Float = 1f
     /** Selection edge grab zone (desktop 3 px). */
     val edgeGrab: Float = if (compact) 16f else 12f
+    /** Clip border (trim) grab zone on each side of the border (desktop BoundaryThreshold 5 px). */
+    val trimGrab: Float = if (compact) 20f else 14f
+    /** Grab zone of the play head / cursor handle in the ruler. */
+    val headGrab: Float = if (compact) 24f else 16f
     /** Clip title bar corner radius. */
     val clipRadius: Float = 6f
     /** Overflow ("⋯") button of the clip title bar. */

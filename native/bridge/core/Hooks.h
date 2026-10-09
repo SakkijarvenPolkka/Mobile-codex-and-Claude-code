@@ -84,6 +84,18 @@ void SetStreamFinalizer(StreamFinalizerFn fn);
 //! Spine: runs the finalizer when the condition above holds
 void FinalizeDrainedStream(AudacityProject &project);
 
+//! Called by the audio module when a recording starts: after the pending
+//! tracks (the copies of appended tracks, the new tracks) were registered
+//! and BEFORE AudioIO::StartStream.  The display module installs
+//! display::PrepareForRecording, which attaches its caches to the
+//! recording targets' clips while no other thread uses them (once AudioIO
+//! captures, its thread iterates the attachments of those clips:
+//! WaveTrack::Append -> WaveClip::MarkChanged).  Engine thread.
+using RecordingPreparerFn = std::function<void(AudacityProject &)>;
+void SetRecordingPreparer(RecordingPreparerFn fn);
+//! Audio module: runs the installed preparer (no-op without one)
+void RunRecordingPreparer(AudacityProject &project);
+
 //! Status codes of the display entry points (API.md §7.2)
 namespace DisplayStatus {
 inline constexpr int64_t NoSuchTrack = -1;

@@ -332,7 +332,7 @@ int64_t SpectrogramColumns(int64_t trackId, int channel, int zoomLevel,
       const int64_t visibleStart = int64_t(std::floor(
          clip.GetTrimLeft() * span.scaledRate + 0.5));
 
-      auto &cache = ClipDisplayCache::Get(clip);
+      auto &cache = ClipDisplayCache::ForRequest(clips[i], resolved.liveCapture);
       cache.Sync(clip, resolved.recording);
       cache.Touch();
       used = &cache;

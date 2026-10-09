@@ -83,4 +83,40 @@
     <string name="aued_a11y_next_clip">Select next clip</string>
     <string name="aued_a11y_clip_menu">Menu of the clip at the cursor</string>
     <string name="aued_no_tracks">No tracks. Import audio, record, or add a track to begin.</string>
+
+    <!-- Mobile edit bar (MobileEditBar) and razor tool -->
+    <string name="aued_mobile_edit_bar">Edit actions</string>
+    <string name="aued_split">Split</string>
+    <string name="aued_split_desc">Split at the cursor (at the play head while playing)</string>
+    <string name="aued_split_tool">Split tool</string>
+    <string name="aued_split_tool_toggle">Turn the split tool on or off</string>
+    <string name="aued_split_tool_banner">Split tool: tap a clip to split it there</string>
+    <string name="aued_split_tool_done">Done</string>
+    <string name="aued_split_tool_exit">Turn off the split tool</string>
+    <string name="aued_nothing_to_split">Nothing to split here. Put the cursor inside a clip.</string>
+    <string name="aued_cut">Cut</string>
+    <string name="aued_delete">Delete</string>
+    <string name="aued_trim_short">Trim</string>
+    <string name="aued_silence_short">Silence</string>
+    <string name="aued_copy">Copy</string>
+    <string name="aued_paste">Paste</string>
+    <string name="aued_duplicate">Duplicate</string>
+    <string name="aued_marker">Marker</string>
+    <string name="aued_marker_desc">Add a label at the play head or at the cursor</string>
+    <string name="aued_effects">Effects</string>
+    <string name="aued_unavailable">Unavailable: %1$s</string>
+    <string name="aued_why_no_project">No project is open</string>
+    <string name="aued_why_busy">Stop playback or recording first</string>
+    <string name="aued_why_recording">Not available while recording</string>
+    <string name="aued_why_no_selection">Select a part of the audio first</string>
+    <string name="aued_why_no_audio_track">Select an audio track first</string>
+    <string name="aued_why_no_track">Select a track first</string>
+    <string name="aued_why_no_audio">There is no audio to split</string>
+    <string name="aued_why_clipboard_empty">The clipboard is empty</string>
+    <string name="aued_why_nothing_to_undo">Nothing to undo</string>
+    <string name="aued_why_nothing_to_redo">Nothing to redo</string>
+    <string name="aued_a11y_cursor_left">Move cursor left</string>
+    <string name="aued_a11y_cursor_right">Move cursor right</string>
+    <string name="aued_a11y_select_clip">Select the clip at the cursor</string>
+    <string name="aued_a11y_split">Split at the cursor</string>
 </resources>

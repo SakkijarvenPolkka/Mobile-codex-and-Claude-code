@@ -37,6 +37,9 @@ import kotlin.coroutines.coroutineContext
 /** A copy into app storage would leave less than the reserved free space. */
 class InsufficientSpaceException(message: String) : IOException(message)
 
+/** A source that does not report its size gave more than [limit] bytes (it may not end). */
+class SourceTooLargeException(val limit: Long) : IOException("more than $limit bytes from a source of unknown size")
+
 object SafFiles {
 
     /** Free space kept when copying into app storage (the engine's autosave and other apps need it). */
@@ -45,6 +48,13 @@ object SafFiles {
     /** Longest file name stem in app storage, in UTF-8 bytes: room for an
      *  extension and SQLite's "-wal"/"-shm"/"-journal" companions within NAME_MAX (255). */
     const val MAX_STEM_BYTES: Int = 200
+
+    /** Longest name of a document created with the picker (extension included), in UTF-8
+     *  bytes: room for the " (1)" a provider appends to a name that is taken. */
+    const val MAX_DOCUMENT_NAME_BYTES: Int = 240
+
+    /** Most bytes copied from a source that does not report its size (a WAV file ends at 4 GiB). */
+    const val MAX_UNKNOWN_SIZE_BYTES: Long = 4L shl 30
 
     /** Name, size (-1 = unknown) and MIME type of a picked document. */
     data class DocInfo(val name: String?, val size: Long, val mime: String?)
@@ -234,24 +244,30 @@ object SafFiles {
      * Copies [uri] to [dest] on Dispatchers.IO; cancellable; [onProgress] gets
      * (done, total or -1). At most [maxBytes] are written (default: what
      * [writableBytes] allows in dest's directory): a longer source fails with
-     * [InsufficientSpaceException] instead of filling the storage.
+     * [InsufficientSpaceException] instead of filling the storage. A source
+     * that does not report its size is also cut at [unknownSizeLimit]
+     * ([SourceTooLargeException]).
      */
     suspend fun copyUriToFile(
         cr: ContentResolver,
         uri: Uri,
         dest: File,
         maxBytes: Long = -1,
+        unknownSizeLimit: Long = MAX_UNKNOWN_SIZE_BYTES,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ) = withContext(Dispatchers.IO) {
         val total = size(cr, uri)
         dest.parentFile?.mkdirs()
-        val limit = if (maxBytes >= 0) maxBytes else writableBytes(dest.parentFile ?: dest)
-        if (total > limit) throw InsufficientSpaceException("$total bytes do not fit in ${dest.parent}")
+        val room = if (maxBytes >= 0) maxBytes else writableBytes(dest.parentFile ?: dest)
+        if (total > room) throw InsufficientSpaceException("$total bytes do not fit in ${dest.parent}")
+        val capped = total < 0 && unknownSizeLimit < room
+        val limit = if (capped) unknownSizeLimit else room
         val input = cr.openInputStream(uri) ?: throw IOException("Cannot open $uri")
         try {
             input.use { i -> dest.outputStream().use { o -> pump(i, o, total, limit, onProgress) } }
         } catch (t: Throwable) {
             dest.delete()
+            if (capped && t is InsufficientSpaceException) throw SourceTooLargeException(limit)
             throw t
         }
     }
@@ -300,6 +316,13 @@ object SafFiles {
     suspend fun deleteStaging(dir: File?) {
         if (dir == null) return
         withContext(NonCancellable + Dispatchers.IO) { dir.deleteRecursively() }
+    }
+
+    /** Deletes the project file [aup3] and its SQLite companions (-wal, -shm, -journal), also in a cancelled coroutine. */
+    suspend fun deleteProjectFiles(aup3: File) {
+        withContext(NonCancellable + Dispatchers.IO) {
+            for (suffix in listOf("", "-wal", "-shm", "-journal")) File(aup3.path + suffix).delete()
+        }
     }
 
     /** Copies [input] to [output]; more than [limit] bytes fail with [InsufficientSpaceException]. */

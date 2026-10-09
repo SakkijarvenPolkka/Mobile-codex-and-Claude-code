@@ -49,6 +49,11 @@ internal class Stats {
  * absolute time [start]. The arrays may be longer than [length] (the live
  * recording buffer); only the first [length] samples belong to the clip and
  * they are never modified once published.
+ *
+ * [hiddenLeft]/[hiddenRight] are trimmed audio (per channel) before the play
+ * start and after the play end, like WaveClip's trimLeft/trimRight: a split
+ * keeps the other part hidden and `clips.trim` can bring it back. Edits
+ * that build new clips from [data] drop them.
  */
 internal class FClip(
     val name: String,
@@ -57,10 +62,54 @@ internal class FClip(
     val data: Array<FloatArray>,
     val length: Int = data[0].size,
     val version: Long = Versions.next(),
+    val hiddenLeft: Array<FloatArray>? = null,
+    val hiddenRight: Array<FloatArray>? = null,
 ) {
     val channels: Int get() = data.size
     val duration: Double get() = length / rate
     val end: Double get() = start + duration
+
+    /** Hidden frames before the play start / after the play end. */
+    val trimLeftFrames: Int get() = hiddenLeft?.get(0)?.size ?: 0
+    val trimRightFrames: Int get() = hiddenRight?.get(0)?.size ?: 0
+    /** Seconds, as in the snapshot's clip state. */
+    val trimLeft: Double get() = trimLeftFrames / rate
+    val trimRight: Double get() = trimRightFrames / rate
+    /** All frames of the clip's audio, hidden ones included. */
+    val totalFrames: Int get() = trimLeftFrames + length + trimRightFrames
+    /** Absolute time of the first (hidden or not) frame. */
+    val sequenceStart: Double get() = start - trimLeftFrames / rate
+
+    /** The clip with [leftFrames] / [rightFrames] of its whole audio hidden
+     *  (clamped so that one frame stays visible); same object when unchanged. */
+    fun retrimmed(leftFrames: Int, rightFrames: Int): FClip {
+        val total = totalFrames
+        val l = leftFrames.coerceIn(0, total - 1)
+        val r = rightFrames.coerceIn(0, total - l - 1)
+        if (l == trimLeftFrames && r == trimRightFrames) return this
+        val whole = Array(channels) { ch ->
+            FloatArray(total).also { out ->
+                hiddenLeft?.let { System.arraycopy(it[ch], 0, out, 0, trimLeftFrames) }
+                System.arraycopy(data[ch], 0, out, trimLeftFrames, length)
+                hiddenRight?.let { System.arraycopy(it[ch], 0, out, trimLeftFrames + length, trimRightFrames) }
+            }
+        }
+        return FClip(name, sequenceStart + l / rate, rate,
+            Array(channels) { whole[it].copyOfRange(l, total - r) },
+            hiddenLeft = if (l > 0) Array(channels) { whole[it].copyOfRange(0, l) } else null,
+            hiddenRight = if (r > 0) Array(channels) { whole[it].copyOfRange(total - r, total) } else null)
+    }
+
+    /** WaveTrack::SplitAt at visible frame [i] (0 < i < length): both parts
+     *  keep the whole audio, the other part hidden. */
+    fun splitHidden(i: Int, rightName: String): Pair<FClip, FClip> {
+        val whole = retrimmed(0, 0)
+        val cut = trimLeftFrames + i
+        val left = whole.retrimmed(trimLeftFrames, whole.totalFrames - cut)
+        val right = whole.retrimmed(cut, trimRightFrames)
+        return Pair(left.withStart(start),
+            FClip(rightName, timeOf(i), rate, right.data, right.length, right.version, right.hiddenLeft, right.hiddenRight))
+    }
 
     @Volatile private var summaries: Array<Summary?> = arrayOfNulls(data.size)
 
@@ -76,8 +125,8 @@ internal class FClip(
 
     fun timeOf(i: Int): Double = start + i / rate
 
-    fun withStart(s: Double) = FClip(name, s, rate, data, length, version)
-    fun renamed(n: String) = FClip(n, start, rate, data, length, version)
+    fun withStart(s: Double) = FClip(name, s, rate, data, length, version, hiddenLeft, hiddenRight)
+    fun renamed(n: String) = FClip(n, start, rate, data, length, version, hiddenLeft, hiddenRight)
 
     /** Copy of frames [i0, i1) as a new clip starting at [newStart]. */
     fun slice(i0: Int, i1: Int, newStart: Double, newName: String = name): FClip {

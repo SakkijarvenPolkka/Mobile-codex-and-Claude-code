@@ -20,6 +20,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.annotation.StringRes
+import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -46,12 +47,16 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.TimeRange
 import io.github.sakkijarvenpolkka.audacity.files.InsufficientSpaceException
 import io.github.sakkijarvenpolkka.audacity.files.SafFiles
+import io.github.sakkijarvenpolkka.audacity.files.SourceTooLargeException
 import io.github.sakkijarvenpolkka.audacity.menu.Disallowed
 import io.github.sakkijarvenpolkka.audacity.menu.MenuHost
 import io.github.sakkijarvenpolkka.audacity.menu.MenuItem
 import io.github.sakkijarvenpolkka.audacity.menu.MenuSpec
 import io.github.sakkijarvenpolkka.audacity.menu.MenuState
 import io.github.sakkijarvenpolkka.audacity.prefs.UiPrefs
+import io.github.sakkijarvenpolkka.audacity.share.ShareAudio
+import io.github.sakkijarvenpolkka.audacity.share.ShareFormat
+import io.github.sakkijarvenpolkka.audacity.util.TimeCodec
 import io.github.sakkijarvenpolkka.audacity.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -72,6 +77,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.Collections
+import java.util.UUID
 import java.util.WeakHashMap
 import kotlin.coroutines.coroutineContext
 
@@ -130,12 +136,15 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
         private set
 
     /**
-     * Identifies requests launched by this view model. Purposes of activity
+     * Identifies requests launched by this process. Purposes of activity
      * results in flight are kept in [savedState]: the process may be killed
      * while a picker or the permission dialog is on top, and the result is
-     * then delivered to a new process (and view model).
+     * then delivered to a new process (and view model), where the project it
+     * was for is gone. Process-wide, not per view model: when only the
+     * Activity and its view model were destroyed, the project is still open
+     * and the result is still valid.
      */
-    private val requestToken = java.util.UUID.randomUUID().toString()
+    private val requestToken: String get() = processToken
 
     val projectsDir: File get() = File(context.filesDir, "Projects")
 
@@ -303,6 +312,7 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
             e is EngineException && e.code == ErrorCodes.STALE -> message(UiText.Res(R.string.msg_stale))
             e is EngineException -> message(UiText.Raw(e.message?.takeIf { it.isNotBlank() } ?: e.code))
             e is InsufficientSpaceException -> message(UiText.Res(R.string.msg_no_space_copy))
+            e is SourceTooLargeException -> message(UiText.Res(R.string.msg_source_too_large, listOf(TimeCodec.formatBytes(e.limit))))
             e is IOException -> message(UiText.Res(R.string.msg_io_error, listOf(e.message ?: e.toString())))
             else -> message(UiText.Raw(e.message ?: e.toString()))
         }
@@ -350,8 +360,8 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
         _requests.trySend(request)
     }
 
-    suspend fun askText(title: UiText, label: UiText, initial: String, allowEmpty: Boolean = false): String? {
-        val d = AppDialog.TextInput(title, label, initial, allowEmpty = allowEmpty)
+    suspend fun askText(title: UiText, label: UiText, initial: String, allowEmpty: Boolean = false, maxBytes: Int = Int.MAX_VALUE): String? {
+        val d = AppDialog.TextInput(title, label, initial, allowEmpty = allowEmpty, maxBytes = maxBytes)
         open(d)
         return d.result.await()
     }
@@ -437,7 +447,8 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
     private suspend fun saveAsInteractive(): Boolean {
         val p = engine.snapshot.value.project
         val initial = if (p.temporary || p.path == null) p.name.ifEmpty { string(R.string.untitled) } else p.name
-        val name = askText(UiText.Res(R.string.m_save_as_title), UiText.Res(R.string.project_name), initial) ?: return false
+        val name = askText(UiText.Res(R.string.m_save_as_title), UiText.Res(R.string.project_name), initial, maxBytes = SafFiles.MAX_STEM_BYTES)
+            ?: return false
         val base = SafFiles.sanitizeBaseName(name.trim().removeSuffix(".aup3"))
         val dir = projectsDir.apply { mkdirs() }
         val file = File(dir, "$base.aup3")
@@ -478,7 +489,8 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
             message(R.string.msg_rename_open_project)
             return
         }
-        val name = askText(UiText.Res(R.string.pm_rename), UiText.Res(R.string.project_name), entry.name) ?: return
+        val name = askText(UiText.Res(R.string.pm_rename), UiText.Res(R.string.project_name), entry.name, maxBytes = SafFiles.MAX_STEM_BYTES)
+            ?: return
         val base = SafFiles.sanitizeBaseName(name.trim().removeSuffix(".aup3"))
         if (base == entry.name) return
         if (recentProjects.value.any { it.name == base && it.path != entry.path }) {
@@ -634,7 +646,8 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
     fun handleIntent(intent: Intent?) {
         val uris = urisOf(intent ?: return)
         if (uris.isEmpty()) return
-        if (startupGate.value) openUris(uris) else pendingOpen = uris
+        // Before start-up is done, later intents add to the earlier ones
+        if (startupGate.value) openUris(uris) else pendingOpen = (pendingOpen + uris).distinct()
     }
 
     /**
@@ -723,12 +736,28 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
         val base = SafFiles.sanitizeBaseName(displayName.removeSuffix(".aup3").removeSuffix(".AUP3"))
         val dest = SafFiles.uniqueFile(dir, base, "aup3")
         withLocalProgress(UiText.Res(R.string.progress_copying, listOf(displayName))) { report ->
-            // Capped by the free space: the reported size may be missing or wrong
-            SafFiles.copyUriToFile(cr, uri, dest) { done, total -> if (total > 0) report(done.toDouble() / total) }
+            // Capped by the free space only (the reported size may be missing or wrong): a project
+            // can be larger than an audio file of unknown size may be
+            SafFiles.copyUriToFile(cr, uri, dest, unknownSizeLimit = Long.MAX_VALUE) { done, total ->
+                if (total > 0) report(done.toDouble() / total)
+            }
         }
-        engine.openProject(dest.absolutePath)
+        try {
+            engine.openProject(dest.absolutePath)
+        } catch (e: EngineException) {
+            // A copy the engine refused (damaged, audio busy) is not left in the project list.
+            // Not on cancellation: the engine may still be opening it.
+            if (engine.snapshot.value.project.path != dest.absolutePath) SafFiles.deleteProjectFiles(dest)
+            throw e
+        }
         show(AppScreen.EDITOR)
         refreshRecent()
+    }
+
+    /** A fresh `cacheDir/<kind>/<uuid>`, once the start-up clean-up of old staging is done. */
+    private suspend fun newStagingDir(kind: String): File {
+        audacity.awaitStagingCleanup()
+        return withContext(Dispatchers.IO) { SafFiles.stagingDir(context.cacheDir, kind) }
     }
 
     /** Copies picked documents to `cacheDir/import/<uuid>/<name>` (§5.2); null when there is no room. */
@@ -744,11 +773,11 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
             val staged = ArrayList<File>()
             for ((i, uri) in uris.withIndex()) {
                 val name = SafFiles.sanitizeFileName(docs[i].name, docs[i].mime)
-                val dir = SafFiles.stagingDir(context.cacheDir, "import")
+                val dir = newStagingDir("import")
                 dirs += dir
                 val dest = File(dir, name)
                 withLocalProgress(UiText.Res(R.string.progress_copying_n, listOf(name, i + 1, uris.size))) { report ->
-                    // Capped by the free space: a source of unknown size can be endless
+                    // Capped by the free space (and 4 GiB without a size): a source of unknown size can be endless
                     SafFiles.copyUriToFile(cr, uri, dest) { done, size -> if (size > 0) report(done.toDouble() / size) }
                 }
                 staged += dest
@@ -779,6 +808,27 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
             if (n == 0) message(R.string.msg_no_labels_in_file) else message(R.string.msg_labels_imported, n)
         } finally {
             SafFiles.deleteStaging(staged.parentFile)
+        }
+    }
+
+    /**
+     * File ▸ Share Audio: exports the selection (or the project) in a quick
+     * [format] to `cacheDir/share/<uuid>/<name>` and asks the Activity for the
+     * share sheet. Earlier shared files are removed first (their share sheet
+     * is done once the user is back here); the last one stays for the
+     * receiver and goes at a later share or start-up (AudacityApp).
+     */
+    fun shareAudio(format: ShareFormat, selectionOnly: Boolean): Job = launchAction {
+        uiPrefs.update { it.copy(lastShareFormat = format.name) }
+        withContext(Dispatchers.IO) { ShareAudio.clearStaging(context.cacheDir) }
+        val dir = newStagingDir(ShareAudio.STAGING)
+        try {
+            val name = engine.snapshot.value.project.name.ifEmpty { string(R.string.untitled) }
+            val call = ShareAudio.export(engine, format, selectionOnly, dir, name)
+            request(HostRequest.ShareFile(File(call.path), SafFiles.mimeForExtension(SafFiles.extensionOf(call.path))))
+        } catch (e: Throwable) {
+            SafFiles.deleteStaging(dir)
+            throw e
         }
     }
 
@@ -815,68 +865,76 @@ class AppViewModel(app: Application, private val savedState: SavedStateHandle) :
     /** Writes the document [uri] created for [purpose]. */
     fun onDocumentCreated(purpose: CreatePurpose, uri: Uri?) {
         if (uri == null) return
-        val cr = context.contentResolver
         when (purpose) {
             is CreatePurpose.ExportAudio -> launchAction {
                 val job = purpose.job
-                val dir = SafFiles.stagingDir(context.cacheDir, "export")
-                val staged = File(dir, SafFiles.sanitizeFileName(job.fileName, null))
-                try {
+                val name = writeDocument(uri, SafFiles.sanitizeFileName(job.fileName, null), job.fileName, progress = true) { staged ->
                     engine.export(staged.absolutePath, job.formatKey, job.range, job.channels, job.rate, job.skipSilenceAtStart)
-                    withLocalProgress(UiText.Res(R.string.progress_saving, listOf(job.fileName))) { report ->
-                        SafFiles.copyFileToUri(cr, staged, uri) { done, total -> if (total > 0) report(done.toDouble() / total) }
-                    }
-                    uiPrefs.update { it.copy(lastExportFormat = job.formatKey, exportSkipSilence = job.skipSilenceAtStart) }
-                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: job.fileName)
-                } catch (e: Throwable) {
-                    SafFiles.deleteDocument(cr, uri)
-                    throw e
-                } finally {
-                    SafFiles.deleteStaging(dir)
                 }
+                uiPrefs.update { it.copy(lastExportFormat = job.formatKey, exportSkipSilence = job.skipSilenceAtStart) }
+                message(R.string.msg_exported, name)
             }
             CreatePurpose.BackupProject -> launchAction {
-                val name = engine.snapshot.value.project.name.ifEmpty { "Untitled" }
-                val dir = SafFiles.stagingDir(context.cacheDir, "export")
-                val staged = File(dir, SafFiles.sanitizeBaseName(name) + ".aup3")
-                try {
-                    engine.saveProjectCopy(staged.absolutePath)
-                    withLocalProgress(UiText.Res(R.string.progress_saving, listOf(staged.name))) { report ->
-                        SafFiles.copyFileToUri(cr, staged, uri) { done, total -> if (total > 0) report(done.toDouble() / total) }
-                    }
-                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: staged.name)
-                } catch (e: Throwable) {
-                    SafFiles.deleteDocument(cr, uri)
-                    throw e
-                } finally {
-                    SafFiles.deleteStaging(dir)
-                }
+                val file = SafFiles.sanitizeBaseName(engine.snapshot.value.project.name.ifEmpty { "Untitled" }) + ".aup3"
+                val name = writeDocument(uri, file, file, progress = true) { staged -> engine.saveProjectCopy(staged.absolutePath) }
+                message(R.string.msg_exported, name)
             }
             is CreatePurpose.ExportLabels -> launchAction {
                 // labels.export writes a staging file in the chosen format; then it is copied to the document
-                val dir = SafFiles.stagingDir(context.cacheDir, "export")
-                val staged = File(dir, SafFiles.sanitizeFileName(purpose.fileName, null))
-                try {
+                val name = writeDocument(uri, SafFiles.sanitizeFileName(purpose.fileName, null), purpose.fileName, progress = false) { staged ->
                     engine.exportLabels(staged.absolutePath, purpose.format)
-                    SafFiles.copyFileToUri(cr, staged, uri)
-                    message(R.string.msg_exported, SafFiles.displayNameIo(cr, uri) ?: purpose.fileName)
-                } catch (e: Throwable) {
-                    SafFiles.deleteDocument(cr, uri)
-                    throw e
-                } finally {
-                    SafFiles.deleteStaging(dir)
                 }
+                message(R.string.msg_exported, name)
             }
         }
     }
 
-    private companion object {
+    /**
+     * Has [produce] write `cacheDir/export/<uuid>/<stagedName>`, then copies it
+     * to the created document [uri] (§5.3); returns the document's display
+     * name. On failure or cancellation the document is removed; the staging
+     * directory always is.
+     */
+    private suspend fun writeDocument(
+        uri: Uri,
+        stagedName: String,
+        title: String,
+        progress: Boolean,
+        produce: suspend (File) -> Unit,
+    ): String {
+        val cr = context.contentResolver
+        var dir: File? = null
+        try {
+            dir = newStagingDir("export")
+            val staged = File(dir, stagedName)
+            produce(staged)
+            if (progress) {
+                withLocalProgress(UiText.Res(R.string.progress_saving, listOf(title))) { report ->
+                    SafFiles.copyFileToUri(cr, staged, uri) { done, total -> if (total > 0) report(done.toDouble() / total) }
+                }
+            } else {
+                SafFiles.copyFileToUri(cr, staged, uri)
+            }
+        } catch (e: Throwable) {
+            SafFiles.deleteDocument(cr, uri)
+            throw e
+        } finally {
+            SafFiles.deleteStaging(dir)
+        }
+        return SafFiles.displayNameIo(cr, uri) ?: title
+    }
+
+    internal companion object {
         const val PREFS = "audacity_ui"
         const val K_ASKED_NOTIFICATIONS = "askedNotificationPermission"
         const val K_OPEN = "request.openPurpose"
         const val K_CREATE = "request.createPurpose"
         const val K_RECORD = "request.recordPermission"
         const val K_TOKEN = "token"
+
+        /** See [requestToken]; replaced by tests to simulate a new process. */
+        @VisibleForTesting
+        var processToken: String = UUID.randomUUID().toString()
 
         /**
          * Engines whose start-up recovery prompt was answered. Process-wide:

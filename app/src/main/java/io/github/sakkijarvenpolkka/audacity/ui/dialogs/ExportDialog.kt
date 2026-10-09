@@ -53,6 +53,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.ExportOption
 import io.github.sakkijarvenpolkka.audacity.engine.model.ExportOptions
 import io.github.sakkijarvenpolkka.audacity.engine.model.ExportValue
 import io.github.sakkijarvenpolkka.audacity.export.ExportModel
+import io.github.sakkijarvenpolkka.audacity.files.SafFiles
 import io.github.sakkijarvenpolkka.audacity.ui.AppDialogFrame
 import io.github.sakkijarvenpolkka.audacity.ui.Dropdown
 import io.github.sakkijarvenpolkka.audacity.ui.SectionHeader
@@ -75,6 +76,8 @@ fun ExportDialog(d: AppDialog.Export, vm: AppViewModel) {
     var skipSilence by rememberSaveable { mutableStateOf(vm.uiPrefs.value.exportSkipSilence) }
 
     val format = formats.firstOrNull { it.key == formatKey }
+    // File names are limited to 255 bytes (about 85 Korean characters); the staging copy is shortened by itself
+    val nameTooLong = SafFiles.utf8Length(ExportModel.withExtension(fileName.trim(), format)) > SafFiles.MAX_DOCUMENT_NAME_BYTES
 
     LaunchedEffect(Unit) {
         try {
@@ -122,7 +125,7 @@ fun ExportDialog(d: AppDialog.Export, vm: AppViewModel) {
             }
             TextButton(onClick = { vm.dismiss(d) }) { Text(stringResource(R.string.btn_cancel)) }
             Button(
-                enabled = format != null && options != null && fileName.isNotBlank() && rate > 0 && channels > 0,
+                enabled = format != null && options != null && fileName.isNotBlank() && !nameTooLong && rate > 0 && channels > 0,
                 onClick = {
                     vm.startExport(
                         ExportJob(formatKey, ExportModel.withExtension(fileName.trim(), format), range, channels, rate, skipSilence),
@@ -137,7 +140,9 @@ fun ExportDialog(d: AppDialog.Export, vm: AppViewModel) {
         OutlinedTextField(
             value = fileName, onValueChange = { fileName = it }, singleLine = true,
             label = { Text(stringResource(R.string.ex_file_name)) },
-            modifier = Modifier.fillMaxWidth(),
+            isError = nameTooLong,
+            supportingText = if (nameTooLong) ({ Text(stringResource(R.string.msg_name_too_long)) }) else null,
+            modifier = Modifier.fillMaxWidth().testTag("export:fileName"),
         )
         Dropdown(
             stringResource(R.string.ex_format), formats, format, { it.description.ifEmpty { it.key } },

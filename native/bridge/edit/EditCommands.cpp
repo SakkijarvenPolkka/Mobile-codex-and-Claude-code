@@ -18,6 +18,7 @@
 #include "EditUtil.h"
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 #include "BasicUI.h"
@@ -27,6 +28,7 @@
 #include "ModuleRegistry.h"
 #include "Prefs.h"
 #include "Project.h"
+#include "ProjectHistory.h"
 #include "ProjectRate.h"
 #include "ProjectTimeSignature.h"
 #include "Session.h"
@@ -532,6 +534,70 @@ json Split(const json &)
    return json::object();
 }
 
+//! edit.splitAt: Edit ▸ Audio Clips ▸ Split at one point, for the mobile
+//! "split" button (at the cursor / play head) and the razor tool (a tap on
+//! a waveform).  OnSplit's WaveTrack::Split(t, t) per track, one "Split"
+//! entry; the cursor moves to the split point.
+json SplitAt(const json &args)
+{
+   auto &project = Project();
+   const double t = ArgTime(args, "t");
+   auto &tracks = TrackList::Get(project);
+
+   const auto splits = [](const WaveTrack &wt, double t) {
+      // On the sample grid (SplitAt snaps): a point that rounds to a clip
+      // boundary does not split (no empty clip)
+      const double ts = wt.SnapToSample(t);
+      for (const auto &clip : wt.Intervals())
+         if (clip->SplitsPlayRegion(ts))
+            return true;
+      return false;
+   };
+
+   std::vector<WaveTrack *> targets;
+   if (args.contains("trackIds") && !args["trackIds"].is_null()) {
+      const auto ids = ArgIntArray(args, "trackIds");
+      if (ids.empty())
+         Fail(ErrorCode::INVALID_ARGS, "argument 'trackIds' must not be empty");
+      for (auto id : ids) {
+         auto *wt = &RequireWaveTrack(project, id);
+         if (std::find(targets.begin(), targets.end(), wt) == targets.end())
+            targets.push_back(wt);
+      }
+   }
+   else {
+      for (auto wt : tracks.Selected<WaveTrack>())
+         targets.push_back(wt);
+      if (targets.empty())
+         // Nothing selected: the tracks whose clips contain t
+         for (auto wt : tracks.Any<WaveTrack>())
+            if (splits(*wt, t))
+               targets.push_back(wt);
+   }
+
+   json splitIds = json::array();
+   // RunEditSelf: no generation bump when nothing is split
+   RunEditSelf(project, [&] {
+      std::optional<double> cursor;
+      for (auto wt : targets) {
+         if (!splits(*wt, t))
+            continue;
+         const double ts = wt->SnapToSample(t);
+         wt->SplitAt(ts);
+         splitIds.push_back(TrackIdValue(*wt));
+         if (!cursor)
+            cursor = ts;
+      }
+      if (!cursor)
+         // Nothing to split: no history entry, the selection is kept
+         return false;
+      ViewInfo::Get(project).selectedRegion.setTimes(*cursor, *cursor);
+      ProjectHistory::Get(project).PushState(XO("Split"), XO("Split"));
+      return true;
+   });
+   return json{ { "splits", splitIds.size() }, { "trackIds", splitIds } };
+}
+
 json SplitNew(const json &)
 {
    auto &project = Project();
@@ -651,6 +717,9 @@ void RegisterEditCommands(ModuleRegistry &registry)
    registry.AddCommand("edit.trim", Trim, m);
    registry.AddCommand("edit.duplicate", Duplicate, m);
    registry.AddCommand("edit.split", Split, m);
+   // M through RunEditSelf (which touches and rolls back itself): nothing
+   // to split = no generation bump, clip references stay valid
+   registry.AddCommand("edit.splitAt", SplitAt, NeedsProject | NeedsIdleAudio);
    registry.AddCommand("edit.splitNew", SplitNew, m);
    registry.AddCommand("edit.join", Join, m | LongRunning);
    registry.AddCommand("edit.detachAtSilences", DetachAtSilences, m);

@@ -236,13 +236,16 @@ internal fun ToggleFace(text: String, checked: Boolean, onClick: () -> Unit, mod
     }
 }
 
-/** Small glyph button of the TCP (×, ⌃, ⋯). */
+/** Small glyph button of the TCP (×, ⌃, ⋯); [width] > [size] widens the touch area only. */
 @Composable
-internal fun TcpIconButton(icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier, size: Int = 24) {
+internal fun TcpIconButton(
+    icon: ImageVector, description: String, onClick: () -> Unit, modifier: Modifier = Modifier,
+    size: Int = 24, width: Int = size,
+) {
     val pal = LocalAudacityColors.current
     Box(
         modifier
-            .size(size.dp)
+            .size(width = width.dp, height = size.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .semantics { this.contentDescription = description },
         contentAlignment = Alignment.Center,
@@ -422,6 +425,9 @@ private fun SliderRow(start: String, end: String, slider: @Composable (Modifier)
     }
 }
 
+/** Width of the compact header's touch targets (the row is 32 dp high). */
+private const val HEADER_TOUCH_WIDTH = 40
+
 /** Compact (phone) header row: [×] name [M][S] [mixer] [⌃] [⋯]. */
 @Composable
 internal fun TrackHeaderRow(
@@ -436,7 +442,8 @@ internal fun TrackHeaderRow(
     val pal = LocalAudacityColors.current
     Column(modifier.background(if (track.selected) pal.trackInfoSelected else pal.trackInfo)) {
         Row(Modifier.fillMaxWidth().height(32.dp).padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            TcpIconButton(AudacityIcons.Close, stringResource(R.string.aued_remove_track), { actions.remove(track.id) }, size = 32)
+            TcpIconButton(AudacityIcons.Close, stringResource(R.string.aued_remove_track), { actions.remove(track.id) },
+                size = 32, width = HEADER_TOUCH_WIDTH)
             Text(
                 track.name, color = pal.text, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
@@ -453,14 +460,16 @@ internal fun TrackHeaderRow(
                     { actions.solo(track.id, !track.solo) }, Modifier.size(width = 40.dp, height = 32.dp)
                         .semantics { contentDescription = soloLabel },
                     face = Modifier.size(width = 32.dp, height = 24.dp))
-                TcpIconButton(AudacityIcons.Mixer, stringResource(R.string.aued_show_mixer), { state.toggleMixer(track.id) }, size = 32)
+                TcpIconButton(AudacityIcons.Mixer, stringResource(R.string.aued_show_mixer), { state.toggleMixer(track.id) },
+                    size = 32, width = HEADER_TOUCH_WIDTH)
             }
             TcpIconButton(
                 if (collapsed) AudacityIcons.ChevronDown else AudacityIcons.ChevronUp,
                 stringResource(if (collapsed) R.string.aued_expand else R.string.aued_collapse),
-                { state.toggleCollapsed(track.id) }, size = 32,
+                { state.toggleCollapsed(track.id) }, size = 32, width = HEADER_TOUCH_WIDTH,
             )
-            TcpIconButton(AudacityIcons.Ellipsis, stringResource(R.string.aued_track_menu), { callbacks.onTrackMenu(track.id) }, size = 32)
+            TcpIconButton(AudacityIcons.Ellipsis, stringResource(R.string.aued_track_menu), { callbacks.onTrackMenu(track.id) },
+                size = 32, width = HEADER_TOUCH_WIDTH)
         }
         if (mixerOpen && track.isWave) {
             Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {

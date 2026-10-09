@@ -1,6 +1,9 @@
 /*
  * Audacity Android port — the main window: menus, toolbars and the editor
  * arranged per breakpoint (ui-reference.md §9.2-9.4), plus the dialog host.
+ * Phones get the editor's MobileEditBar (✂ Split, edit commands, quick
+ * effects) at the bottom, within the thumb's reach; tablets get it as a
+ * bottom row too. Short windows merge rows so the tracks keep their height.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -16,20 +19,25 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -50,6 +58,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -63,10 +72,17 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.audacity.AppDialog
 import io.github.sakkijarvenpolkka.audacity.AppScreen
@@ -81,6 +97,7 @@ import io.github.sakkijarvenpolkka.audacity.editor.EditorScreen
 import io.github.sakkijarvenpolkka.audacity.editor.EditorState
 import io.github.sakkijarvenpolkka.audacity.editor.LocalAudacityColors
 import io.github.sakkijarvenpolkka.audacity.editor.MeterToolbar
+import io.github.sakkijarvenpolkka.audacity.editor.MobileEditBar
 import io.github.sakkijarvenpolkka.audacity.editor.SelectionToolbar
 import io.github.sakkijarvenpolkka.audacity.editor.TimeToolbar
 import io.github.sakkijarvenpolkka.audacity.editor.TransportToolbar
@@ -102,9 +119,11 @@ import io.github.sakkijarvenpolkka.audacity.ui.dialogs.InfoDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.LabelEditorDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.LocalProgressDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.PlotSpectrumDialog
+import io.github.sakkijarvenpolkka.audacity.ui.dialogs.QuickEffectsSheet
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.RecoveryDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.ResampleDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.SaveChangesDialog
+import io.github.sakkijarvenpolkka.audacity.ui.dialogs.ShareDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.TagsDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.TextInputDialog
 import io.github.sakkijarvenpolkka.audacity.ui.dialogs.TimeInputDialog
@@ -123,6 +142,19 @@ fun layoutKind(widthDp: Float, heightDp: Float): LayoutKind = when {
     widthDp > heightDp && widthDp >= 560f -> LayoutKind.PHONE_LANDSCAPE
     else -> LayoutKind.PHONE_PORTRAIT
 }
+
+/**
+ * Phone portrait below this height (system bars excluded, the keyboard
+ * not): the Edit and Selection toolbars share a row, so that the tracks keep
+ * about half of a small phone's height next to the edit bar.
+ */
+const val COMPACT_PORTRAIT_HEIGHT_DP: Float = 640f
+
+/** Test tag of the row holding the editor's [MobileEditBar]. */
+const val EDIT_BAR_ROW_TAG: String = "main:editBar"
+
+/** Test tag of the editor area (tracks). */
+const val EDITOR_AREA_TAG: String = "main:editor"
 
 @Composable
 fun AppRoot(vm: AppViewModel) {
@@ -152,7 +184,11 @@ fun rememberMenuState(vm: AppViewModel): MenuState {
     val settings by vm.settings.collectAsState()
     val prefs by vm.uiPrefs.state.collectAsState()
     val recent by vm.recentProjects.collectAsState()
-    return MenuState(snapshot, effects, settings, prefs.showClipping, prefs.showRms, vm.editor?.followPlayhead ?: true, recent)
+    return MenuState(
+        snapshot, effects, settings, prefs.showClipping, prefs.showRms, vm.editor?.followPlayhead ?: true, recent,
+        stopAtTrackEnd = prefs.stopAtTrackEnd, snapEnabled = prefs.snapEnabled, snapToGrid = prefs.snapToGrid,
+        splitTool = prefs.splitTool,
+    )
 }
 
 private class Callbacks(private val vm: AppViewModel) : EditorCallbacks {
@@ -170,6 +206,7 @@ private class Callbacks(private val vm: AppViewModel) : EditorCallbacks {
             vm.engine.renameClip(trackId, clipIndex, generation, name)
         }
     }
+    override fun onQuickEffects() = vm.open(AppDialog.QuickEffects)
 }
 
 @Composable
@@ -181,6 +218,16 @@ private fun EditorShell(vm: AppViewModel, snackbar: SnackbarHostState) {
         editorState.showClipping = prefs.showClipping
         editorState.showRms = prefs.showRms
     }
+    // Stop at track end, snapping and the split tool: the preferences are applied to the
+    // editor here once, the View-menu toggles change both at once (MenuSpec.editorPrefs), and
+    // the editor's own changes (long-press ✂, the split-tool banner) are saved back. No
+    // preferences → editor collector: a stale value would undo a newer change in the editor.
+    LaunchedEffect(editorState) {
+        vm.uiPrefs.value.applyTo(editorState)
+        snapshotFlow { Triple(editorState.stopAtTrackEnd, editorState.snapping, editorState.tool) }.collect {
+            vm.uiPrefs.update { p -> p.withEditor(editorState) }
+        }
+    }
     val callbacks = remember(vm) { Callbacks(vm) }
     val menuState = rememberMenuState(vm)
     val focus = remember { FocusRequester() }
@@ -191,9 +238,12 @@ private fun EditorShell(vm: AppViewModel, snackbar: SnackbarHostState) {
         item.enabled(menuState.flags)
     }
 
+    val pal = LocalAudacityColors.current
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         contentWindowInsets = WindowInsets.safeDrawing,
+        // The system bars (edge-to-edge) show the toolbar colour
+        containerColor = pal.medium,
         modifier = Modifier
             .focusRequester(focus)
             .focusable()
@@ -201,13 +251,27 @@ private fun EditorShell(vm: AppViewModel, snackbar: SnackbarHostState) {
                 e.type == KeyEventType.KeyDown && vm.onShortcut(e.key, e.isCtrlPressed, e.isShiftPressed, e.isAltPressed, menuState)
             },
     ) { padding ->
-        BoxWithConstraints(Modifier.padding(padding).fillMaxSize().background(LocalAudacityColors.current.medium)) {
-            val kind = layoutKind(maxWidth.value, maxHeight.value)
+        // The breakpoint and the compact rows follow the window without the keyboard:
+        // an open keyboard (typing a selection time) must not move the focused field
+        val density = LocalDensity.current
+        val direction = LocalLayoutDirection.current
+        val bars = WindowInsets.systemBars.union(WindowInsets.displayCutout)
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val stableHeight = maxHeight - with(density) { (bars.getTop(this) + bars.getBottom(this)).toDp() }
+            val stableWidth = maxWidth - with(density) {
+                (bars.getLeft(this, direction) + bars.getRight(this, direction)).toDp()
+            }
+            val kind = layoutKind(stableWidth.value, stableHeight.value)
             val openMenu: () -> Unit = { menuSheet = true }
-            when (kind) {
-                LayoutKind.TABLET -> TabletLayout(vm, editorState, callbacks, menuState, onItem)
-                LayoutKind.PHONE_LANDSCAPE -> LandscapeLayout(vm, editorState, callbacks, menuState, onItem, openMenu)
-                LayoutKind.PHONE_PORTRAIT -> PortraitLayout(vm, editorState, callbacks, menuState, onItem, openMenu)
+            Box(Modifier.padding(padding).fillMaxSize().background(pal.medium)) {
+                when (kind) {
+                    LayoutKind.TABLET -> TabletLayout(vm, editorState, callbacks, menuState, onItem)
+                    LayoutKind.PHONE_LANDSCAPE -> LandscapeLayout(vm, editorState, callbacks, menuState, onItem, openMenu, stableWidth)
+                    LayoutKind.PHONE_PORTRAIT -> PortraitLayout(
+                        vm, editorState, callbacks, menuState, onItem, openMenu,
+                        compact = stableHeight.value < COMPACT_PORTRAIT_HEIGHT_DP,
+                    )
+                }
             }
         }
     }
@@ -221,7 +285,7 @@ private fun EditorShell(vm: AppViewModel, snackbar: SnackbarHostState) {
 private fun EditorArea(vm: AppViewModel, editorState: EditorState, callbacks: EditorCallbacks, modifier: Modifier) {
     val density = LocalDensity.current.density
     val snapshot by vm.engine.snapshot.collectAsState()
-    Box(modifier.onSizeChanged { vm.editorHeightDp = it.height / density }) {
+    Box(modifier.testTag(EDITOR_AREA_TAG).onSizeChanged { vm.editorHeightDp = it.height / density }) {
         EditorScreen(vm.engine, editorState, callbacks, Modifier.fillMaxSize())
         if (!snapshot.project.open) NoProjectPanel(vm, Modifier.align(Alignment.Center))
     }
@@ -268,10 +332,17 @@ private fun TopBarActions(vm: AppViewModel, menuState: MenuState, onItem: (MenuI
     }
     var overflow by remember { mutableStateOf(false) }
     Box {
-        IconButton(onClick = { overflow = true }) { Icon(Icons.Filled.MoreVert, stringResource(R.string.btn_more)) }
+        IconButton(onClick = { overflow = true }, modifier = Modifier.testTag("top:more")) {
+            Icon(Icons.Filled.MoreVert, stringResource(R.string.btn_more))
+        }
         DropdownMenu(expanded = overflow, onDismissRequest = { overflow = false }) {
-            listOf("Projects", "Save", "Export", "ImportAudio", "Preferences", "About").forEach { id ->
+            OVERFLOW_ITEMS.forEach { id ->
+                if (id == null) {
+                    HorizontalDivider()
+                    return@forEach
+                }
                 val item = MenuSpec.find(id, menuState) ?: return@forEach
+                val checked = item.checked?.invoke(menuState)
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -280,25 +351,50 @@ private fun TopBarActions(vm: AppViewModel, menuState: MenuState, onItem: (MenuI
                             else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                         )
                     },
+                    trailingIcon = if (checked != null) ({ if (checked) Icon(Icons.Filled.Check, null) }) else null,
                     onClick = {
                         overflow = false
                         onItem(item)
                     },
+                    modifier = Modifier
+                        .testTag("overflow:$id")
+                        .then(
+                            if (checked != null) Modifier.semantics {
+                                role = Role.Checkbox
+                                toggleableState = ToggleableState(checked)
+                            } else Modifier,
+                        ),
                 )
             }
         }
     }
 }
 
+/** The phone overflow menu: frequent File items, then the editor toggles (null = divider). */
+private val OVERFLOW_ITEMS = listOf(
+    "Projects", "Save", "Export", "ShareAudio", "ImportAudio", "Preferences", "About", null,
+    "Snapping", "StopAtTrackEnd", "SplitTool",
+)
+
 private val OVERFLOW_LABELS = mapOf(
     "Projects" to R.string.m_projects, "Save" to R.string.m_save, "Export" to R.string.m_export_audio,
-    "ImportAudio" to R.string.m_import_audio_long, "Preferences" to R.string.m_preferences, "About" to R.string.m_about,
+    "ShareAudio" to R.string.m_share_audio, "ImportAudio" to R.string.m_import_audio_long,
+    "Preferences" to R.string.m_preferences, "About" to R.string.m_about,
+    "Snapping" to R.string.m_snapping, "StopAtTrackEnd" to R.string.m_stop_at_track_end, "SplitTool" to R.string.m_split_tool,
 )
+
+/** The editor's mobile edit bar as a full-width bottom row (navigation-bar insets come from the Scaffold). */
+@Composable
+private fun EditBarRow(vm: AppViewModel, editorState: EditorState, callbacks: EditorCallbacks, modifier: Modifier = Modifier) {
+    Box(modifier.background(LocalAudacityColors.current.medium).testTag(EDIT_BAR_ROW_TAG)) {
+        MobileEditBar(vm.engine, editorState, callbacks, Modifier.fillMaxWidth())
+    }
+}
 
 @Composable
 private fun PortraitLayout(
     vm: AppViewModel, editorState: EditorState, callbacks: EditorCallbacks, menuState: MenuState,
-    onItem: (MenuItem) -> Boolean, openMenu: () -> Unit,
+    onItem: (MenuItem) -> Boolean, openMenu: () -> Unit, compact: Boolean,
 ) {
     val pal = LocalAudacityColors.current
     Column(Modifier.fillMaxSize()) {
@@ -316,16 +412,25 @@ private fun PortraitLayout(
             MeterToolbar(vm.engine, Modifier.weight(1f))
         }
         EditorArea(vm, editorState, callbacks, Modifier.weight(1f).fillMaxWidth())
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) { EditToolbar(vm.engine, editorState) }
-        SelectionToolbar(vm.engine, Modifier.fillMaxWidth())
+        if (compact) {
+            // One row: both toolbars scroll sideways
+            Row(Modifier.fillMaxWidth().background(pal.medium), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState())) { EditToolbar(vm.engine, editorState) }
+                SelectionToolbar(vm.engine, Modifier.weight(1f), editorState)
+            }
+        } else {
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())) { EditToolbar(vm.engine, editorState) }
+            SelectionToolbar(vm.engine, Modifier.fillMaxWidth(), editorState)
+        }
         TransportToolbar(vm.engine, callbacks, Modifier.fillMaxWidth())
+        EditBarRow(vm, editorState, callbacks, Modifier.fillMaxWidth())
     }
 }
 
 @Composable
 private fun LandscapeLayout(
     vm: AppViewModel, editorState: EditorState, callbacks: EditorCallbacks, menuState: MenuState,
-    onItem: (MenuItem) -> Boolean, openMenu: () -> Unit,
+    onItem: (MenuItem) -> Boolean, openMenu: () -> Unit, width: Dp,
 ) {
     val pal = LocalAudacityColors.current
     Column(Modifier.fillMaxSize()) {
@@ -342,7 +447,11 @@ private fun LandscapeLayout(
             TopBarActions(vm, menuState, onItem)
         }
         EditorArea(vm, editorState, callbacks, Modifier.weight(1f).fillMaxWidth())
-        SelectionToolbar(vm.engine, Modifier.fillMaxWidth())
+        // The edit bar and the selection share the bottom row (the height is short)
+        Row(Modifier.fillMaxWidth().background(pal.medium), verticalAlignment = Alignment.CenterVertically) {
+            EditBarRow(vm, editorState, callbacks, Modifier.weight(1f))
+            SelectionToolbar(vm.engine, Modifier.widthIn(max = width * 0.45f), editorState)
+        }
     }
 }
 
@@ -373,8 +482,9 @@ private fun TabletLayout(
         EditorArea(vm, editorState, callbacks, Modifier.weight(1f).fillMaxWidth())
         Row(Modifier.fillMaxWidth().background(pal.medium), verticalAlignment = Alignment.CenterVertically) {
             TimeToolbar(vm.engine, Modifier.padding(4.dp))
-            SelectionToolbar(vm.engine, Modifier.weight(1f))
+            SelectionToolbar(vm.engine, Modifier.weight(1f), editorState)
         }
+        EditBarRow(vm, editorState, callbacks, Modifier.fillMaxWidth())
     }
 }
 
@@ -405,6 +515,12 @@ fun DialogHost(vm: AppViewModel) {
                 AppDialog.Resample -> ResampleDialog(d, vm)
                 AppDialog.DeviceInfo -> DeviceInfoDialog(d, vm)
                 AppDialog.LabelEditor -> LabelEditorDialog(d, vm)
+                AppDialog.QuickEffects -> QuickEffectsSheet(d, vm, menuState, onItem)
+                AppDialog.EffectMenu -> {
+                    val menu = MenuSpec.menus.first { it.id == "Effect" }
+                    ContextSheet(menu.label.text(), menu.children, menuState, onItem) { vm.dismiss(d) }
+                }
+                AppDialog.Share -> ShareDialog(d, vm)
                 is AppDialog.Context -> ContextSheet(
                     ContextMenus.title(d.target, menuState.snapshot).text(),
                     ContextMenus.forTarget(d.target, menuState.snapshot, { vm.editor?.isSpectrogram(it) == true }, { id, on -> vm.editor?.setSpectrogram(id, on) }),

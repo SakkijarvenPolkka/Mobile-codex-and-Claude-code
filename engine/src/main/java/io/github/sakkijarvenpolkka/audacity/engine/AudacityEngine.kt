@@ -17,6 +17,7 @@ package io.github.sakkijarvenpolkka.audacity.engine
 import io.github.sakkijarvenpolkka.audacity.engine.model.AppInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
+import io.github.sakkijarvenpolkka.audacity.engine.model.ClipTrimResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.CompactInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.ContrastResult
@@ -41,6 +42,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.SpectrumResult
+import io.github.sakkijarvenpolkka.audacity.engine.model.SplitResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Tag
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportEvent
 import io.github.sakkijarvenpolkka.audacity.engine.model.TransportSample
@@ -206,6 +208,14 @@ interface AudacityEngine {
      *  "edit.join", "edit.detachAtSilences". */
     suspend fun edit(command: String)
     suspend fun clipboardInfo(): ClipboardInfo                       // edit.clipboardInfo
+    /**
+     * Splits at one point (the mobile "split" button at the cursor/play head,
+     * the razor tool) in one "Split" entry; the cursor moves to the split
+     * point. [trackIds] null = the selected wave tracks, or, with no track
+     * selected, every wave track with a clip at [t]. Nothing to split →
+     * `splits == 0` and nothing changes.
+     */
+    suspend fun splitAt(t: Double, trackIds: List<Long>? = null): SplitResult // edit.splitAt
 
     // ----- tracks ------------------------------------------------------------
     suspend fun addTrack(kind: String): Long                         // tracks.add
@@ -237,7 +247,21 @@ interface AudacityEngine {
     // ----- clips / labels ----------------------------------------------------
     suspend fun moveClip(trackId: Long, clipIndex: Int, generation: Long, newStart: Double, toTrackId: Long? = null) // clips.move
     suspend fun renameClip(trackId: Long, clipIndex: Int, generation: Long, name: String) // clips.rename
+    /**
+     * Non-destructive trim of a clip's borders: [trimLeft]/[trimRight] are the
+     * absolute hidden lengths in seconds (like [io.github.sakkijarvenpolkka.audacity.engine.model.ClipState]),
+     * at least one of them; clamped to the clip's audio and its neighbours.
+     * `final = false` while dragging (no history entry, no generation bump,
+     * so [generation] stays valid), `final = true` on release: one
+     * "Adjust left/right trim" entry for the whole drag (none when the clip
+     * ends where the drag started, so sending the initial values cancels).
+     */
+    suspend fun trimClip(trackId: Long, clipIndex: Int, generation: Long, trimLeft: Double? = null,
+                         trimRight: Double? = null, final: Boolean = true): ClipTrimResult // clips.trim
     suspend fun addLabel(title: String = ""): Pair<Long, Int>        // labels.add
+    /** Adds a label at [t0, t1 ?: t0] (e.g. the play head while playing or
+     *  recording) without using or changing the time selection. */
+    suspend fun addLabel(title: String = "", t0: Double, t1: Double? = null): Pair<Long, Int> // labels.add
     /** Returns the label's index after the edit (time edits re-sort the
      *  labels). A [generation] older than the current one fails with STALE. */
     suspend fun editLabel(trackId: Long, index: Int, title: String? = null, t0: Double? = null, t1: Double? = null,

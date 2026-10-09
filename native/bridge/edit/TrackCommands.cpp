@@ -27,7 +27,6 @@
 #include "EditUtil.h"
 
 #include <algorithm>
-#include <chrono>
 #include <cmath>
 #include <optional>
 #include <vector>
@@ -332,52 +331,6 @@ json TracksResample(const json &args)
 // Volume / pan / mute / solo
 // ---------------------------------------------------------------------------
 
-int64_t NowMs()
-{
-   using namespace std::chrono;
-   return duration_cast<milliseconds>(
-      steady_clock::now().time_since_epoch()).count();
-}
-
-//! Snapshots of slider drags (final:false) at most every 100 ms
-struct SliderThrottle {
-   int64_t lastMs = 0;
-   bool pending = false;
-};
-SliderThrottle &Throttle()
-{
-   static SliderThrottle throttle;
-   return throttle;
-}
-
-void ThrottledSnapshot()
-{
-   auto &throttle = Throttle();
-   const auto now = NowMs();
-   if (now - throttle.lastMs >= 100) {
-      throttle.lastMs = now;
-      throttle.pending = false;
-      Session::Get().ScheduleSnapshot();
-   }
-   else
-      // Trailing snapshot from the tick handler
-      throttle.pending = true;
-}
-
-void ThrottleTick()
-{
-   auto &throttle = Throttle();
-   if (!throttle.pending)
-      return;
-   const auto now = NowMs();
-   if (now - throttle.lastMs < 100)
-      return;
-   throttle.pending = false;
-   throttle.lastMs = now;
-   if (Session::Get().Project())
-      Session::Get().EmitSnapshot();
-}
-
 // The volume slider of 3.7.9 spans -36 dB ... +36 dB
 constexpr double kMaxGain = 63.1;
 
@@ -416,7 +369,7 @@ json SetGainOrPan(const json &args, bool pan)
             XO("Volume"), UndoPush::CONSOLIDATE);
       return true;
    });
-   Throttle().pending = false;
+   CancelThrottledSnapshot();
    return json::object();
 }
 
@@ -993,8 +946,7 @@ json Align(const json &args)
 
 void RegisterTrackCommands(ModuleRegistry &registry)
 {
-   Throttle() = {};
-   registry.AddTickHandler(ThrottleTick);
+   RegisterSnapshotThrottle(registry);
 
    const unsigned m = NeedsProject | NeedsIdleAudio | Mutates;
    registry.AddCommand("tracks.add", TracksAdd, m);

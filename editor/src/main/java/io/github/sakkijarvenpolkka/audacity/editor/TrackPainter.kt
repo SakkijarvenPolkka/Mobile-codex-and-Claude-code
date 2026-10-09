@@ -49,6 +49,56 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+/**
+ * Text layouts by text string with the constraints they were made for: a
+ * lookup by the string allocates nothing; a change of the constraints
+ * re-lays out that one text. LRU-bounded; cleared when the style or the
+ * density changes.
+ */
+internal class TextLayoutCache(private val capacity: Int) {
+    private class Entry(var maxWidth: Int, var maxHeight: Int, var layout: TextLayoutResult)
+
+    private val map = LinkedHashMap<String, Entry>(64, 0.75f, true)
+    private var style: TextStyle? = null
+    private var density = 0f
+
+    val size: Int get() = map.size
+    /** Layouts made (cache misses). */
+    var misses: Int = 0
+        private set
+
+    /** The layout of [text] made for these constraints, or null (then [put] it). */
+    fun get(text: String, maxWidth: Int, maxHeight: Int, textStyle: TextStyle, d: Float): TextLayoutResult? {
+        if (textStyle != style || d != density) {
+            map.clear()
+            style = textStyle
+            density = d
+        }
+        val e = map[text] ?: return null
+        return if (e.maxWidth == maxWidth && e.maxHeight == maxHeight) e.layout else null
+    }
+
+    /** Stores [layout] of [text] (after a [get] miss with the same style and density). */
+    fun put(text: String, maxWidth: Int, maxHeight: Int, layout: TextLayoutResult): TextLayoutResult {
+        misses++
+        val e = map[text]
+        if (e != null) {
+            e.maxWidth = maxWidth
+            e.maxHeight = maxHeight
+            e.layout = layout
+        } else {
+            map[text] = Entry(maxWidth, maxHeight, layout)
+            // LRU bound (a TextLayoutResult holds a platform layout)
+            if (map.size > capacity) {
+                val it = map.entries.iterator()
+                it.next()
+                it.remove()
+            }
+        }
+        return layout
+    }
+}
+
 /** Everything one paint pass needs; one instance is reused across frames. */
 internal class PaintParams {
     var snapshot: Snapshot = Snapshot.EMPTY
@@ -117,14 +167,16 @@ internal class TrackPainter(
     var labelStyle: TextStyle = TextStyle.Default
 
     /**
-     * Laid-out label texts by (text, max height), so that a frame (playback
-     * follow, pinch zoom) does not lay out every visible label again: with
-     * hundreds of labels the measurer's small LRU cache never hits. Cleared
-     * when the style or the density changes.
+     * Laid-out label texts by text (with the max height they were laid out
+     * for), so that a frame (playback follow, pinch zoom) does not lay out
+     * every visible label again: with hundreds of labels the measurer's small
+     * LRU cache never hits. Looked up by the title string itself (no key
+     * allocation per frame); cleared when the style or the density changes.
      */
-    private val labelLayouts = LinkedHashMap<LabelTextKey, TextLayoutResult>(64, 0.75f, true)
-    private var labelLayoutStyle: TextStyle? = null
-    private var labelLayoutDensity = 0f
+    private val labelLayouts = TextLayoutCache(MAX_LABEL_LAYOUTS)
+
+    /** Clip names, the same way; the width is bucketed (ellipsis at partly visible clips). */
+    private val clipNameLayouts = TextLayoutCache(MAX_CLIP_NAME_LAYOUTS)
 
     // Per-paint scalars (set at the start of paint()).
     private var d = 1f
@@ -301,6 +353,7 @@ internal class TrackPainter(
         }
         s.drawRoundRect(if (active) pal.clipBarActive else pal.clipBar, Offset(left, top), Size(right - left, h + r), radius)
         s.drawRoundRect(pal.clipOutline, Offset(left, top), Size(right - left, h + r), radius, style = Stroke(max(1f, d * 0.75f)))
+        paintTrimGrips(s, p, cx0, cx1, top, h)
         // Overflow "⋯" button (dropped when < 50 dp would remain for the title).
         val barW = cx1 - cx0
         val overflowW = OVERFLOW_W * d
@@ -319,8 +372,25 @@ internal class TrackPainter(
         val textRight = (if (showOverflow) cx1 - overflowW else cx1) - r
         val maxW = min(textRight, width) - textLeft
         if (maxW < 12f * d) return
-        val layout = measure(name, clipNameStyle, maxW.toInt(), (h).toInt())
+        // Widths in buckets of 8 dp: a clip scrolled partly off screen
+        // re-lays out its name every 8 dp, not every frame.
+        val bucket = 8f * d
+        val w = (floor(maxW / bucket) * bucket).toInt().coerceAtLeast(1)
+        val layout = clipNameLayouts.get(name, w, h.toInt(), clipNameStyle, d)
+            ?: clipNameLayouts.put(name, w, h.toInt(), measure(name, clipNameStyle, w, h.toInt()))
         s.drawText(layout, color = pal.clipName, topLeft = Offset(textLeft, top + (h - layout.size.height) / 2f))
+    }
+
+    /** Trim grips: short bars inside both ends of the title bar (drag = trim the clip). */
+    private fun paintTrimGrips(s: DrawScope, p: PaintParams, cx0: Float, cx1: Float, top: Float, h: Float) {
+        if (cx1 - cx0 < 3 * TRIM_GRIP_MIN_DP * d || h < 8f * d) return
+        val gw = 2.5f * d
+        val gh = h * 0.5f
+        val gy = top + (h - gh) / 2f
+        val color = TrackPainter.dim(p.palette.clipName, 0.55f)
+        val r = CornerRadius(gw / 2f, gw / 2f)
+        if (cx0 + 3f * d >= -gw && cx0 <= width) s.drawRoundRect(color, Offset(cx0 + 3f * d, gy), Size(gw, gh), r)
+        if (cx1 >= 0f && cx1 - 3f * d - gw <= width) s.drawRoundRect(color, Offset(cx1 - 3f * d - gw, gy), Size(gw, gh), r)
     }
 
     private fun measure(text: String, style: TextStyle, maxWidth: Int, maxHeight: Int): TextLayoutResult =
@@ -626,27 +696,15 @@ internal class TrackPainter(
         }
     }
 
-    private data class LabelTextKey(val text: String, val maxHeight: Int)
-
     internal val labelLayoutCount: Int get() = labelLayouts.size
+    internal val clipNameLayoutCount: Int get() = clipNameLayouts.size
+    /** Text layouts made so far (labels and clip names; for tests). */
+    internal val measureCount: Int get() = labelLayouts.misses + clipNameLayouts.misses
 
     private fun labelLayout(text: String, maxHeight: Int): TextLayoutResult {
-        if (labelStyle != labelLayoutStyle || d != labelLayoutDensity) {
-            labelLayouts.clear()
-            labelLayoutStyle = labelStyle
-            labelLayoutDensity = d
-        }
-        val key = LabelTextKey(text, maxHeight)
-        labelLayouts[key]?.let { return it }
-        val layout = measure(text, labelStyle, (240f * d).toInt(), maxHeight)
-        labelLayouts[key] = layout
-        // LRU bound (a TextLayoutResult holds a platform layout)
-        if (labelLayouts.size > MAX_LABEL_LAYOUTS) {
-            val it = labelLayouts.entries.iterator()
-            it.next()
-            it.remove()
-        }
-        return layout
+        val w = (240f * d).toInt()
+        return labelLayouts.get(text, w, maxHeight, labelStyle, d)
+            ?: labelLayouts.put(text, w, maxHeight, measure(text, labelStyle, w, maxHeight))
     }
 
     // ------------------------------------------------------------------
@@ -690,6 +748,9 @@ internal class TrackPainter(
         private val SPECTRO_SELECTION = Color(0x55FFFFFF)
         private const val MAX_LABEL_ROWS = 8
         private const val MAX_LABEL_LAYOUTS = 1024
+        private const val MAX_CLIP_NAME_LAYOUTS = 256
+        /** Clips narrower than 3× this (dp) on screen get no trim grips. */
+        private const val TRIM_GRIP_MIN_DP = 12f
 
         /** WaveBitmapCache row math with zMin = −1, zMax = 1 (relative to the channel top). */
         fun rowOf(v: Float, h: Float): Float = floor((1f - v) / 2f * (h - 1f) + 0.5f)

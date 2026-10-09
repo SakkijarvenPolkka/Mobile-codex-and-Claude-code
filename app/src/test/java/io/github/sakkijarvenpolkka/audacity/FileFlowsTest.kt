@@ -7,14 +7,17 @@ import android.os.Looper
 import androidx.lifecycle.SavedStateHandle
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
+import io.github.sakkijarvenpolkka.audacity.engine.EngineException
 import io.github.sakkijarvenpolkka.audacity.engine.FakeAudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeConfig
+import io.github.sakkijarvenpolkka.audacity.engine.model.ErrorCodes
 import io.github.sakkijarvenpolkka.audacity.engine.model.ImportResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
 import io.github.sakkijarvenpolkka.audacity.export.ExportModel
 import io.github.sakkijarvenpolkka.audacity.files.SafFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -29,6 +32,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
 import java.util.concurrent.CopyOnWriteArrayList
@@ -36,6 +40,14 @@ import java.util.concurrent.CopyOnWriteArrayList
 /** Records the project/file commands of the app flows (the rest goes to the fake engine). */
 private class FlowEngine(val inner: FakeAudacityEngine) : AudacityEngine by inner {
     val calls = CopyOnWriteArrayList<String>()
+
+    /** project.open fails (a damaged .aup3). */
+    @Volatile var failOpen = false
+    override suspend fun openProject(path: String) {
+        calls += "open:$path"
+        if (failOpen) throw EngineException(ErrorCodes.FAILED, "The project file is damaged")
+        inner.openProject(path)
+    }
     override suspend fun importFiles(paths: List<String>, newProject: Boolean): ImportResult {
         calls += "import:$newProject:${paths.size}"
         return ImportResult(emptyList(), emptyList())
@@ -61,7 +73,7 @@ private class FlowEngine(val inner: FakeAudacityEngine) : AudacityEngine by inne
     }
 }
 
-/** Crash recovery, intents and activity results of the app view model (review F1-F4, F8). */
+/** Crash recovery, intents and activity results of the app view model (review F1-F4, F6, F8, F11). */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class FileFlowsTest {
@@ -88,6 +100,7 @@ class FileFlowsTest {
         collectors.cancel()
         fake.dispose()
         SafFiles.freeSpace = { it.usableSpace }
+        app.stagingCleanup = Job().apply { complete() }
     }
 
     private fun newVm(saved: SavedStateHandle = SavedStateHandle()): AppViewModel =
@@ -223,6 +236,7 @@ class FileFlowsTest {
         before.beginCreateDocument(CreatePurpose.ExportLabels("text", "labels.txt"))
         before.beginRecordPermission(newTrack = true)
         // The process dies with the picker on top; the result goes to a new process
+        AppViewModel.processToken = "a new process"
         val restored = SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) })
         val after = newVm(restored)
         val uri = Uri.parse("content://test.provider/document/labels.txt")
@@ -234,6 +248,100 @@ class FileFlowsTest {
         idleUntil("permission") { engine.calls.contains("permission:true") }
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(engine.calls.none { it.startsWith("record") })
+    }
+
+    @Test
+    fun aResultAfterTheActivityWasRecreatedInTheSameProcessIsWritten() {
+        setUpEngine(FakeConfig(demoProject = true, autoTick = false))
+        val saved = SavedStateHandle()
+        val before = newVm(saved)
+        idleUntil("ready") { engine.snapshot.value.project.open }
+        before.beginCreateDocument(CreatePurpose.ExportLabels("text", "labels.txt"))
+        before.beginRecordPermission(newTrack = false)
+        // Only the Activity and its view model were destroyed: the project is still open
+        val after = newVm(SavedStateHandle(saved.keys().associateWith { saved.get<Any>(it) }))
+        val uri = Uri.parse("content://test.provider/document/labels.txt")
+        val out = ByteArrayOutputStream()
+        shadowOf(app.contentResolver).registerOutputStream(uri, out)
+        after.onDocumentCreated(uri)
+        idleUntil("exported") { messages.any { it.startsWith("Exported") } }
+        assertTrue(out.size() > 0)
+        after.onRecordPermissionResult(true)
+        idleUntil("recording") { engine.calls.contains("record:false") }
+    }
+
+    @Test
+    fun importStagingWaitsForTheStartUpCleanup() {
+        setUpEngine(FakeConfig(demoProject = false, autoTick = false))
+        // The clean-up of the previous process's staging is still running
+        val cleanup = Job()
+        app.stagingCleanup = cleanup
+        val uri = Uri.parse("content://test.provider/audio/picked.wav")
+        shadowOf(app.contentResolver).registerInputStream(uri, ByteArrayInputStream(ByteArray(4096)))
+        val vm = newVm()
+        idleUntil("ready") { engine.snapshot.value.project.open }
+        vm.onDocumentsPicked(OpenPurpose.IMPORT_AUDIO, listOf(uri))
+        repeat(10) {
+            shadowOf(Looper.getMainLooper()).idle()
+            Thread.sleep(5)
+        }
+        assertTrue("nothing staged yet", File(app.cacheDir, "import").listFiles().orEmpty().isEmpty())
+        assertTrue(engine.calls.none { it.startsWith("import") })
+        cleanup.complete()
+        idleUntil("import") { engine.calls.contains("import:false:1") }
+    }
+
+    @Test
+    fun intentsBeforeStartUpAreAllOpened() {
+        val a = Uri.parse("content://test.provider/audio/a.wav")
+        val b = Uri.parse("content://test.provider/audio/b.wav")
+        shadowOf(app.contentResolver).registerInputStream(a, ByteArrayInputStream(ByteArray(4096)))
+        shadowOf(app.contentResolver).registerInputStream(b, ByteArrayInputStream(ByteArray(4096)))
+        val vm = newVm()
+        vm.handleIntent(Intent(Intent.ACTION_VIEW, a))
+        vm.handleIntent(Intent(Intent.ACTION_SEND).setType("audio/wav").putExtra(Intent.EXTRA_STREAM, b))
+        vm.skipRecovery(vm.awaitRecovery())
+        idleUntil("import") { engine.calls.contains("import:false:2") }
+    }
+
+    @Test
+    fun aProjectCopyThatDoesNotOpenIsRemoved() {
+        setUpEngine(FakeConfig(demoProject = false, autoTick = false))
+        engine.failOpen = true
+        val uri = Uri.parse("content://test.provider/docs/Broken.aup3")
+        val bytes = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII) + ByteArray(8192)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(uri) { ByteArrayInputStream(bytes) }
+        val vm = newVm()
+        idleUntil("ready") { engine.snapshot.value.project.open }
+        vm.onDocumentsPicked(OpenPurpose.OPEN, listOf(uri))
+        idleUntil("error") { messages.any { it.contains("damaged") } }
+        assertTrue(engine.calls.any { it.startsWith("open:") && it.endsWith("Broken.aup3") })
+        val left = File(app.filesDir, "Projects").listFiles().orEmpty().filter { it.name.startsWith("Broken") }
+        assertEquals(emptyList<File>(), left)
+    }
+
+    @Test
+    fun projectNamesFitInAFileName() {
+        setUpEngine(FakeConfig(demoProject = false, autoTick = false))
+        val vm = newVm()
+        idleUntil("ready") { engine.snapshot.value.project.open }
+        vm.launchAction { vm.saveProjectAs() }
+        idleUntil("name prompt") { vm.top() is AppDialog.TextInput }
+        val d = vm.top() as AppDialog.TextInput
+        assertEquals(SafFiles.MAX_STEM_BYTES, d.maxBytes)
+        // 80 Korean characters are 240 UTF-8 bytes: "<name>.aup3-wal" would exceed 255
+        assertFalse(d.accepts("가".repeat(80)))
+        assertTrue(d.tooLong("가".repeat(80)))
+        assertTrue(d.accepts("가".repeat(66)))
+        assertFalse(d.accepts("   "))
+        // Defence in depth: a name that got through anyway is shortened, not refused by the file system
+        d.result.complete("가".repeat(80))
+        vm.dismiss(d)
+        idleUntil("saved") { messages.any { it.startsWith("Saved") } }
+        val path = engine.snapshot.value.project.path.orEmpty()
+        val stem = File(path).name.removeSuffix(".aup3")
+        assertEquals("가".repeat(66), stem)
+        assertTrue(SafFiles.utf8Length(File(path).name + "-wal") <= 255)
     }
 
     @Test

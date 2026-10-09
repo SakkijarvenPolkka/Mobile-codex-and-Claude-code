@@ -137,7 +137,7 @@ void PrepareForRecording(AudacityProject &project)
          continue;
       if (auto wave = dynamic_cast<const WaveTrack *>(&drawn))
          for (const auto &clip : wave->SortedIntervalArray())
-            ClipDisplayCache::Get(*clip);
+            ClipDisplayCache::PrepareForCapture(clip);
    }
 }
 

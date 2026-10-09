@@ -14,8 +14,11 @@ import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.EngineStatus
 import io.github.sakkijarvenpolkka.audacity.engine.Engines
 import io.github.sakkijarvenpolkka.audacity.prefs.UiPrefs
+import io.github.sakkijarvenpolkka.audacity.share.ShareAudio
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -58,12 +61,29 @@ class AudacityApp : Application() {
         }
     }
 
+    /**
+     * Removal of the staging directories left behind by an earlier process
+     * (import-export-project.md §5.2 step 7). New staging waits for it
+     * ([awaitStagingCleanup]): an activity result delivered to a new process
+     * (picker or share on top when the old one was killed) may stage a copy
+     * right away, which the clean-up would otherwise delete mid-copy.
+     */
+    @VisibleForTesting
+    internal var stagingCleanup: Job = CompletableDeferred(Unit)
+
+    /** Suspends until the start-up clean-up of `cacheDir/import`, `cacheDir/export` and old shares is done. */
+    suspend fun awaitStagingCleanup() {
+        stagingCleanup.join()
+    }
+
     override fun onCreate() {
         super.onCreate()
-        // import-export-project.md §5.2 step 7: staging left behind by a crash.
-        appScope.launch(Dispatchers.IO) {
+        stagingCleanup = appScope.launch(Dispatchers.IO) {
             File(cacheDir, "import").deleteRecursively()
             File(cacheDir, "export").deleteRecursively()
+            // Shared files: an app that received one may still read it (through the
+            // FileProvider, which starts this process), so only old ones go
+            ShareAudio.pruneStaging(cacheDir, System.currentTimeMillis() - ShareAudio.STALE_MS)
         }
     }
 

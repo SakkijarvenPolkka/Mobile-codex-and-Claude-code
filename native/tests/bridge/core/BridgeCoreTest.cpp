@@ -22,8 +22,13 @@
      answered with ReplyDialogChoices, progress cancel/stop
    * settings added after phase 1 (latency trim, sync-lock, paste/record
      behaviour, dropout detection, language)
+   * the process environment exported by Start() (HOME, XDG_*, TMPDIR,
+     SQLITE_TMPDIR, ...; other variables kept; a restart with the same
+     paths leaves `environ` alone)
    * project.rename (with -wal/-shm), project.compactInfo, project.compact
-     (undo history, freed space, dirty flag, reopen)
+     (undo history, freed space, dirty flag, reopen); cacheDir/tmp,
+     cacheDir/import and cacheDir/export removed while the engine runs
+     (Android "Clear cache") are re-created by the next command
    * Stop() and a restart in the same process; a restart with locale ko_KR
      and the Korean catalog: engine strings in Korean, `language` setting
    * an idle engine thread wakes up about every 2 s, not every 50 ms
@@ -31,16 +36,21 @@
      free>): one Android low-storage warning per process instead of the
      desktop's two "Directories Preferences" warnings per start; with the
      file system full, no crash when the initial project cannot be created
-     (initialProject self-check, project.new answers FAILED)
+     (initialProject self-check, project.new answers FAILED); with less
+     free space than the project's size, the first save (a rename) and a
+     save to the same file work, Save As to another file and Save a Copy
+     are refused (needs about 40 MB free)
 
   Exit code 0 on success.  BRIDGE_TEST_VERBOSE=1 prints the events.
 
 **********************************************************************/
 #include "BridgeTestSupport.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cctype>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <dirent.h>
@@ -49,6 +59,8 @@
 #include <sys/statvfs.h>
 #include <sys/wait.h>
 #include <thread>
+
+extern char **environ;
 
 using namespace bridgetest;
 using namespace std::chrono_literals;
@@ -307,6 +319,136 @@ std::vector<std::string> FilesEndingWith(const std::string &dir,
       ::closedir(d);
    }
    return names;
+}
+
+//! Low storage, saving: less free space than the project's size.  The first
+//! save of a temporary project renames its database and a save to the
+//! project's own file writes the document only, so both work; Save As of
+//! the saved project to another file and Save a Copy copy the database and
+//! are refused ("The project size exceeds the available free space").
+//! `fsDir`: a directory on the small file system, for the filler file
+int LowSpaceSaveChild(const std::string &root, const std::string &fsDir)
+{
+   TempDirs dirs{ root };
+   auto sink = std::make_shared<Sink>();
+   auto ready = StartAndWait(*sink, sink, dirs);
+   if (!ready)
+      return 2;
+   // A project of a third of the free space, 12 ... 24 MB: half of it free
+   // later is still more than a document needs
+   struct statvfs fs {};
+   if (::statvfs(fsDir.c_str(), &fs) != 0)
+      return 7;
+   const uint64_t avail = uint64_t(fs.f_bavail) * fs.f_frsize;
+   const uint64_t target = std::min<uint64_t>(avail / 3, 24u << 20);
+   if (target < (12u << 20)) {
+      std::fprintf(stderr, "low-space save child: only %llu bytes free\n",
+         (unsigned long long)avail);
+      return 8;
+   }
+   // 48 kHz stereo float: 384000 bytes per second, in two tracks
+   const double seconds = double(target) / 2 / 384000;
+   for (int i = 0; i < 2; ++i) {
+      auto r = Call("debug.makeTestTrack", { { "seconds", seconds },
+         { "channels", 2 } });
+      if (!Ok(r)) {
+         std::fprintf(stderr, "low-space save child: %s\n", r.dump().c_str());
+         return 3;
+      }
+   }
+   // The temporary database (desktop's check uses its size); wait for the
+   // checkpoints that move the samples from the -wal file into it
+   const auto sessionDir = dirs.noBackupDir + "/SessionData";
+   const auto unsaved = FilesEndingWith(sessionDir, ".aup3unsaved");
+   if (unsaved.size() != 1)
+      return 4;
+   const auto database = sessionDir + "/" + unsaved[0];
+   const uint64_t expected = target / 3 * 2;
+   uint64_t projectBytes = 0;
+   for (int i = 0; i < 100 && projectBytes < expected; ++i) {
+      struct stat st {};
+      if (::stat(database.c_str(), &st) == 0)
+         projectBytes = uint64_t(st.st_size);
+      std::this_thread::sleep_for(100ms);
+   }
+   if (projectBytes < expected) {
+      std::fprintf(stderr, "low-space save child: database only %llu bytes\n",
+         (unsigned long long)projectBytes);
+      return 5;
+   }
+   // Free: half the project, still room for a document
+   const auto filler = FillFileSystem(fsDir, projectBytes / 2);
+   if (filler.empty())
+      return 6;
+   int rc = 0;
+   const auto projects = dirs.filesDir + "/Projects/";
+   auto r = Call("project.saveAs", { { "path", projects + "LowSpace.aup3" } });
+   std::fprintf(stderr, "low-space save child saveAs (rename): %s\n", r.dump().c_str());
+   if (!Ok(r))
+      rc = 10;
+   if (rc == 0) {
+      r = Call("debug.makeTestTrack", { { "seconds", 1.0 } });
+      if (!Ok(r))
+         rc = 11;
+   }
+   if (rc == 0) {
+      r = Call("project.save");
+      std::fprintf(stderr, "low-space save child save: %s\n", r.dump().c_str());
+      if (!Ok(r))
+         rc = 12;
+   }
+   const auto refused = [](const json &envelope) {
+      return ErrorCodeOf(envelope) == "FAILED" &&
+         envelope["error"].value("message", "").find("free space") !=
+            std::string::npos;
+   };
+   if (rc == 0) {
+      r = Call("project.saveCopy", { { "path", projects + "Copy.aup3" } });
+      std::fprintf(stderr, "low-space save child saveCopy: %s\n", r.dump().c_str());
+      if (!refused(r))
+         rc = 13;
+   }
+   if (rc == 0) {
+      r = Call("project.saveAs", { { "path", projects + "Other.aup3" } });
+      std::fprintf(stderr, "low-space save child saveAs (copy): %s\n", r.dump().c_str());
+      if (!refused(r))
+         rc = 14;
+   }
+   if (rc == 0) {
+      // Still the saved project, unmodified
+      r = Call("project.info");
+      if (!Ok(r) || r["result"].value("temporary", true) ||
+          r["result"].value("dirty", true))
+         rc = 15;
+   }
+   aubridge::Stop();
+   ::unlink(filler.c_str());
+   return rc;
+}
+
+//! The process environment the engine exports before its thread starts
+//! (published as a new environ array, not with setenv)
+void TestEnvironment(const TempDirs &dirs)
+{
+   const auto env = [](const char *key) {
+      const char *value = std::getenv(key);
+      return std::string(value ? value : "<unset>");
+   };
+   CHECK(env("HOME") == dirs.filesDir);
+   CHECK(env("XDG_CONFIG_HOME") == dirs.filesDir);
+   CHECK(env("XDG_DATA_HOME") == dirs.filesDir);
+   CHECK(env("XDG_CACHE_HOME") == dirs.cacheDir);
+   CHECK(env("XDG_STATE_HOME") == dirs.noBackupDir);
+   CHECK(env("TMPDIR") == dirs.cacheDir + "/tmp");
+   CHECK(env("SQLITE_TMPDIR") == dirs.cacheDir + "/tmp");
+   CHECK(env("WX_AUDACITY_DATA_DIR") == dirs.filesDir + "/audacity");
+   // Other variables are kept, each once
+   CHECK(env("AUBRIDGE_TEST_MARKER") == "kept");
+   int homes = 0;
+   for (char **p = environ; p && *p; ++p)
+      if (std::strncmp(*p, "HOME=", 5) == 0)
+         ++homes;
+   CHECK(homes == 1);
 }
 
 void TestNoProjectErrors()
@@ -1031,7 +1173,7 @@ void TestRename(const TempDirs &dirs, const std::string &openPath)
    CHECK(!FileExists(fourth));
 }
 
-void TestCompact(Sink &sink, const std::string &openPath)
+void TestCompact(Sink &sink, const TempDirs &dirs, const std::string &openPath)
 {
    // An undone edit leaves its audio in the database (the redo state)
    auto r = Call("debug.makeTestTrack", { { "seconds", 20.0 },
@@ -1052,10 +1194,24 @@ void TestCompact(Sink &sink, const std::string &openPath)
    CHECK(fileBytes > total);
    CHECK(info.value("freeBytes", int64_t(-1)) > 0);
 
+   // Android "Clear cache" while the app runs empties cacheDir: the next
+   // command re-creates SQLite's temporary directory (SQLITE_TMPDIR) and
+   // the staging directories (on a device SQLite has no other writable
+   // temporary directory, and compaction would free nothing)
+   const auto cacheTmp = dirs.cacheDir + "/tmp";
+   CHECK(std::system(("rm -rf '" + cacheTmp + "' '" + dirs.cacheDir +
+      "/import' '" + dirs.cacheDir + "/export'").c_str()) == 0);
+   CHECK(!FileExists(cacheTmp));
+
    auto before = sink.Count();
    const auto gen0 = Call("project.info")["generation"].get<uint64_t>();
+   CHECK(FileExists(cacheTmp));
+   CHECK(FileExists(dirs.cacheDir + "/import"));
+   CHECK(FileExists(dirs.cacheDir + "/export"));
+   CHECK(std::system(("rm -rf '" + cacheTmp + "'").c_str()) == 0);
    r = Call("project.compact");
    CHECK_MSG(Ok(r), r.dump());
+   CHECK(FileExists(cacheTmp));
    const auto freed = r["result"].value("freedBytes", int64_t(-1));
    std::fprintf(stderr, "compact freed %lld bytes\n", (long long)freed);
    CHECK(freed > 5000000);
@@ -1209,6 +1365,11 @@ int main(int argc, char **argv)
       std::fflush(nullptr);
       std::_Exit(rc);
    }
+   if (argc >= 4 && std::string(argv[1]) == "--low-space-save-child") {
+      const int rc = LowSpaceSaveChild(argv[2], argv[3]);
+      std::fflush(nullptr);
+      std::_Exit(rc);
+   }
    if (argc >= 3 && std::string(argv[1]) == "--low-space-child") {
       const int rc = LowSpaceChild(argv[2]);
       std::fflush(nullptr);
@@ -1221,7 +1382,8 @@ int main(int argc, char **argv)
       std::_Exit(rc);
    }
 
-   // Before Start
+   // Before Start (and before any thread: setenv is safe here)
+   ::setenv("AUBRIDGE_TEST_MARKER", "kept", 1);
    CHECK(!aubridge::IsReady());
    CHECK(ErrorCodeOf(Call("app.info")) == "NOT_READY");
 
@@ -1251,6 +1413,18 @@ int main(int argc, char **argv)
          ::unlink(filler.c_str());
          CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0, "full-disk child failed: " +
             std::to_string(WIFEXITED(rc) ? WEXITSTATUS(rc) : rc));
+      }
+      // Saving with less free space than the project's size (needs about
+      // 40 MB free on the small file system)
+      {
+         TempDirs saveDirs{ std::string(small) + "/aubridge-low-space-save" };
+         saveDirs.keep = false;
+         MakeDirs(saveDirs.root);
+         rc = std::system(("'" + self + "' --low-space-save-child '" +
+            saveDirs.root + "' '" + small + "'").c_str());
+         CHECK_MSG(WIFEXITED(rc) && WEXITSTATUS(rc) == 0,
+            "low-space save child failed: " +
+               std::to_string(WIFEXITED(rc) ? WEXITSTATUS(rc) : rc));
       }
    }
 
@@ -1305,6 +1479,7 @@ int main(int argc, char **argv)
          ::unlink((clean + suffix).c_str());
    }
 
+   TestEnvironment(dirs);
    TestNoProjectErrors();
    TestAppInfo();
    TestRealtimeEntryPoints();
@@ -1319,7 +1494,7 @@ int main(int argc, char **argv)
    {
       const std::string openPath = dirs.filesDir + "/Projects/\xED\x85\x8C\xEC\x8A\xA4\xED\x8A\xB8 \xF0\x9F\x8E\xB5.aup3";
       TestRename(dirs, openPath);
-      TestCompact(*sink, openPath);
+      TestCompact(*sink, dirs, openPath);
    }
    TestDialogs(*sink);
    TestMultiChoice(*sink);
@@ -1347,6 +1522,8 @@ int main(int argc, char **argv)
    // now with a Korean locale and the Korean catalog where the app installs
    // it (assets/audacity/locale -> filesDir/audacity/locale)
    aubridge::Stop();   // idempotent
+   // The same paths: the restart leaves the environment alone
+   char **const environBefore = environ;
    CHECK(!aubridge::IsReady());
    CHECK(ErrorCodeOf(Call("app.info")) == "NOT_READY");
    {
@@ -1357,6 +1534,8 @@ int main(int argc, char **argv)
       auto sink2 = std::make_shared<Sink>();
       auto ready2 = StartAndWait(*sink2, sink2, dirs, { { "locale", "ko_KR" } });
       CHECK_MSG(ready2.has_value(), "restart failed");
+      CHECK(environ == environBefore);
+      TestEnvironment(dirs);
       if (ready2) {
          CHECK(ready2->value("recoverable", -1) == 0);
          CHECK(Ok(Call("app.info")));

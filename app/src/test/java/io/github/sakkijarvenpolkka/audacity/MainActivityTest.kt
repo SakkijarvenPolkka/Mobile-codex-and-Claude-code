@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 package io.github.sakkijarvenpolkka.audacity
 
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.audacity.ui.LayoutKind
 import io.github.sakkijarvenpolkka.audacity.ui.layoutKind
 import org.junit.Assert.assertEquals
@@ -28,6 +30,14 @@ class MainActivityTest {
         compose.onNodeWithTag("menu:Undo").assertExists()
         compose.onNodeWithTag("menu:Preferences").performClick()
         compose.onNodeWithText("Default Sample Rate").assertExists()
+    }
+
+    @Test
+    fun menuRowsAreAtLeast48dp() {
+        compose.onNodeWithTag("top:menu").performClick()
+        compose.onNodeWithTag("menutab:Edit").performClick()
+        compose.onNodeWithTag("menu:Undo").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("menu:Redo").assertHeightIsAtLeast(48.dp)
     }
 
     @Test

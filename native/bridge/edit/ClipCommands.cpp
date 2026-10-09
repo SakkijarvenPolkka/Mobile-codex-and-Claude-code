@@ -5,7 +5,7 @@
 
   ClipCommands.cpp
 
-  clips.move / clips.rename (API.md §3.3 "clips / labels").
+  clips.move / clips.rename / clips.trim (API.md §3.3 "clips / labels").
 
   clips.move is the end of a clip drag: Compose previews the drag, the
   engine receives one command with the final start time.  It is a port of
@@ -21,15 +21,26 @@
      (FinishMigration).
   clips.rename: src/tracks/playabletrack/wavetrack/ui/
   WaveTrackAffordanceControls.cpp (OnRenameClip).
+  clips.trim: the trim mode of src/tracks/playabletrack/wavetrack/ui/
+  WaveClipAdjustBorderHandle.cpp (Vitaly Sverchinsky) -- the adjustment
+  limits of GetLeftAdjustLimit/GetRightAdjustLimit (the clip's audio, the
+  neighbouring clips, one sample at least), WaveClip::TrimLeftTo/TrimRightTo
+  and the history entry of AdjustClipBorder::Finish.  A drag sends
+  final:false updates (model change only, like the volume slider) and one
+  final:true update that pushes a single entry for the whole drag.
 
 **********************************************************************/
 #include "EditUtil.h"
 
+#include <algorithm>
 #include <cmath>
+#include <limits>
+#include <memory>
 #include <vector>
 
 #include "Edit.h"
 #include "ModuleRegistry.h"
+#include "ProjectHistory.h"
 #include "Session.h"
 #include "Track.h"
 #include "ViewInfo.h"
@@ -128,13 +139,165 @@ json ClipsRename(const json &args)
    return json::object();
 }
 
+// ---------------------------------------------------------------------------
+// clips.trim
+// ---------------------------------------------------------------------------
+
+//! The trim drag in progress: the trims of its clip when it started.  It is
+//! valid while the project generation does not change (final:false updates
+//! do not bump it; any other mutation, undo or redo does).
+struct TrimDrag {
+   std::weak_ptr<WaveClip> clip;
+   uint64_t generation = 0;
+   double trimLeft = 0, trimRight = 0;
+   bool active = false;
+};
+
+TrimDrag &Drag()
+{
+   static TrimDrag drag;
+   return drag;
+}
+
+json ClipsTrim(const json &args)
+{
+   auto &project = Session::Get().RequireProject();
+   auto ref = ResolveClipRef(project, args);
+   const auto trimLeft = OptTime(args, "trimLeft");
+   const auto trimRight = OptTime(args, "trimRight");
+   if (!trimLeft && !trimRight)
+      Fail(ErrorCode::INVALID_ARGS, "trimLeft and/or trimRight is required");
+   const bool isFinal = OptBool(args, "final").value_or(true);
+   auto &track = *ref.track;
+   auto &clip = *ref.clip;
+
+   // The drag this update belongs to.  An unfinished live drag of another
+   // clip is cancelled (AdjustClipBorder::Cancel): its clip gets its trims
+   // back, so the entry of this drag does not carry it.
+   auto &drag = Drag();
+   const auto generation = Session::Get().Generation();
+   if (!(drag.active && drag.generation == generation &&
+         drag.clip.lock() == ref.clip)) {
+      if (drag.active && drag.generation == generation)
+         if (auto other = drag.clip.lock()) {
+            other->SetTrimLeft(drag.trimLeft);
+            other->SetTrimRight(drag.trimRight);
+         }
+      drag = TrimDrag{ ref.clip, generation, clip.GetTrimLeft(),
+         clip.GetTrimRight(), true };
+   }
+   const double initialLeft = drag.trimLeft;
+   const double initialRight = drag.trimRight;
+
+   // WaveClipAdjustBorderHandle: whole samples of the track's rate, within
+   // the clip's audio (GetSequenceStartTime ... GetSequenceEndTime) and the
+   // neighbouring clips, one sample at least
+   const double rate = track.GetRate();
+   const double period = 1.0 / rate;
+   const auto quantize = [rate](double seconds) {
+      return std::rint(seconds * rate) / rate;
+   };
+   const double currentLeft = clip.GetTrimLeft();
+   const double currentRight = clip.GetTrimRight();
+   const double seqStart = clip.GetSequenceStartTime();
+   const double seqEnd = clip.GetSequenceEndTime();
+   double lo = seqStart, hi = seqEnd;
+   if (auto prev = track.GetNextInterval(clip, PlaybackDirection::backward))
+      lo = std::max(lo, prev->End());
+   if (auto next = track.GetNextInterval(clip, PlaybackDirection::forward))
+      hi = std::min(hi, next->Start());
+   // The borders (absolute times)
+   double left = seqStart + (trimLeft ? quantize(*trimLeft) : currentLeft);
+   double right = seqEnd - (trimRight ? quantize(*trimRight) : currentRight);
+   if (trimLeft)
+      left = std::clamp(left, lo, std::max(lo, hi));
+   if (trimRight)
+      right = std::clamp(right, lo, std::max(lo, hi));
+   if (right - left < period) {
+      if (trimLeft && !trimRight)
+         left = std::max(lo, right - period);
+      else {
+         right = std::min(hi, left + period);
+         left = std::max(lo, std::min(left, right - period));
+      }
+   }
+   // Back to trims; the border arithmetic must not leave sub-sample noise
+   // (an unchanged border keeps its exact value)
+   const auto settle = [period](double value, double a, double b) {
+      if (std::fabs(value - a) < period / 2)
+         return a;
+      if (std::fabs(value - b) < period / 2)
+         return b;
+      return value;
+   };
+   const double newLeft =
+      std::max(0.0, settle(left - seqStart, initialLeft, currentLeft));
+   const double newRight =
+      std::max(0.0, settle(seqEnd - right, initialRight, currentRight));
+   const auto apply = [&] {
+      clip.SetTrimLeft(newLeft);
+      clip.SetTrimRight(newRight);
+   };
+   const auto result = [&] {
+      return json{ { "trimLeft", Finite(clip.GetTrimLeft()) },
+         { "trimRight", Finite(clip.GetTrimRight()) },
+         { "start", Finite(clip.GetPlayStartTime()) },
+         { "end", Finite(clip.GetPlayEndTime()) } };
+   };
+
+   if (!isFinal) {
+      // While dragging: model change only, no history entry, no generation
+      // bump (the clip reference stays valid)
+      apply();
+      ThrottledSnapshot();
+      return result();
+   }
+
+   drag = {};
+   CancelThrottledSnapshot();
+   bool pushed = false;
+   RunEditSelf(project, [&] {
+      apply();
+      const double dl = std::fabs(newLeft - initialLeft);
+      const double dr = std::fabs(newRight - initialRight);
+      if (dl == 0 && dr == 0)
+         return false;
+      // AdjustClipBorder::Finish (one border per drag; an update moving
+      // both borders is named after the larger movement)
+      auto &history = ProjectHistory::Get(project);
+      if (dl >= dr)
+         history.PushState(
+            /*i18n-hint: This is about trimming a clip, a length in seconds like "2.4 seconds" is shown*/
+            XO("Adjust left trim by %.02f seconds").Format(dl),
+            /*i18n-hint: This is about trimming a clip, a length in seconds like "2.4s" is shown*/
+            XO("Trim by %.02fs").Format(dl));
+      else
+         history.PushState(
+            /*i18n-hint: This is about trimming a clip, a length in seconds like "2.4 seconds" is shown*/
+            XO("Adjust right trim by %.02f seconds").Format(dr),
+            /*i18n-hint: This is about trimming a clip, a length in seconds like "2.4s" is shown*/
+            XO("Trim by %.02fs").Format(dr));
+      pushed = true;
+      return true;
+   });
+   if (!pushed)
+      // The drag ended where it started: no entry, but the last snapshot
+      // may show a live position
+      Session::Get().ScheduleSnapshot();
+   return result();
+}
+
 } // namespace
 
 void RegisterClipCommands(ModuleRegistry &registry)
 {
+   Drag() = {};
    const unsigned m = NeedsProject | NeedsIdleAudio | Mutates;
    registry.AddCommand("clips.move", ClipsMove, m);
    registry.AddCommand("clips.rename", ClipsRename, m);
+   // final:false is no M (no generation bump, no history entry);
+   // final:true pushes and touches itself (RunEditSelf)
+   registry.AddCommand("clips.trim", ClipsTrim, NeedsProject | NeedsIdleAudio);
 }
 
 } // namespace edit

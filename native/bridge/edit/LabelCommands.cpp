@@ -7,8 +7,8 @@
 
   labels.* (API.md §3.3 "clips / labels").  Ports of Audacity 3.7.9:
    * src/menus/LabelMenus.cpp: DoAddLabel, OnAddLabel, OnAddLabelPlaying
-     (labels.add uses the play position while this project's stream is
-     active, the selection otherwise)
+     (labels.add uses an explicit t0/t1, else the play position while this
+     project's stream is active, else the selection)
    * src/tracks/labeltrack/ui/LabelTrackView.cpp, LabelGlyphHandle.cpp:
      the "Modified Label" / "Deleted Label" history entries of label text
      and glyph edits (labels.edit, labels.remove)
@@ -66,15 +66,30 @@ json LabelsAdd(const json &args)
    auto &project = Project();
    auto &tracks = TrackList::Get(project);
    const wxString title = FromUtf8(OptString(args, "title").value_or(""));
+   const auto t0 = OptTime(args, "t0");
+   const auto t1 = OptTime(args, "t1");
+   if (t1 && !t0)
+      Fail(ErrorCode::INVALID_ARGS, "argument 't1' needs 't0'");
 
-   // OnAddLabel: at the selection; OnAddLabelPlaying: at the play position
-   // while the stream of this project is active
    SelectedRegion region = ViewInfo::Get(project).selectedRegion;
-   const auto token = ProjectAudioIO::Get(project).GetAudioIOToken();
-   if (auto gAudioIO = AudioIO::Get();
-       token > 0 && gAudioIO && gAudioIO->IsStreamActive(token)) {
-      const double indicator = gAudioIO->GetStreamTime();
-      region = SelectedRegion(indicator, indicator);
+   if (t0) {
+      // An explicit position (e.g. the play head the UI shows): the
+      // selection is not used and not changed
+      const double end = t1.value_or(*t0);
+      if (*t0 < 0 || end < *t0)
+         Fail(ErrorCode::INVALID_ARGS,
+            "label times must satisfy 0 <= t0 <= t1");
+      region = SelectedRegion(*t0, end);
+   }
+   else {
+      // OnAddLabel: at the selection; OnAddLabelPlaying: at the play
+      // position while the stream of this project is active
+      const auto token = ProjectAudioIO::Get(project).GetAudioIOToken();
+      if (auto gAudioIO = AudioIO::Get();
+          token > 0 && gAudioIO && gAudioIO->IsStreamActive(token)) {
+         const double indicator = gAudioIO->GetStreamTime();
+         region = SelectedRegion(indicator, indicator);
+      }
    }
 
    LabelTrack *lt = nullptr;

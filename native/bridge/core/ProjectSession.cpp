@@ -16,6 +16,9 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
+
+#include <sys/stat.h>
 
 #include <wx/dir.h>
 #include <wx/filename.h>
@@ -105,10 +108,30 @@ wxString FindHelpUrl( const TranslatableString &libraryError )
    return helpUrl;
 }
 
-bool CheckDiskSpace(const FilePath &target, const FilePath &current,
-   std::string &error)
+//! The directories of the files `a` and `b` are on the same file system
+//! (false when either cannot be inspected)
+bool SameFileSystem(const FilePath &a, const FilePath &b)
 {
-   const wxULongLong fileSize = wxFileName::GetSize(current);
+   struct stat stA {}, stB {};
+   return ::stat(ToUtf8(wxPathOnly(a)).c_str(), &stA) == 0 &&
+      ::stat(ToUtf8(wxPathOnly(b)).c_str(), &stB) == 0 &&
+      stA.st_dev == stB.st_dev;
+}
+
+//! Free space a save that writes only the project document needs: the
+//! document blob and the write-ahead log frames that carry it (a document
+//! of a long, much edited project is well under 1 MB)
+constexpr uint64_t kDocumentSaveBytes = uint64_t(4) << 20;
+
+//! The desktop's "Insufficient Disk Space" check (ProjectFileManager::DoSave
+//! and SaveCopy) with the room the save really needs: `requiredBytes`, or
+//! the size of the project file `current` when the library copies it
+bool CheckDiskSpace(const FilePath &target, const FilePath &current,
+   std::string &error, std::optional<uint64_t> requiredBytes = {})
+{
+   const wxULongLong fileSize = requiredBytes
+      ? wxULongLong(static_cast<wxULongLong_t>(*requiredBytes))
+      : wxFileName::GetSize(current);
    wxDiskspaceSize_t freeSpace;
    if (wxGetDiskSpace(wxPathOnly(target), nullptr, &freeSpace) &&
        fileSize != wxInvalidSize &&
@@ -591,7 +614,21 @@ bool ProjectSession::DoSave(const FilePath &fileName, bool fromSaveAs,
       error = Translated(XO("Projects cannot be saved to FAT drives."));
       return false;
    }
-   if (!CheckDiskSpace(fileName, projectFileIO.GetFileName(), error))
+   // Android: the desktop requires room for the whole project file, but
+   // ProjectFileIO::SaveProject copies it only for "Save As" of a saved
+   // project to another file (CopyTo).  The first save of a temporary
+   // project renames its database (MoveProject; a copy only to another
+   // file system) and a save to the project's own file writes the document
+   // only.  A long recording on a nearly full phone could otherwise never
+   // be saved.
+   const auto &currentName = projectFileIO.GetFileName();
+   const bool copiesFile = currentName != fileName &&   // SaveProject's test
+      (!projectFileIO.IsTemporary() ||
+       // wxRenameFile copies between file systems
+       !SameFileSystem(currentName, fileName));
+   if (!CheckDiskSpace(fileName, projectFileIO.GetFileName(), error,
+          copiesFile ? std::nullopt
+                     : std::optional<uint64_t>{ kDocumentSaveBytes }))
       return false;
 
    // Always save a backup of the original project file
@@ -874,8 +911,12 @@ void ProjectSession::Close()
    projectFileIO.SetBypass();
 
    // This can reduce reference counts of sample blocks in the project's
-   // tracks.
-   undoManager.ClearStates();
+   // tracks.  Not without a database connection (the file could not be
+   // reopened after a failed save or compaction): RemoveStates' transaction
+   // scope has no implementation then and its Commit() dereferences it
+   // (as in Abandon()); the states go with the project.
+   if (projectFileIO.HasConnection())
+      undoManager.ClearStates();
 
    // Delete all the tracks to free up memory
    tracks.Clear();

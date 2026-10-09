@@ -31,7 +31,7 @@ struct Paths {
    std::string nyquistDir, pluginsDir;
    std::string configDir;    //!< filesDir/audacity: audacity.cfg, plug-in registry (= FileNames::ConfigDir/DataDir)
    std::string sessionDir;   //!< noBackupDir/SessionData: unsaved projects, autosave (= TempDirectory::TempDir)
-   std::string tmpDir;       //!< cacheDir/tmp: TMPDIR, SQLITE_TMPDIR
+   std::string tmpDir;       //!< cacheDir/tmp: TMPDIR, SQLITE_TMPDIR (re-created when cleared: Session::EnsureWorkDirectories)
    std::string importDir;    //!< cacheDir/import: staged import files
    std::string exportDir;    //!< cacheDir/export: export staging
    std::string projectsDir;  //!< filesDir/Projects: saved projects (project.list)
@@ -75,6 +75,13 @@ public:
 
    const Paths &GetPaths() const { return mConfig.paths; }
    const StartConfig &Config() const { return mConfig; }
+
+   //! Re-creates tmpDir, importDir and exportDir when they are gone: Android
+   //! "Clear cache" empties cacheDir without stopping the app, and SQLite
+   //! (SQLITE_TMPDIR) finds no other writable temporary directory there
+   //! (Compact, Save As, Save a Copy would fail).  One stat() when tmpDir
+   //! exists.  The dispatcher calls it before every command.  Engine thread.
+   void EnsureWorkDirectories();
 
    //! RECORD_AUDIO permission (start config, then `audio.permission`)
    bool RecordPermission() const { return mRecordPermission.load(); }

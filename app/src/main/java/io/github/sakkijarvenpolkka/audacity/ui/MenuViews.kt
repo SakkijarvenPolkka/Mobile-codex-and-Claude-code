@@ -83,7 +83,7 @@ fun MenuList(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 44.dp)
+                    .heightIn(min = 48.dp)
                     .clickable(role = Role.Button) { stack.removeAt(stack.lastIndex) }
                     .padding(horizontal = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -112,7 +112,7 @@ private fun MenuRow(item: MenuItem, state: MenuState, showShortcuts: Boolean, on
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .testTag("menu:${item.id}")
             .padding(horizontal = 12.dp)
@@ -140,7 +140,7 @@ private fun SubMenuRow(sub: SubMenu, onClick: () -> Unit) {
     Row(
         Modifier
             .fillMaxWidth()
-            .heightIn(min = 44.dp)
+            .heightIn(min = 48.dp)
             .clickable(role = Role.Button, onClick = onClick)
             .testTag("submenu:${sub.id}")
             .padding(horizontal = 12.dp),

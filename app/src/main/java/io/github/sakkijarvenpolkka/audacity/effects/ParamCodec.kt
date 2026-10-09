@@ -3,6 +3,9 @@
  * engine reports them (API.md §5.5) and what the generic effect dialog shows.
  *
  * * `display == "dB"`: the dialog shows and edits 20·log10(value) (Amplify ratio).
+ * * `display == "ratio"`: a percent change (Change Tempo/Pitch/Speed, Sliding
+ *   Stretch) shown and edited as the multiplier r = 1 + percent/100
+ *   (1.25 ⇔ +25 %, 0.65 ⇔ −35 %); sent back as exactly (r − 1)·100.
  * * enums: value/default are choice indices (or, defensively, internal names).
  * * generators: the duration is edited as hh:mm:ss.mmm.
  *
@@ -21,6 +24,12 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.util.Locale
+import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.ln
 import kotlin.math.log10
 import kotlin.math.pow
 import kotlin.math.roundToLong
@@ -31,17 +40,27 @@ object ParamCodec {
 
     fun isDb(p: EffectParam): Boolean = p.display.equals("dB", ignoreCase = true)
 
+    /** A percent change shown as a multiplier (`display == "ratio"`). */
+    fun isRatio(p: EffectParam): Boolean = p.isRatio
+
     fun label(p: EffectParam): String = p.label.ifEmpty { p.key }
 
     fun linearToDb(v: Double): Double = if (v <= 0.0) Double.NEGATIVE_INFINITY else 20.0 * log10(v)
     fun dbToLinear(db: Double): Double = 10.0.pow(db / 20.0)
 
-    /** Value as shown to the user (dB for `display == "dB"`). */
-    fun toDisplay(p: EffectParam, raw: Double): Double =
-        if (isDb(p)) linearToDb(raw).coerceAtLeast(DB_FLOOR) else raw
+    /** Value as shown to the user (dB for `display == "dB"`, the multiplier for `"ratio"`). */
+    fun toDisplay(p: EffectParam, raw: Double): Double = when {
+        isDb(p) -> linearToDb(raw).coerceAtLeast(DB_FLOOR)
+        isRatio(p) -> percentToRatio(raw)
+        else -> raw
+    }
 
     /** Engine value from a displayed value. */
-    fun fromDisplay(p: EffectParam, shown: Double): Double = if (isDb(p)) dbToLinear(shown) else shown
+    fun fromDisplay(p: EffectParam, shown: Double): Double = when {
+        isDb(p) -> dbToLinear(shown)
+        isRatio(p) -> ratioToPercent(shown)
+        else -> shown
+    }
 
     /** Displayed [min, max], or null when the parameter has no range. */
     fun displayRange(p: EffectParam): ClosedFloatingPointRange<Double>? {
@@ -114,12 +133,17 @@ object ParamCodec {
 
     /** Text for a numeric value in display units. */
     fun formatDisplayed(p: EffectParam, raw: Double): String {
+        if (isRatio(p)) return formatRatio(percentToRatio(raw))
         val shown = toDisplay(p, raw)
         return if (p.kind == "int") shown.roundToLong().toString() else TimeCodec.number(shown, if (isDb(p)) 2 else 4)
     }
 
     /** Parses a displayed number; null when it is not a number or outside the range. */
     fun parseDisplayed(p: EffectParam, text: String): Double? {
+        if (isRatio(p)) {
+            val r = parseRatio(text) ?: return null
+            return if (ratioInRange(p, r)) ratioToPercent(r) else null
+        }
         val shown = text.trim().replace(',', '.').toDoubleOrNull() ?: return null
         if (shown.isNaN() || shown.isInfinite()) return null
         if (p.kind == "int" && shown != Math.rint(shown)) return null
@@ -142,6 +166,130 @@ object ParamCodec {
         "double" -> JsonPrimitive(number(v) ?: 0.0)
         "enum" -> JsonPrimitive(enumIndex(p, v))
         else -> JsonPrimitive(string(v))
+    }
+
+    // ---- ratio display (tempo, pitch, speed) ----------------------------------
+
+    /** Multipliers offered as one-tap chips (those inside the parameter's range). */
+    val RATIO_PRESETS: List<Double> = listOf(0.5, 0.65, 0.75, 0.8, 0.9, 1.1, 1.2, 1.25, 1.35, 1.5, 2.0)
+
+    /** Step of the − / + buttons. */
+    const val RATIO_STEP: Double = 0.05
+
+    /** The slider covers at most ×0.25 … ×4 (log scale); the text field takes the whole range. */
+    const val RATIO_SLIDER_MIN: Double = 0.25
+    const val RATIO_SLIDER_MAX: Double = 4.0
+
+    /** Decimals kept for a multiplier (1.3333). */
+    private const val RATIO_DECIMALS = 4
+
+    /** Percent change → multiplier, exact in decimal (35 → 1.35, −35 → 0.65). */
+    fun percentToRatio(percent: Double): Double {
+        if (!percent.isFinite()) return EffectParam.percentToRatio(percent)
+        return BigDecimal.valueOf(percent).movePointLeft(2).add(BigDecimal.ONE).toDouble()
+    }
+
+    /** Multiplier → percent change: exactly (r − 1)·100 in decimal (1.25 → 25, 0.65 → −35, 1.35 → 35). */
+    fun ratioToPercent(ratio: Double): Double {
+        if (!ratio.isFinite()) return EffectParam.ratioToPercent(ratio)
+        return BigDecimal.valueOf(ratio).subtract(BigDecimal.ONE).movePointRight(2).toDouble()
+    }
+
+    /** Pitch shift in semitones of a multiplier (12·log2 r; 1.25 → 3.86). */
+    fun semitones(ratio: Double): Double = EffectParam.ratioToSemitones(ratio)
+
+    /** The multiplier rounded to [decimals] decimals (half up). */
+    fun roundRatio(ratio: Double, decimals: Int = RATIO_DECIMALS): Double =
+        if (!ratio.isFinite()) ratio else BigDecimal.valueOf(ratio).setScale(decimals, RoundingMode.HALF_UP).toDouble()
+
+    /** Multipliers allowed by the parameter's percent range (no range: anything above 0). */
+    fun ratioRange(p: EffectParam): ClosedFloatingPointRange<Double> {
+        val lo = p.min?.let { percentToRatio(it) }?.takeIf { it > 0.0 } ?: 1e-4
+        val hi = p.max?.let { percentToRatio(it) }?.takeIf { it > lo } ?: 100.0
+        return lo..hi
+    }
+
+    fun ratioInRange(p: EffectParam, ratio: Double): Boolean {
+        val r = ratioRange(p)
+        return ratio >= r.start - 1e-9 && ratio <= r.endInclusive + 1e-9
+    }
+
+    /** Range of the log-scale slider: the parameter's range within ×0.25 … ×4; null when empty. */
+    fun ratioSliderRange(p: EffectParam): ClosedFloatingPointRange<Double>? {
+        val r = ratioRange(p)
+        val lo = maxOf(r.start, RATIO_SLIDER_MIN)
+        val hi = minOf(r.endInclusive, RATIO_SLIDER_MAX)
+        return if (hi > lo) lo..hi else null
+    }
+
+    /** Slider position 0…1 of [ratio] on a log scale over [range]. */
+    fun ratioToSlider(ratio: Double, range: ClosedFloatingPointRange<Double>): Float {
+        if (!(ratio > 0.0)) return 0f
+        val pos = ln(ratio / range.start) / ln(range.endInclusive / range.start)
+        return pos.coerceIn(0.0, 1.0).toFloat()
+    }
+
+    /** Multiplier at slider position [pos] (log scale), rounded to 0.01 and kept in [range]. */
+    fun sliderToRatio(pos: Float, range: ClosedFloatingPointRange<Double>): Double {
+        val r = range.start * exp(pos.toDouble().coerceIn(0.0, 1.0) * ln(range.endInclusive / range.start))
+        return roundRatio(r, 2).coerceIn(range.start, range.endInclusive)
+    }
+
+    /** [ratio] moved by [delta] (the − / + buttons), rounded to 0.01 and kept in the parameter's range. */
+    fun stepRatio(p: EffectParam, ratio: Double, delta: Double): Double {
+        val range = ratioRange(p)
+        return roundRatio(ratio + delta, 2).coerceIn(range.start, range.endInclusive)
+    }
+
+    /** The preset chips that fit the parameter's range. */
+    fun ratioPresets(p: EffectParam): List<Double> = RATIO_PRESETS.filter { ratioInRange(p, it) }
+
+    /**
+     * Parses a multiplier as typed: `1.25`, `1,25` (decimal comma), `×1.25`,
+     * `x1.25`, `*1.25`, `1.25x`; a percent change with a `%` sign (`+25%`,
+     * `-35 %`) is converted. Null when it is not a number above 0 (no range
+     * check: see [ratioInRange]).
+     */
+    fun parseRatio(text: String): Double? {
+        var t = text.trim().replace('\u00A0', ' ').replace(" ", "")
+        if (t.isEmpty()) return null
+        val percent = t.endsWith('%')
+        if (percent) t = t.dropLast(1)
+        if (!percent) {
+            t = t.trimStart('×', 'x', 'X', '*', '✕').trimEnd('×', 'x', 'X', '✕')
+        }
+        t = t.replace('−', '-').replace(',', '.')
+        if (t.startsWith('+')) t = t.drop(1)
+        if (t.isEmpty() || t.count { it == '.' } > 1 || !t.all { it.isDigit() || it == '.' || it == '-' }) return null
+        val v = t.toDoubleOrNull() ?: return null
+        if (!v.isFinite()) return null
+        val ratio = if (percent) percentToRatio(v) else v
+        return if (ratio > 0.0) roundRatio(ratio) else null
+    }
+
+    /** Engine value (percent) of [ratio], clamped to the parameter's min/max. */
+    fun encodeRatio(p: EffectParam, ratio: Double): JsonElement = encodeNumber(p, ratioToPercent(roundRatio(ratio)))
+
+    /** "1.25", "0.65", "2.0", "1.3333": at least one decimal, at most four. */
+    fun formatRatio(ratio: Double): String {
+        if (!ratio.isFinite()) return TimeCodec.number(ratio)
+        val s = TimeCodec.number(roundRatio(ratio), RATIO_DECIMALS)
+        return if (s.contains('.')) s else "$s.0"
+    }
+
+    /** Signed semitones with two decimals: "+3.86", "-7.46", "0.00". */
+    fun formatSemitones(semitones: Double): String {
+        if (!semitones.isFinite()) return "–"
+        val v = if (abs(semitones) < 0.005) 0.0 else semitones
+        val s = String.format(Locale.ROOT, "%.2f", v)
+        return if (v > 0) "+$s" else s
+    }
+
+    /** Signed percent change of a multiplier: "+25", "-35", "0" (up to two decimals). */
+    fun formatPercentChange(ratio: Double): String {
+        val pc = ratioToPercent(roundRatio(ratio))
+        val s = TimeCodec.number(pc, 2)
+        return if (pc > 0) "+$s" else s
     }
 
     // ---- generator duration ---------------------------------------------------

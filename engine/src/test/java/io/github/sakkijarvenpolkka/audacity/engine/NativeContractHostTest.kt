@@ -240,6 +240,49 @@ class NativeContractHostTest {
             println("NativeContractHostTest: analyze.spectrum not registered (effects module missing)")
         }
         assertTrue(engine.snapshot.value.has(CommandFlags.NSL))
+
+        // ----- mobile editing: split button, clip trim drag, label at the play head --------
+        engine.newProject()
+        val m = tone(3.0)
+        engine.selectTracks(listOf(m), "set")
+        val split = engine.splitAt(1.5)
+        assertEquals(listOf(m), split.trackIds)
+        var ms = engine.snapshot.value
+        assertEquals(2, ms.track(m)!!.clips.size)
+        assertEquals(1.5, ms.selection.t0, 1e-9)
+        assertEquals("Split", ms.history.undo)
+        assertEquals(0, engine.splitAt(1.5).splits)
+        val tg = ms.generation
+        assertEquals(tg, engine.snapshot.value.generation)
+        val live = engine.trimClip(m, 0, tg, trimRight = 2.0, final = false)
+        assertEquals(1.0, live.end, 1e-6)
+        assertEquals(tg, engine.snapshot.value.generation)
+        val states0 = engine.history().states.size
+        engine.trimClip(m, 0, tg, trimRight = 2.0, final = true)
+        assertEquals(states0 + 1, engine.history().states.size)
+        assertEquals("Trim by 0.50s", engine.snapshot.value.history.undo)
+        val grown = engine.trimClip(m, 1, engine.snapshot.value.generation, trimLeft = 0.0)
+        assertEquals(1.0, grown.start, 1e-6)
+        ms = engine.snapshot.value
+        assertEquals(1.0, ms.track(m)!!.clips[1].start, 1e-6)
+        assertEquals(1.0, ms.track(m)!!.clips[1].trimLeft, 1e-6)
+        val (playHeadTrack, playHeadIndex) = engine.addLabel("Play head", 2.25)
+        ms = engine.snapshot.value
+        assertEquals(2.25, ms.track(playHeadTrack)!!.labels[playHeadIndex].t0, 1e-9)
+        assertEquals(1.5, ms.selection.t0, 1e-9)
+        engine.undo()
+        engine.undo()
+        assertEquals(1.5, engine.snapshot.value.track(m)!!.clips[1].start, 1e-6)
+
+        // ----- tempo/pitch as multipliers (§5.5 display "ratio") --------------------------
+        val tempoId = engine.effects().effects.firstOrNull { it.name == "Change Tempo" }?.id
+        if (tempoId != null) {
+            val p = engine.describeEffect(tempoId).params.first { it.key == "Percentage" }
+            assertTrue(p.isRatio)
+            assertEquals(-95.0, p.min!!, 1e-9)
+            assertEquals(3000.0, p.max!!, 1e-9)
+            assertFalse(p.semitones)
+        }
     }
 
     companion object {

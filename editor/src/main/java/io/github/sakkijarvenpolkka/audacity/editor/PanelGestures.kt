@@ -2,11 +2,14 @@
  * Audacity Android port — touch gestures of the track panel
  * (notes/ui-reference.md §9.6):
  *
- *   tap               → cursor (+ select that track); TCP: select track
+ *   tap               → cursor (+ select that track); TCP: select track;
+ *                       razor tool (EditTool.SPLIT): split the clip there
  *   double tap        → select clip / rename clip (title bar) / edit label
  *   long press        → context menu (clip, track, label, empty area)
- *   1-finger drag     → time selection (edge adjusting), clip title bar: time
- *                       shift with ghost preview; TCP/header: scroll
+ *   1-finger drag     → time selection (edge adjusting), clip border (title
+ *                       bar / top of the waveform): trim, clip title bar:
+ *                       time shift with ghost preview; TCP/header: scroll;
+ *                       all time drags snap (Snapping.kt)
  *   2 fingers         → pan (horizontal + vertical) with fling, pinch =
  *                       horizontal zoom about the focus, vertical pinch =
  *                       track height
@@ -108,6 +111,7 @@ internal suspend fun PointerInputScope.panelGestures(c: PanelController) = corou
                     lastTapUptime = 0L
                     val start = dragStart!!
                     when {
+                        hit.trimEdge != 0 && hit.trimClip != null -> trimDrag(c, hit, start, this@coroutineScope)
                         hit.kind == HitKind.CLIP_BAR || hit.kind == HitKind.CLIP_MENU ->
                             clipDrag(c, hit, start, this@coroutineScope)
                         hit.isWaveArea -> selectionDrag(c, hit, start, this@coroutineScope)
@@ -154,7 +158,7 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.sel
     c.selectionDragMove(c.hitTest(start.position))
     start.consume()
     var last = start.position
-    val autoScroll = scope.launch { autoScrollLoop(c) { last } }
+    val autoScroll = scope.launch { autoScrollLoop(c, { last }) { h -> c.selectionDragMove(h) } }
     try {
         while (true) {
             val ev = awaitPointerEvent()
@@ -182,7 +186,7 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.cli
     c.clipDragMove(c.hitTest(start.position))
     start.consume()
     var last = start.position
-    val autoScroll = scope.launch { autoScrollLoop(c, clip = true) { last } }
+    val autoScroll = scope.launch { autoScrollLoop(c, { last }) { h -> c.clipDragMove(h) } }
     var completed = false
     try {
         while (true) {
@@ -205,8 +209,39 @@ private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.cli
     }
 }
 
+/** Clip border drag (trim): live `clips.trim` previews, one final update on release. */
+private suspend fun androidx.compose.ui.input.pointer.AwaitPointerEventScope.trimDrag(
+    c: PanelController, hit: Hit, start: PointerInputChange, scope: CoroutineScope,
+) {
+    if (!c.trimDragStart(hit)) return
+    c.trimDragMove(c.hitTest(start.position))
+    start.consume()
+    var last = start.position
+    val autoScroll = scope.launch { autoScrollLoop(c, { last }) { h -> c.trimDragMove(h) } }
+    var completed = false
+    try {
+        while (true) {
+            val ev = awaitPointerEvent()
+            val ch = ev.changes.firstOrNull { it.id == start.id } ?: break
+            if (!ch.pressed) {
+                ch.consume()
+                completed = true
+                break
+            }
+            if (ch.positionChange() != Offset.Zero) {
+                last = ch.position
+                c.trimDragMove(c.hitTest(ch.position))
+            }
+            ch.consume()
+        }
+    } finally {
+        autoScroll.cancel()
+        c.trimDragEnd(cancelled = !completed)
+    }
+}
+
 /** Scrolls while the finger rests near the left/right edge of the wave area. */
-private suspend fun autoScrollLoop(c: PanelController, clip: Boolean = false, position: () -> Offset) {
+private suspend fun autoScrollLoop(c: PanelController, position: () -> Offset, onScroll: (Hit) -> Unit) {
     var lastNanos = 0L
     while (true) {
         val now = withFrameNanos { it }
@@ -223,8 +258,7 @@ private suspend fun autoScrollLoop(c: PanelController, clip: Boolean = false, po
         }.coerceIn(-1.5f, 1.5f) * width * 1.2f
         if (speedDp != 0f && dtSec > 0.0) {
             c.state.scrollByDp(speedDp * dtSec)
-            val hit = c.hitTest(position())
-            if (clip) c.clipDragMove(hit) else c.selectionDragMove(hit)
+            onScroll(c.hitTest(position()))
         }
     }
 }

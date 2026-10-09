@@ -80,6 +80,18 @@
             </intent-filter>
         </activity>
 
+        <!-- File ▸ Share Audio: read access to the staged export for the receiving app only
+             (granted per share through the intent). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.share"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <service
             android:name=".audio.TransportService"
             android:exported="false"

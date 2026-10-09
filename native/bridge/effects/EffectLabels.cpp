@@ -29,6 +29,8 @@ struct Entry {
    TranslatableString unit;
    const char *display = "";
    std::vector<TranslatableString> intChoices{};
+   //! display "ratio" of a pitch: the UI may also show 12*log2(ratio)
+   bool semitones = false;
 };
 
 using Table = std::map<wxString, std::vector<Entry>>;
@@ -63,18 +65,20 @@ const Table &TheTable()
          { wxT("Gain"), XXO("&Volume (dB):"), none },
          { wxT("Link Sliders"), XXO("&Link Volume control to Tone controls"), none },
       } },
-      // src/effects/ChangePitch.cpp
+      // src/effects/ChangePitch.cpp.  "ratio": the mobile UI shows and
+      // edits the factor 1 + percent/100 (1.25 = +25 %), API.md §5.5
       { wxT("Change Pitch"), {
-         { wxT("Percentage"), XXO("Percent C&hange:"), percent },
+         { wxT("Percentage"), XXO("Percent C&hange:"), percent, "ratio", {},
+            true },
          { wxT("SBSMS"), XXO("&Use high quality stretching (slow)"), none },
       } },
       // src/effects/ChangeSpeed.cpp
       { wxT("Change Speed and Pitch"), {
-         { wxT("Percentage"), XXO("Percent C&hange:"), percent },
+         { wxT("Percentage"), XXO("Percent C&hange:"), percent, "ratio" },
       } },
       // src/effects/ChangeTempo.cpp
       { wxT("Change Tempo"), {
-         { wxT("Percentage"), XXO("Percent C&hange:"), percent },
+         { wxT("Percentage"), XXO("Percent C&hange:"), percent, "ratio" },
          { wxT("SBSMS"), XXO("&Use high quality stretching (slow)"), none },
       } },
       // src/effects/ScienFilter.cpp
@@ -221,16 +225,18 @@ const Table &TheTable()
       } },
       // src/effects/TimeScale.cpp
       { wxT("Sliding Stretch"), {
-         { wxT("RatePercentChangeStart"), XO("Initial Tempo Change (%)"), none },
-         { wxT("RatePercentChangeEnd"), XO("Final Tempo Change (%)"), none },
+         { wxT("RatePercentChangeStart"), XO("Initial Tempo Change (%)"), none,
+            "ratio" },
+         { wxT("RatePercentChangeEnd"), XO("Final Tempo Change (%)"), none,
+            "ratio" },
          { wxT("PitchHalfStepsStart"), XO("Initial Pitch Shift"),
             XXO("(&semitones) [-12 to 12]:") },
          { wxT("PitchHalfStepsEnd"), XO("Final Pitch Shift"),
             XXO("(s&emitones) [-12 to 12]:") },
          { wxT("PitchPercentChangeStart"), XO("Initial Pitch Shift"),
-            XXO("(%) [-50 to 100]:") },
+            XXO("(%) [-50 to 100]:"), "ratio", {}, true },
          { wxT("PitchPercentChangeEnd"), XO("Final Pitch Shift"),
-            XXO("(%) [-50 to 100]:") },
+            XXO("(%) [-50 to 100]:"), "ratio", {}, true },
       } },
       // src/effects/ToneGen.cpp
       { wxT("Tone"), {
@@ -328,6 +334,7 @@ std::optional<ParamLabel> LookupParamLabel(const wxString &symbolInternal,
          if (!entry.unit.empty())
             result.unit = StripMnemonics(entry.unit.Translation());
          result.display = entry.display;
+         result.semitones = entry.semitones;
          for (auto &choice : entry.intChoices)
             result.intChoices.push_back(StripMnemonics(choice.Translation()));
          return result;

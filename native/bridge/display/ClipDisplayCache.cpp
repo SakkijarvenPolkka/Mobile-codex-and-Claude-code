@@ -75,6 +75,22 @@ std::vector<DetachedCache> &Detached()
    static auto *detached = new std::vector<DetachedCache>;
    return *detached;
 }
+//! Clips whose attachment PrepareForCapture created before the capture
+//! started.  Engine thread.  Leaked on purpose
+std::vector<std::weak_ptr<const WaveClip>> &Prepared()
+{
+   static auto *prepared = new std::vector<std::weak_ptr<const WaveClip>>;
+   return *prepared;
+}
+}
+
+void ClipDisplayCache::PrepareForCapture(
+   const std::shared_ptr<const WaveClip> &clip)
+{
+   if (!clip || CaptureRunning())
+      return;
+   Get(*clip);
+   Prepared().push_back(clip);
 }
 
 ClipDisplayCache &ClipDisplayCache::ForRequest(
@@ -88,7 +104,13 @@ ClipDisplayCache &ClipDisplayCache::ForRequest(
    const auto same = [&clip](const DetachedCache &d) {
       return d.clip.lock() == clip;
    };
+   auto &prepared = Prepared();
    if (liveCapture) {
+      // The attachment created before the capture started: Get only reads
+      // the attachment vector now, like the AudioIO thread
+      for (const auto &p : prepared)
+         if (p.lock() == clip)
+            return Get(*clip);
       // Not ClipDisplayCache::Get, and not even Attachments::Find: both
       // resize the attachment vector when it has no slot for sKey yet
       const auto it = std::find_if(detached.begin(), detached.end(), same);
@@ -101,8 +123,10 @@ ClipDisplayCache &ClipDisplayCache::ForRequest(
    // The capture is over (or never concerned this clip): the clip's own
    // attachment from now on.  Its stand-in is dropped (its data is redone
    // once; a committed recording changes waveVersion anyway).
-   if (!CaptureRunning())
+   if (!CaptureRunning()) {
       detached.clear();
+      prepared.clear();
+   }
    else
       detached.erase(std::remove_if(detached.begin(), detached.end(), same),
          detached.end());
@@ -361,6 +385,7 @@ size_t TrimDisplayCaches(size_t budgetBytes, const ClipDisplayCache *keep)
 void ReleaseAllDisplayCaches()
 {
    Detached().clear();
+   Prepared().clear();
    TrimDisplayCaches(0, nullptr);
 }
 

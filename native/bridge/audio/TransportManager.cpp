@@ -58,6 +58,7 @@
 #include "BridgeError.h"
 #include "BridgePrefs.h"
 #include "Events.h"
+#include "Hooks.h"
 #include "Json.h"
 #include "Session.h"
 
@@ -1016,6 +1017,10 @@ bool TransportManager::DoRecord(const TransportSequences &sequences,
        !gAudioIO->IsAudioTokenActive(projectAudioIO.GetAudioIOToken()))
       projectAudioIO.SetAudioIOToken(0);
    PaAAudio_ClearLastError();
+
+   // The display caches of the recording targets' clips are attached now,
+   // while only this thread uses the clips (Hooks.h)
+   RunRecordingPreparer(project);
 
    int token =
       gAudioIO->StartStream(transportSequences, t0, t1, t1, options);

@@ -376,6 +376,58 @@ void TestDescribeAll()
    CHECK(ParamOf(amp, "AllowClipping").value("kind", "") == "bool");
    // Amplify reports the peak of the selection (tone amplitude 0.5)
    CHECK(Near(amp.value("peak", 0.0), 0.5, 0.01));
+   // Tempo/pitch/speed percents are shown as multipliers (display
+   // "ratio"); the percent bounds are reported so the UI can clamp
+   {
+      struct RatioParam {
+         const char *effect, *key;
+         double min, max;
+         bool semitones;
+      };
+      const RatioParam ratios[] = {
+         { "Change Tempo", "Percentage", -95.0, 3000.0, false },
+         { "Change Pitch", "Percentage", -99.0, 3000.0, true },
+         { "Change Speed and Pitch", "Percentage", -99.0, 4900.0, false },
+         { "Sliding Stretch", "RatePercentChangeStart", -90.0, 500.0, false },
+         { "Sliding Stretch", "RatePercentChangeEnd", -90.0, 500.0, false },
+         { "Sliding Stretch", "PitchPercentChangeStart", -50.0, 100.0, true },
+         { "Sliding Stretch", "PitchPercentChangeEnd", -50.0, 100.0, true },
+      };
+      for (const auto &r : ratios) {
+         auto p = ParamOf(Describe(r.effect), r.key);
+         const std::string what = std::string(r.effect) + " " + r.key + " " +
+            p.dump();
+         CHECK_MSG(p.is_object(), what);
+         if (!p.is_object())
+            continue;
+         CHECK_MSG(p.value("display", "") == "ratio", what);
+         CHECK_MSG(p.value("kind", "") == "double", what);
+         CHECK_MSG(p.contains("min") && Near(p.value("min", 0.0), r.min, 1e-9),
+            what);
+         CHECK_MSG(p.contains("max") && Near(p.value("max", 0.0), r.max, 1e-9),
+            what);
+         CHECK_MSG(p.value("semitones", false) == r.semitones, what);
+      }
+      // "%" stays the unit of the raw value (compatibility)
+      const auto tempo = ParamOf(Describe("Change Tempo"), "Percentage");
+      CHECK(tempo.is_object() && tempo.value("unit", "") == "%");
+      // The half-step parameters are not ratios
+      const auto halfSteps =
+         ParamOf(Describe("Sliding Stretch"), "PitchHalfStepsStart");
+      CHECK(halfSteps.is_object() && halfSteps.value("display", "x") == "" &&
+         !halfSteps.contains("semitones"));
+      // A multiplier of 1.25 is sent as +25 %; 0.65 as -35 %
+      auto d = MUST("effects.setParams", { { "id", Id("Change Tempo") },
+         { "params", { { "Percentage", (1.25 - 1) * 100 } } } });
+      CHECK(Near(ParamOf(d, "Percentage").value("value", 0.0), 25.0, 1e-9));
+      d = MUST("effects.setParams", { { "id", Id("Change Pitch") },
+         { "params", { { "Percentage", (0.65 - 1) * 100 } } } });
+      CHECK(Near(ParamOf(d, "Percentage").value("value", 0.0), -35.0, 1e-9));
+      MUST("effects.loadPreset", { { "id", Id("Change Tempo") },
+         { "kind", "defaults" } });
+      MUST("effects.loadPreset", { { "id", Id("Change Pitch") },
+         { "kind", "defaults" } });
+   }
    auto echo = Describe("Echo");
    auto delay = ParamOf(echo, "Delay");
    CHECK(delay.value("label", "") == "Delay time (seconds)");

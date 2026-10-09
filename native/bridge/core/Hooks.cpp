@@ -39,6 +39,11 @@ StreamFinalizerFn &FinalizerFn()
    static StreamFinalizerFn fn;
    return fn;
 }
+RecordingPreparerFn &PreparerFn()
+{
+   static RecordingPreparerFn fn;
+   return fn;
+}
 
 // FNV-1a style 64-bit mixing
 struct Hasher {
@@ -138,9 +143,21 @@ void FinalizeDrainedStream(AudacityProject &project)
       fn(project);
 }
 
+void SetRecordingPreparer(RecordingPreparerFn fn)
+{
+   PreparerFn() = std::move(fn);
+}
+
+void RunRecordingPreparer(AudacityProject &project)
+{
+   if (auto &fn = PreparerFn())
+      fn(project);
+}
+
 void ResetHooks()
 {
    FinalizerFn() = {};
+   PreparerFn() = {};
    sTransportReader = nullptr;
    sMetersReader = nullptr;
    Providers() = {};

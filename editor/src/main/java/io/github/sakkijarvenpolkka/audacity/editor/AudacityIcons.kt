@@ -158,6 +158,95 @@ internal object AudacityIcons {
         }
     }
 
+    // --- Mobile edit bar -----------------------------------------------
+
+    /** ✂ Split (scissors). */
+    val Split: ImageVector by lazy {
+        icon("Split") {
+            stroke(1.8f) {
+                circle(6.5f, 17.5f, 2.6f)
+                circle(17.5f, 17.5f, 2.6f)
+                moveTo(8.4f, 15.6f); lineTo(18f, 3.5f)
+                moveTo(15.6f, 15.6f); lineTo(6f, 3.5f)
+            }
+        }
+    }
+
+    /** Cut: the selected part (dashed) leaves the clip. */
+    val Cut: ImageVector by lazy {
+        icon("Cut") {
+            fill { rect(1.5f, 8f, 7f, 16f); rect(17f, 8f, 22.5f, 16f) }
+            stroke(1.4f) {
+                moveTo(9f, 6f); lineTo(11f, 6f); moveTo(13f, 6f); lineTo(15f, 6f)
+                moveTo(9f, 18f); lineTo(11f, 18f); moveTo(13f, 18f); lineTo(15f, 18f)
+                moveTo(9f, 8f); lineTo(9f, 10.5f); moveTo(9f, 13.5f); lineTo(9f, 16f)
+                moveTo(15f, 8f); lineTo(15f, 10.5f); moveTo(15f, 13.5f); lineTo(15f, 16f)
+            }
+        }
+    }
+
+    val Copy: ImageVector by lazy {
+        icon("Copy") {
+            stroke(1.7f) {
+                rect(8.5f, 8.5f, 20f, 20f)
+                moveTo(5.5f, 15.5f); lineTo(4f, 15.5f); lineTo(4f, 4f); lineTo(15.5f, 4f); lineTo(15.5f, 5.5f)
+            }
+        }
+    }
+
+    val Paste: ImageVector by lazy {
+        icon("Paste") {
+            stroke(1.7f) {
+                moveTo(8f, 5f); lineTo(5f, 5f); lineTo(5f, 21f); lineTo(19f, 21f); lineTo(19f, 5f); lineTo(16f, 5f)
+            }
+            fill { rect(8.5f, 3f, 15.5f, 7.5f) }
+            stroke(1.4f) { moveTo(8.5f, 12f); lineTo(15.5f, 12f); moveTo(8.5f, 16f); lineTo(13.5f, 16f) }
+        }
+    }
+
+    /** Delete (a waste bin). */
+    val Delete: ImageVector by lazy {
+        icon("Delete") {
+            stroke(1.7f) {
+                moveTo(4f, 6.5f); lineTo(20f, 6.5f)
+                moveTo(9.5f, 6.5f); lineTo(9.5f, 3.8f); lineTo(14.5f, 3.8f); lineTo(14.5f, 6.5f)
+                moveTo(6f, 6.5f); lineTo(7f, 20.5f); lineTo(17f, 20.5f); lineTo(18f, 6.5f)
+                moveTo(10f, 10f); lineTo(10f, 17f); moveTo(14f, 10f); lineTo(14f, 17f)
+            }
+        }
+    }
+
+    val Duplicate: ImageVector by lazy {
+        icon("Duplicate") {
+            fill { rect(2.5f, 5f, 13f, 11f) }
+            stroke(1.5f) { rect(6f, 13.5f, 16.5f, 19.5f) }
+            stroke(1.8f) { moveTo(19.5f, 11.5f); lineTo(19.5f, 19.5f); moveTo(15.5f, 15.5f); lineTo(23f, 15.5f) }
+        }
+    }
+
+    /** Marker: a label flag on its pole. */
+    val Marker: ImageVector by lazy {
+        icon("Marker") {
+            stroke(1.8f) { moveTo(6f, 21f); lineTo(6f, 3.5f) }
+            fill { moveTo(6.8f, 4f); lineTo(18.5f, 4f); lineTo(15.5f, 8f); lineTo(18.5f, 12f); lineTo(6.8f, 12f); close() }
+        }
+    }
+
+    /** Effects (a wand with sparkles). */
+    val Effects: ImageVector by lazy {
+        icon("Effects") {
+            stroke(2f) { moveTo(4f, 20f); lineTo(14f, 10f) }
+            fill {
+                moveTo(17f, 2.5f); lineTo(18f, 5.5f); lineTo(21f, 6.5f); lineTo(18f, 7.5f)
+                lineTo(17f, 10.5f); lineTo(16f, 7.5f); lineTo(13f, 6.5f); lineTo(16f, 5.5f); close()
+                moveTo(8f, 3f); lineTo(8.6f, 4.9f); lineTo(10.5f, 5.5f); lineTo(8.6f, 6.1f)
+                lineTo(8f, 8f); lineTo(7.4f, 6.1f); lineTo(5.5f, 5.5f); lineTo(7.4f, 4.9f); close()
+                moveTo(19f, 13f); lineTo(19.5f, 14.5f); lineTo(21f, 15f); lineTo(19.5f, 15.5f)
+                lineTo(19f, 17f); lineTo(18.5f, 15.5f); lineTo(17f, 15f); lineTo(18.5f, 14.5f); close()
+            }
+        }
+    }
+
     // --- Track control panel -------------------------------------------
 
     val Close: ImageVector by lazy {

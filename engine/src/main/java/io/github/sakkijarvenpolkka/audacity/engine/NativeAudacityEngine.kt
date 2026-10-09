@@ -22,6 +22,7 @@ import android.content.Context
 import io.github.sakkijarvenpolkka.audacity.engine.model.AppInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDeviceSpec
 import io.github.sakkijarvenpolkka.audacity.engine.model.AudioDevices
+import io.github.sakkijarvenpolkka.audacity.engine.model.ClipTrimResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.ClipboardInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.CompactInfo
 import io.github.sakkijarvenpolkka.audacity.engine.model.CompactResult
@@ -57,6 +58,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.Settings
 import io.github.sakkijarvenpolkka.audacity.engine.model.SettingsResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.Snapshot
 import io.github.sakkijarvenpolkka.audacity.engine.model.SpectrumResult
+import io.github.sakkijarvenpolkka.audacity.engine.model.SplitResult
 import io.github.sakkijarvenpolkka.audacity.engine.model.StartConfig
 import io.github.sakkijarvenpolkka.audacity.engine.model.Tag
 import io.github.sakkijarvenpolkka.audacity.engine.model.TagList
@@ -314,6 +316,8 @@ class NativeAudacityEngine internal constructor(
     // ----- edit --------------------------------------------------------------
     override suspend fun edit(command: String) { call(command) }
     override suspend fun clipboardInfo(): ClipboardInfo = callFor("edit.clipboardInfo")
+    override suspend fun splitAt(t: Double, trackIds: List<Long>?): SplitResult =
+        callFor("edit.splitAt", "t" to t, "trackIds" to trackIds)
 
     // ----- tracks ------------------------------------------------------------
     override suspend fun addTrack(kind: String): Long = callFor<IdResult>("tracks.add", "kind" to kind).id
@@ -347,8 +351,14 @@ class NativeAudacityEngine internal constructor(
     override suspend fun renameClip(trackId: Long, clipIndex: Int, generation: Long, name: String) {
         call("clips.rename", "trackId" to trackId, "clipIndex" to clipIndex, "generation" to generation, "name" to name)
     }
+    override suspend fun trimClip(trackId: Long, clipIndex: Int, generation: Long, trimLeft: Double?,
+                                  trimRight: Double?, final: Boolean): ClipTrimResult =
+        callFor("clips.trim", "trackId" to trackId, "clipIndex" to clipIndex, "generation" to generation,
+            "trimLeft" to trimLeft, "trimRight" to trimRight, "final" to final)
     override suspend fun addLabel(title: String): Pair<Long, Int> =
         callFor<LabelRef>("labels.add", "title" to title).let { it.trackId to it.index }
+    override suspend fun addLabel(title: String, t0: Double, t1: Double?): Pair<Long, Int> =
+        callFor<LabelRef>("labels.add", "title" to title, "t0" to t0, "t1" to t1).let { it.trackId to it.index }
     override suspend fun editLabel(trackId: Long, index: Int, title: String?, t0: Double?, t1: Double?, generation: Long?): Int =
         callFor<LabelIndex>("labels.edit", "trackId" to trackId, "index" to index, "generation" to generation,
             "title" to title, "t0" to t0, "t1" to t1).index

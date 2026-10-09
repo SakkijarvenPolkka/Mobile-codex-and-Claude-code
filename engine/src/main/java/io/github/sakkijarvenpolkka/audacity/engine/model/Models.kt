@@ -420,6 +420,19 @@ data class HistoryEntry(
 @Serializable
 data class HistoryList(val current: Int = 0, val states: List<HistoryEntry> = emptyList())
 
+/** Result of `edit.splitAt`: the tracks that were split (none = nothing changed). */
+@Serializable
+data class SplitResult(val splits: Int = 0, val trackIds: List<Long> = emptyList())
+
+/** Result of `clips.trim`: the clip after the (clamped) trim. */
+@Serializable
+data class ClipTrimResult(
+    val trimLeft: Double = 0.0,
+    val trimRight: Double = 0.0,
+    val start: Double = 0.0,
+    val end: Double = 0.0,
+)
+
 @Serializable
 data class ClipboardInfo(
     val empty: Boolean = true,
@@ -531,10 +544,33 @@ data class EffectParam(
     @SerialName("default") val defaultValue: JsonElement? = null,
     val value: JsonElement? = null,
     val unit: String = "",
-    val display: String = "",         // "" | "dB" | ...
+    /** "" | [EffectParam.DISPLAY_DB] | [EffectParam.DISPLAY_RATIO] (API.md §5.5). */
+    val display: String = "",
     val choices: List<String> = emptyList(),
     val choiceLabels: List<String> = emptyList(),
-)
+    /** A pitch ratio (`display == "ratio"`): the UI may also show 12·log2(ratio) semitones. */
+    val semitones: Boolean = false,
+) {
+    /** The UI shows and edits a multiplier `1 + value/100` (1.25 ⇔ +25 %). */
+    val isRatio: Boolean get() = display == DISPLAY_RATIO
+
+    companion object {
+        /** The UI shows and edits 20·log10(value). */
+        const val DISPLAY_DB = "dB"
+        /** A percent change the UI shows and edits as the multiplier `1 + value/100`. */
+        const val DISPLAY_RATIO = "ratio"
+
+        /** Percent change → multiplier (25 → 1.25). */
+        fun percentToRatio(percent: Double): Double = 1.0 + percent / 100.0
+        /** Multiplier → percent change (0.65 → -35). */
+        fun ratioToPercent(ratio: Double): Double = (ratio - 1.0) * 100.0
+        /** Multiplier → semitones (2 → 12). NaN for ratio <= 0. */
+        fun ratioToSemitones(ratio: Double): Double =
+            if (ratio > 0) 12.0 * kotlin.math.ln(ratio) / kotlin.math.ln(2.0) else Double.NaN
+        /** Semitones → multiplier (12 → 2). */
+        fun semitonesToRatio(semitones: Double): Double = Math.pow(2.0, semitones / 12.0)
+    }
+}
 
 @Serializable
 data class EffectPresets(val factory: List<String> = emptyList(), val user: List<String> = emptyList())

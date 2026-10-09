@@ -10,13 +10,17 @@
   lib-menus/CommandManager.cpp (TryToMakeActionAllowed) with the enablers
   of src/menus/EditMenus.cpp; DoSelectAllAudio and SelectNone come from
   src/SelectUtilities.cpp (Paul Licameli split from SelectMenus.cpp).
+  The snapshot throttle serves the live drags without history entry
+  (volume/pan sliders, clip trims).
 
 **********************************************************************/
 #include "EditUtil.h"
 
+#include <chrono>
 #include <cmath>
 
 #include "Edit.h"
+#include "ModuleRegistry.h"
 #include "Prefs.h"
 #include "Session.h"
 #include "Track.h"
@@ -137,6 +141,67 @@ wxString FormatRate(double rate)
    // "Separate conversion of "rate" enables changing the decimals without
    // affecting i18n" (WaveTrackControls.cpp RateMenuTable::SetRate)
    return wxString::Format(wxT("%.3f"), rate);
+}
+
+namespace {
+
+int64_t NowMs()
+{
+   using namespace std::chrono;
+   return duration_cast<milliseconds>(
+      steady_clock::now().time_since_epoch()).count();
+}
+
+struct SnapshotThrottle {
+   int64_t lastMs = 0;
+   bool pending = false;
+};
+
+SnapshotThrottle &Throttle()
+{
+   static SnapshotThrottle throttle;
+   return throttle;
+}
+
+void ThrottleTick()
+{
+   auto &throttle = Throttle();
+   if (!throttle.pending)
+      return;
+   const auto now = NowMs();
+   if (now - throttle.lastMs < 100)
+      return;
+   throttle.pending = false;
+   throttle.lastMs = now;
+   if (Session::Get().Project())
+      Session::Get().EmitSnapshot();
+}
+
+} // namespace
+
+void ThrottledSnapshot()
+{
+   auto &throttle = Throttle();
+   const auto now = NowMs();
+   if (now - throttle.lastMs >= 100) {
+      throttle.lastMs = now;
+      throttle.pending = false;
+      Session::Get().ScheduleSnapshot();
+   }
+   else
+      // Trailing snapshot from the tick handler
+      throttle.pending = true;
+}
+
+void CancelThrottledSnapshot()
+{
+   Throttle().pending = false;
+}
+
+void RegisterSnapshotThrottle(ModuleRegistry &registry)
+{
+   Throttle() = {};
+   registry.AddTickHandler(ThrottleTick);
 }
 
 } // namespace edit

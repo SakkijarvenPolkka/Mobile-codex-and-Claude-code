@@ -45,6 +45,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -164,9 +165,10 @@ fun HistoryDialog(d: AppDialog, vm: AppViewModel) {
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 40.dp)
+                        .heightIn(min = 48.dp)
                         .background(if (current) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface)
                         .clickable { vm.launchAction { vm.engine.historyGoto(s.index) } }
+                        .testTag("hist:${s.index}")
                         .padding(horizontal = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -285,15 +287,16 @@ fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
         scrollable = false,
     ) {
         if (labels.isEmpty()) Text(stringResource(R.string.le_empty))
+        val editTimes = stringResource(R.string.le_edit_times)
         LazyColumn(Modifier.weight(1f, fill = false)) {
             items(labels, key = { (track, l) -> "${track.id}:${l.index}" }) { (track, l) ->
                 Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(l.title.ifEmpty { "—" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(
-                            "${track.name} · ${TimeCodec.format(l.t0)} – ${TimeCodec.format(l.t1)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.clickable {
+                    // The whole text block (at least 48 dp high) edits the times; the icons edit the text or delete
+                    Column(
+                        Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .clickable(onClickLabel = editTimes) {
                                 // The reference shown now (STALE when the labels change meanwhile)
                                 val gen = snapshot.generation
                                 vm.launchAction {
@@ -301,7 +304,15 @@ fun LabelEditorDialog(d: AppDialog, vm: AppViewModel) {
                                     val t1 = askTime(vm, R.string.le_end, maxOf(l.t1, t0)) ?: return@launchAction
                                     vm.engine.editLabel(track.id, l.index, t0 = minOf(t0, t1), t1 = maxOf(t0, t1), generation = gen)
                                 }
-                            },
+                            }
+                            .testTag("le:times:${track.id}:${l.index}")
+                            .padding(vertical = 4.dp),
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(l.title.ifEmpty { "—" }, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(
+                            "${track.name} · ${TimeCodec.format(l.t0)} – ${TimeCodec.format(l.t1)}",
+                            style = MaterialTheme.typography.bodySmall,
                         )
                     }
                     IconButton(onClick = { vm.launchAction { ContextMenus.editLabelText(vm, track.id, l.index) } }) {

@@ -61,11 +61,13 @@ struct DisplayTrack {
 DisplayTrack ResolveDisplayTrack(AudacityProject &project, int64_t id);
 
 //! Creates the display caches (clip attachments) of the recording targets'
-//! clips: the pending changed tracks and the pending new tracks.  Used by
-//! debug.recording.  Not needed for safety: while AudioIO captures, the
-//! display requests never attach anything to a capture target's clips
-//! (DisplayTrack::liveCapture), whether or not this ran before
-//! AudioIO::StartStream.
+//! clips: the pending changed tracks and the pending new tracks.  The audio
+//! module runs it (Hooks.h RunRecordingPreparer) after registering the
+//! pending tracks and BEFORE AudioIO::StartStream, debug.recording after
+//! registering its pending tracks.  While AudioIO captures, the display
+//! requests use these attachments and never attach anything else to a
+//! capture target's clips (DisplayTrack::liveCapture,
+//! ClipDisplayCache::ForRequest).  No-op once a capture runs.
 void PrepareForRecording(AudacityProject &project);
 
 } // namespace aubridge::display

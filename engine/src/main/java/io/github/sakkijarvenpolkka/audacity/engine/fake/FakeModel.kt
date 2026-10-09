@@ -270,12 +270,22 @@ internal object Edits {
         for (c in track.clips) {
             val i = c.index(t)
             if (c.start < t - EPS && c.end > t + EPS && i > 0 && i < c.length) {
-                out += c.slice(0, i, c.start)
-                out += c.slice(i, c.length, c.timeOf(i), track.newClipName(out.map { it.name }))
+                // WaveTrack::SplitAt: each part keeps the other one hidden
+                val (left, right) = c.splitHidden(i, track.newClipName(out.map { it.name }))
+                out += left
+                out += right
             } else out += c
         }
         return track.withClips(out)
     }
+
+    /** True when [splitAt] splits a clip of [track] at [t] (a clip strictly
+     *  contains the sample boundary nearest to [t]). */
+    fun splitsAt(track: FTrack, t: Double): Boolean =
+        track.isWave && track.clips.any { c ->
+            val i = c.index(t)
+            c.start < t - EPS && c.end > t + EPS && i > 0 && i < c.length
+        }
 
     fun join(track: FTrack, t0: Double, t1: Double): FTrack {
         if (!track.isWave) return track

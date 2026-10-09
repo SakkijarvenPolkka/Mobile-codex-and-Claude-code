@@ -26,6 +26,10 @@
      lib-app-services import handler (mod-aup)
    * errors: unknown extension, corrupt file (FAILED with the library's
      message), missing file, .aup3, bad arguments
+   * limits: WAVs declaring 65 / 1024 channels are refused without the
+     memory the PCM importer would need (64 channels import); the first
+     import adopts the file's rate as the project rate only within
+     1000 ... 768000 Hz
 
   Exit code 0 on success.  BRIDGE_TEST_VERBOSE=1 prints the events.
 
@@ -44,6 +48,7 @@
 #include <sstream>
 #include <thread>
 
+#include <sys/resource.h>
 #include <sys/stat.h>
 
 using namespace bridgetest;
@@ -1225,6 +1230,94 @@ void TestImportErrors()
    CHECK(WaveTracks(Snap()).size() == 1);
 }
 
+//! A 16-bit PCM WAV of `frames` frames with any header values
+void WriteWav(const std::string &path, uint32_t rate, uint16_t channels,
+   uint32_t frames)
+{
+   std::ofstream f(path, std::ios::binary);
+   const auto u32 = [&f](uint32_t v) {
+      const char b[4] = { char(v), char(v >> 8), char(v >> 16), char(v >> 24) };
+      f.write(b, 4);
+   };
+   const auto u16 = [&f](uint16_t v) {
+      const char b[2] = { char(v), char(v >> 8) };
+      f.write(b, 2);
+   };
+   const uint32_t dataBytes = frames * channels * 2;
+   f.write("RIFF", 4); u32(36 + dataBytes); f.write("WAVE", 4);
+   f.write("fmt ", 4); u32(16); u16(1); u16(channels); u32(rate);
+   u32(rate * 2u * channels); u16(uint16_t(2 * channels)); u16(16);
+   f.write("data", 4); u32(dataBytes);
+   for (uint32_t i = 0; i < frames * channels; ++i)
+      u16(uint16_t(int16_t((i * 977) % 20000) - 10000));
+}
+
+//! Peak resident memory of this process (the engine runs in it), in MB
+long PeakRssMb()
+{
+   rusage usage{};
+   ::getrusage(RUSAGE_SELF, &usage);
+   return usage.ru_maxrss / 1024;
+}
+
+void TestImportLimits()
+{
+   // A tiny file declaring very many channels is refused before the PCM
+   // importer allocates about 1 MiB per channel (a 20 KB WAV with 1024
+   // channels made it touch 1 GB).  Runs first: the peak memory of the
+   // process is still low.
+   REQ("project.new");
+   const auto states = HistoryCount();
+   const long peakBefore = PeakRssMb();
+   for (const uint16_t channels : { uint16_t(65), uint16_t(1024) }) {
+      const auto path = ImportPath("many.wav");
+      WriteWav(path, 44100, channels, 10);
+      auto r = ImportFiles({ path }, false);
+      CHECK_MSG(ErrorCodeOf(r) == "FAILED", r.dump().substr(0, 300));
+      CHECK_MSG(ErrMessage(r).find(std::to_string(channels) + " channels") !=
+         std::string::npos, r.dump().substr(0, 300));
+      CHECK_MSG(ErrMessage(r).find("many.wav") != std::string::npos,
+         r.dump().substr(0, 300));
+   }
+   const long grown = PeakRssMb() - peakBefore;
+   std::fprintf(stderr, "  peak memory grew by %ld MB (65 and 1024 channels)\n",
+      grown);
+   CHECK_MSG(grown < 100, std::to_string(grown) + " MB");
+   CHECK(WaveTracks(Snap()).empty());
+   CHECK(HistoryCount() == states);
+   // 64 channels (the limit) still import: 64 mono tracks
+   {
+      const auto path = ImportPath("sixtyfour.wav");
+      WriteWav(path, 44100, 64, 10);
+      auto r = ImportFiles({ path }, false);
+      CHECK_MSG(Ok(r), r.dump().substr(0, 300));
+      CHECK(WaveTracks(Snap()).size() == 64);
+   }
+
+   // The first import into an empty project adopts the file's rate as the
+   // project rate only within project.setRate's range (1000 ... 768000 Hz);
+   // the track keeps its own rate either way
+   for (const uint32_t rate : { 1u, 999u, 1000u, 768000u, 768001u,
+           2000000000u }) {
+      REQ("project.new");
+      REQ("project.setRate", json{ { "rate", 44100 } });
+      const auto path = ImportPath("odd.wav");
+      WriteWav(path, rate, 1, 100);
+      auto r = ImportFiles({ path }, false);
+      CHECK_MSG(Ok(r), std::to_string(rate) + ": " + r.dump());
+      const auto s = Snap();
+      const bool adopted = rate >= 1000 && rate <= 768000;
+      CHECK_MSG(s["project"].value("rate", 0.0) ==
+         (adopted ? double(rate) : 44100.0),
+         std::to_string(rate) + ": " + s["project"].dump());
+      const auto tracks = WaveTracks(s);
+      CHECK(tracks.size() == 1);
+      if (tracks.size() == 1)
+         CHECK_MSG(tracks[0].value("rate", 0.0) == double(rate),
+            std::to_string(rate) + ": " + tracks[0].dump().substr(0, 200));
+   }
+}
+
 } // namespace
 
 int main()
@@ -1248,6 +1341,7 @@ int main()
       if (c.value("name", "") == "importers" || c.value("name", "") == "exporters")
          CHECK_MSG(c.value("ok", false), c.dump());
 
+   TestImportLimits();
    TestFormatLists();
    TestOptions();
    TestRoundTrips();

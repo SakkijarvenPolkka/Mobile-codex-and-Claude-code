@@ -68,6 +68,24 @@ class EditorState(initialPps: Double = DEFAULT_ZOOM, initialHpos: Double = 0.0) 
     var vposDp: Float by mutableFloatStateOf(0f)
         internal set
 
+    /**
+     * Stop drags at the end of the audio: a time selection, the loop (play
+     * region) band, the cursor handle and typed selection times are clamped
+     * to [0, end] and snap exactly to the end within 16 dp of it (end = the
+     * dragged track's end for a single-track selection, else the project
+     * end). Default on (mobile).
+     */
+    var stopAtTrackEnd: Boolean by mutableStateOf(true)
+
+    /** Snapping of drags to clip/label edges, track ends, cursor, play head (and grid). */
+    var snapping: SnapMode by mutableStateOf(SnapMode.EDGES)
+
+    /** Tool of the track panel: [EditTool.SPLIT] = a tap on a clip splits it (razor). */
+    var tool: EditTool by mutableStateOf(EditTool.SELECT)
+
+    /** Time of the snap guide line shown while a drag is snapped (NaN = none). */
+    internal var snapGuide: Double by mutableDoubleStateOf(Double.NaN)
+
     /** Tracks shown as spectrogram (Waveform / Spectrogram view of the track menu). */
     var spectrogramTracks: Set<Long> by mutableStateOf(emptySet())
         private set
@@ -87,6 +105,8 @@ class EditorState(initialPps: Double = DEFAULT_ZOOM, initialHpos: Double = 0.0) 
     internal var projectEnd: Double = 0.0
     /** Play/record head while audio is streaming and not paused, else NaN. */
     internal var streamingHeadTime: Double = Double.NaN
+    /** Displayed play/record head while the transport is active (also paused), else NaN. */
+    internal var headTime: Double = Double.NaN
     /** True while a touch gesture owns the view (suppresses auto-scrolling). */
     internal var gestureActive: Boolean = false
     /** Last view sent with `engine.setView` (to tell our echo from an engine change). */
@@ -353,6 +373,9 @@ class EditorState(initialPps: Double = DEFAULT_ZOOM, initialHpos: Double = 0.0) 
                     s.lastSentZoom,
                     s.lastSentHpos,
                     s.spectrogramTracks.toLongArray(),
+                    s.stopAtTrackEnd,
+                    s.snapping.name,
+                    s.tool.name,
                 )
             },
             restore = { v ->
@@ -371,6 +394,11 @@ class EditorState(initialPps: Double = DEFAULT_ZOOM, initialHpos: Double = 0.0) 
                     lastSentZoom = l[10] as Double
                     lastSentHpos = l[11] as Double
                     spectrogramTracks = (l[12] as LongArray).toSet()
+                    if (l.size > 15) {
+                        stopAtTrackEnd = l[13] as Boolean
+                        snapping = SnapMode.entries.firstOrNull { it.name == l[14] } ?: SnapMode.EDGES
+                        tool = EditTool.entries.firstOrNull { it.name == l[15] } ?: EditTool.SELECT
+                    }
                 }
             },
         )

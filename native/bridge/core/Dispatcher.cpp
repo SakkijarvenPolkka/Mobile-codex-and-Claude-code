@@ -83,6 +83,9 @@ std::string Dispatch(const std::string &command, const std::string &argsJson)
       if (!args.is_object())
          Fail(ErrorCode::INVALID_ARGS, "arguments must be a JSON object");
 
+      // Android "Clear cache" may have removed SQLite's temporary directory
+      session.EnsureWorkDirectories();
+
       auto *project = session.Project();
       if (project && (flags & NeedsIdleAudio))
          FinalizeDrainedStream(*project);

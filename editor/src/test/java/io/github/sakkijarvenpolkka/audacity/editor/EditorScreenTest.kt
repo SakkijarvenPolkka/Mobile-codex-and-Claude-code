@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.audacity.engine.AudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.FakeAudacityEngine
 import io.github.sakkijarvenpolkka.audacity.engine.fake.FakeConfig
+import io.github.sakkijarvenpolkka.audacity.engine.model.ClipTrimResult
+import io.github.sakkijarvenpolkka.audacity.engine.model.SplitResult
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -83,6 +85,18 @@ private class RecordingEngine(val inner: FakeAudacityEngine) : AudacityEngine by
     override suspend fun waveColumnsInto(trackId: Long, channel: Int, zoomLevel: Int, firstColumn: Long, count: Int, out: FloatArray): Long {
         waveCalls++
         return inner.waveColumnsInto(trackId, channel, zoomLevel, firstColumn, count, out)
+    }
+    val splits = CopyOnWriteArrayList<Pair<Double, List<Long>?>>()
+    override suspend fun splitAt(t: Double, trackIds: List<Long>?): SplitResult {
+        splits += t to trackIds
+        return inner.splitAt(t, trackIds)
+    }
+    /** (final, trimLeft, trimRight) of each clips.trim. */
+    val trims = CopyOnWriteArrayList<Triple<Boolean, Double?, Double?>>()
+    override suspend fun trimClip(trackId: Long, clipIndex: Int, generation: Long, trimLeft: Double?,
+                                  trimRight: Double?, final: Boolean): ClipTrimResult {
+        trims += Triple(final, trimLeft, trimRight)
+        return inner.trimClip(trackId, clipIndex, generation, trimLeft, trimRight, final)
     }
 }
 
@@ -332,14 +346,193 @@ class EditorScreenTest {
         setEditor()
         val actions = rule.onNodeWithTag(EditorTags.TRACK_PANEL).fetchSemanticsNode().config[SemanticsActions.CustomActions]
         assertEquals(
-            listOf("Select all", "Select previous clip", "Select next clip", "Menu of the clip at the cursor"),
+            listOf(
+                "Move cursor left", "Move cursor right", "Select the clip at the cursor", "Split at the cursor",
+                "Select all", "Select previous clip", "Select next clip", "Menu of the clip at the cursor",
+            ),
             actions.map { it.label },
         )
-        rule.runOnIdle { actions.last().action() }
+        fun action(label: String) = actions.first { it.label == label }
+        rule.runOnIdle { action("Menu of the clip at the cursor").action() }
         rule.waitUntil(5_000) { callbacks.targets.isNotEmpty() }
         assertTrue(callbacks.targets.single() !is ContextTarget.Empty)
-        rule.runOnIdle { actions.first().action() }
+        // Cursor right from the selection end (4 s) by one grid step, then split there.
+        rule.runOnIdle { action("Move cursor right").action() }
+        rule.waitUntil(5_000) { engine.snapshot.value.selection.let { it.t0 == it.t1 && it.t0 > 4.0 } }
+        val cursor = engine.snapshot.value.selection.t0
+        assertEquals(4.0 + Snapper.gridStep(state.pps), cursor, 1e-9)
+        rule.runOnIdle { action("Split at the cursor").action() }
+        rule.waitUntil(5_000) { engine.splits.isNotEmpty() }
+        assertEquals(cursor, engine.splits.single().first, 1e-9)
+        rule.waitUntil(5_000) { engine.snapshot.value.tracks[0].clips.size == 3 }
+        rule.runOnIdle { action("Select all").action() }
         rule.waitUntil(5_000) { engine.snapshot.value.tracks.all { it.selected } }
+    }
+
+    // ------------------------------------------------------------------
+    // Mobile: snapping, stop at the track end, razor, trim, scrub
+    // ------------------------------------------------------------------
+
+    /** Compact geometry of Audio 2 (stereo): header [150,182), title [182,206), channels below. */
+    private val audio2BodyY = 260f
+    private fun x(t: Double, hpos: Double) = ((t - hpos) * zoom).toFloat()
+
+    private fun scrollTo(hpos: Double) {
+        rule.runOnIdle { state.setView(zoom, hpos) }
+        rule.waitForIdle()
+    }
+
+    @Test
+    fun selectionDragPastTheEndStopsExactlyAtTheTrackEnd() {
+        setEditor()
+        val audio2 = engine.snapshot.value.tracks[1]
+        val end = audio2.end
+        assertEquals(12.0, end, 1e-9)
+        scrollTo(9.0)
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput {
+            swipe(Offset(x(10.5, 9.0), audio2BodyY), Offset(x(13.2, 9.0), audio2BodyY), durationMillis = 400)
+        }
+        rule.waitUntil(5_000) { engine.snapshot.value.selection.t1 == end }
+        val sel = engine.snapshot.value.selection
+        assertEquals(10.5, sel.t0, 0.03)
+        assertEquals(end, sel.t1, 0.0)          // exactly the end, not past it
+        // A single-track drag stops at that track's end (12 s), not the project end (14 s).
+        assertEquals(listOf(audio2.id), engine.lastSelectTracks)
+        rule.runOnIdle { assertTrue(state.snapGuide.isNaN()) }     // guide hidden after the drag
+    }
+
+    @Test
+    fun selectionDragWithoutStopAtEndGoesPastTheTrackEnd() {
+        setEditor()
+        rule.runOnIdle { state.stopAtTrackEnd = false; state.snapping = SnapMode.OFF }
+        scrollTo(9.0)
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput {
+            swipe(Offset(x(10.5, 9.0), audio2BodyY), Offset(x(13.2, 9.0), audio2BodyY), durationMillis = 400)
+        }
+        rule.waitUntil(5_000) { abs(engine.snapshot.value.selection.t1 - 13.2) < 0.05 }
+        assertEquals(10.5, engine.snapshot.value.selection.t0, 0.03)
+    }
+
+    @Test
+    fun selectionEdgeSnapsToClipEdge() {
+        setEditor()
+        scrollTo(5.0)
+        // 8.1 s is 8.6 dp from the end of "Audio 1 #1" (8 s): snaps exactly.
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput {
+            swipe(Offset(x(6.0, 5.0), audio1BodyY), Offset(x(8.1, 5.0), audio1BodyY), durationMillis = 400)
+        }
+        rule.waitUntil(5_000) { engine.snapshot.value.selection.t1 == 8.0 }
+        assertEquals(6.0, engine.snapshot.value.selection.t0, 0.03)
+    }
+
+    @Test
+    fun noEdgeSnapWhenSnappingIsOff() {
+        setEditor()
+        rule.runOnIdle { state.snapping = SnapMode.OFF }
+        scrollTo(5.0)
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput {
+            swipe(Offset(x(6.0, 5.0), audio1BodyY), Offset(x(8.1, 5.0), audio1BodyY), durationMillis = 400)
+        }
+        rule.waitUntil(5_000) { abs(engine.snapshot.value.selection.t1 - 8.1) < 0.03 }
+    }
+
+    @Test
+    fun loopBandDragStopsAtTheEndOfTheAudio() {
+        setEditor()
+        val end = engine.snapshot.value.projectEnd
+        assertEquals(14.0, end, 1e-9)
+        scrollTo(10.0)
+        rule.onNodeWithTag(EditorTags.RULER).performTouchInput {
+            swipe(Offset(x(13.0, 10.0), 10f), Offset(x(14.5, 10.0), 10f), durationMillis = 300)
+        }
+        rule.waitUntil(5_000) { engine.snapshot.value.playRegion.active }
+        val pr = engine.snapshot.value.playRegion
+        assertEquals(13.0, pr.t0, 0.03)
+        assertEquals(end, pr.t1, 0.0)
+    }
+
+    @Test
+    fun activeLoopPastTheEndIsPulledBackToTheEnd() {
+        kotlinx.coroutines.runBlocking { fake.setPlayRegion(1.0, 20.0, true) }
+        setEditor()
+        rule.waitUntil(5_000) { engine.snapshot.value.playRegion.t1 == 14.0 }
+        assertEquals(1.0, engine.snapshot.value.playRegion.t0, 0.0)
+        assertTrue(engine.snapshot.value.playRegion.active)
+    }
+
+    @Test
+    fun razorToolTapSplitsTheTappedClip() {
+        setEditor()
+        rule.runOnIdle { state.tool = EditTool.SPLIT }
+        rule.onNodeWithTag(EditorTags.SPLIT_TOOL_BANNER).assertIsDisplayed()
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput { click(Offset(x(3.0, 0.0), audio1BodyY)) }
+        rule.waitUntil(5_000) { engine.splits.isNotEmpty() }
+        val (t, ids) = engine.splits.single()
+        assertEquals(3.0, t, 0.02)
+        assertEquals(listOf(audio1), ids)
+        rule.waitUntil(5_000) { engine.snapshot.value.tracks[0].clips.size == 3 }
+        // The banner turns the tool off.
+        rule.onNodeWithTag(EditorTags.SPLIT_TOOL_BANNER).performClick()
+        rule.runOnIdle { assertEquals(EditTool.SELECT, state.tool) }
+    }
+
+    @Test
+    fun razorTapNearAClipEdgeSnapsToIt() {
+        setEditor()
+        rule.runOnIdle { state.tool = EditTool.SPLIT }
+        scrollTo(5.0)
+        // 7.9 s is 8.6 dp from the clip end: snaps to 8 s, a boundary, so nothing is split.
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput { click(Offset(x(7.9, 5.0), audio1BodyY)) }
+        rule.waitUntil(5_000) { engine.splits.isNotEmpty() }
+        assertEquals(8.0, engine.splits.single().first, 0.0)
+        rule.waitUntil(5_000) { callbacks.events.any { it.startsWith("message:Nothing to split") } }
+    }
+
+    @Test
+    fun clipBorderDragTrimsLiveThenOnceOnRelease() {
+        setEditor()
+        scrollTo(5.0)
+        val edgeX = x(8.0, 5.0)
+        // Right border of "Audio 1 #1" in its title bar, dragged 1 s to the left.
+        rule.onNodeWithTag(EditorTags.TRACK_PANEL).performTouchInput {
+            swipe(Offset(edgeX - 4f, audio1TitleY), Offset(edgeX - 4f - zoom.toFloat(), audio1TitleY), durationMillis = 500)
+        }
+        rule.waitUntil(5_000) { engine.trims.any { it.first } }
+        val live = engine.trims.filter { !it.first }
+        assertTrue("live previews ${engine.trims}", live.isNotEmpty())
+        assertTrue(live.all { it.second == null && it.third != null })
+        val final = engine.trims.single { it.first }
+        assertEquals(1.0, final.third!!, 0.03)
+        assertTrue(engine.calls.none { it == "moveClip" })
+        rule.waitUntil(5_000) { abs(engine.snapshot.value.tracks[0].clips[0].end - 7.0) < 0.03 }
+        // One history entry for the whole drag.
+        assertTrue(engine.snapshot.value.history.undo, engine.snapshot.value.history.undo.startsWith("Trim by"))
+    }
+
+    @Test
+    fun cursorHandleDragInTheRulerMovesTheCursor() {
+        kotlinx.coroutines.runBlocking { fake.select(2.5, 2.5) }
+        setEditor()
+        rule.onNodeWithTag(EditorTags.RULER).performTouchInput {
+            swipe(Offset(x(2.5, 0.0), 10f), Offset(x(3.5, 0.0), 10f), durationMillis = 300)
+        }
+        rule.waitUntil(5_000) { abs(engine.snapshot.value.selection.t0 - 3.5) < 0.03 }
+        val sel = engine.snapshot.value.selection
+        assertEquals(sel.t0, sel.t1, 0.0)
+        // A drag from the cursor handle does not create a loop.
+        assertTrue(engine.calls.none { it.startsWith("playRegion") })
+    }
+
+    @Test
+    fun selectionToolbarClampsTypedTimesToTheEnd() {
+        rule.setContent {
+            AudacityTheme(ThemeChoice.LIGHT) { SelectionToolbar(engine) }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithText("00 h 00 m 04.000 s", substring = true).performClick()
+        rule.onNodeWithContentDescription("Edit End").performTextReplacement("99")
+        rule.onNodeWithContentDescription("Edit End").performImeAction()
+        rule.waitUntil(5_000) { engine.lastSelect == (2.0 to 14.0) }
     }
 
     @Test

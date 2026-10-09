@@ -320,25 +320,30 @@ fun TimeToolbar(engine: AudacityEngine, modifier: Modifier = Modifier) {
 /**
  * Selection toolbar, mode "Start and End" with "hh:mm:ss + milliseconds"
  * (SelectionBar.cpp). Tap a field to type a new time (hh:mm:ss.mmm, mm:ss
- * or seconds); Done/focus loss commits with `select.set`.
+ * or seconds); Done/focus loss commits with `select.set`. Typed times are
+ * clamped to [0, project end] while [EditorState.stopAtTrackEnd] is on
+ * ([state] null = on).
  */
 @Composable
-fun SelectionToolbar(engine: AudacityEngine, modifier: Modifier = Modifier) {
+fun SelectionToolbar(engine: AudacityEngine, modifier: Modifier = Modifier, state: EditorState? = null) {
     val pal = LocalAudacityColors.current
     val snapshot by engine.snapshot.collectAsState()
     val scope = rememberCoroutineScope()
     val sel = snapshot.selection
+    fun clamp(v: Double): Double = Snapper.clamp(v, snapshot.projectEnd, state?.stopAtTrackEnd ?: true)
     Row(
         modifier.background(pal.medium).horizontalScroll(rememberScrollState()).padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        TimeField(stringResource(R.string.aued_selection_start), sel.t0) { v ->
-            val t1 = maxOf(sel.t1, v)
+        TimeField(stringResource(R.string.aued_selection_start), sel.t0) { typed ->
+            val v = clamp(typed)
+            val t1 = clamp(maxOf(sel.t1, v))
             scope.engineCall { engine.select(v, t1) }
         }
-        TimeField(stringResource(R.string.aued_selection_end), sel.t1) { v ->
-            val t0 = minOf(sel.t0, v)
+        TimeField(stringResource(R.string.aued_selection_end), sel.t1) { typed ->
+            val v = clamp(typed)
+            val t0 = minOf(clamp(sel.t0), v)
             scope.engineCall { engine.select(t0, v) }
         }
     }

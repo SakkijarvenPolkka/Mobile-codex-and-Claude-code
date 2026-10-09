@@ -86,6 +86,11 @@ data class MenuState(
     val showRms: Boolean = false,
     val followPlayhead: Boolean = true,
     val recentProjects: List<ProjectFileEntry> = emptyList(),
+    /** Editor settings of the View menu (UiPrefsState). */
+    val stopAtTrackEnd: Boolean = true,
+    val snapEnabled: Boolean = true,
+    val snapToGrid: Boolean = false,
+    val splitTool: Boolean = false,
 ) {
     val flags: Long get() = snapshot.flags
 }

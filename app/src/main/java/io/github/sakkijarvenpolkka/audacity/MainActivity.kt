@@ -2,7 +2,7 @@
  * Audacity Android port — the single activity (edge-to-edge). The engine
  * lives in AudacityApp; dialogs and flows live in AppViewModel. This class
  * only fulfils requests that need an Activity: SAF pickers, the record
- * permission, and links.
+ * permission, links and the share sheet.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
@@ -29,6 +29,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.core.net.toUri
 import io.github.sakkijarvenpolkka.audacity.editor.AudacityTheme
+import io.github.sakkijarvenpolkka.audacity.share.ShareAudio
 import io.github.sakkijarvenpolkka.audacity.ui.AppRoot
 
 class MainActivity : ComponentActivity() {
@@ -111,6 +112,12 @@ class MainActivity : ComponentActivity() {
                             notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
                         is HostRequest.OpenUrl -> startActivity(Intent(Intent.ACTION_VIEW, r.url.toUri()))
+                        is HostRequest.ShareFile -> try {
+                            startActivity(ShareAudio.shareIntent(this@MainActivity, r.file, r.mimeType, getString(R.string.share_chooser_title)))
+                        } catch (e: IllegalArgumentException) {
+                            // FileProvider: the file is not below cacheDir/share
+                            vm.reportError(e)
+                        }
                         HostRequest.AppLanguageSettings -> if (Build.VERSION.SDK_INT >= 33) {
                             startActivity(Intent(Settings.ACTION_APP_LOCALE_SETTINGS, Uri.fromParts("package", packageName, null)))
                         }

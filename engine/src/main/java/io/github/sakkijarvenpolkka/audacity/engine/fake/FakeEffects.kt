@@ -57,11 +57,13 @@ internal class PDef(
     val display: String = "",
     /** Nyquist control type ("float", "int-text", "time", "choice", ...). */
     val nyquistType: String? = null,
+    /** display "ratio" of a pitch (API.md §5.5 `semitones`). */
+    val semitones: Boolean = false,
 ) {
     fun toParam(value: JsonPrimitive) = EffectParam(
         key = key, label = label, kind = kind.wire, min = min, max = max, scale = scale,
         defaultValue = default, value = value, unit = unit, display = display,
-        choices = choices, choiceLabels = choiceLabels.ifEmpty { choices },
+        choices = choices, choiceLabels = choiceLabels.ifEmpty { choices }, semitones = semitones,
     )
 
     /** Validates [input] (API.md §5.5 accepted JSON types) and returns the
@@ -196,8 +198,13 @@ private fun pInt(key: String, label: String, def: Int, min: Number?, max: Number
 
 private fun pDouble(
     key: String, label: String, def: Double, min: Double?, max: Double?, unit: String = "", display: String = "",
-    scale: Double? = null, ny: String? = null,
-) = PDef(key, label, PKind.DOUBLE, JsonPrimitive(def), min, max, scale, unit = unit, display = display, nyquistType = ny)
+    scale: Double? = null, ny: String? = null, semitones: Boolean = false,
+) = PDef(key, label, PKind.DOUBLE, JsonPrimitive(def), min, max, scale, unit = unit, display = display, nyquistType = ny,
+    semitones = semitones)
+
+/** A percent change shown as a multiplier (API.md §5.5 display "ratio"). */
+private fun pRatio(key: String, label: String, min: Double, max: Double, unit: String = "%", semitones: Boolean = false) =
+    pDouble(key, label, 0.0, min, max, unit, display = "ratio", semitones = semitones)
 
 private fun pEnum(key: String, label: String, def: Int, choices: List<String>, labels: List<String> = choices, ny: String? = null) =
     PDef(key, label, PKind.ENUM, JsonPrimitive(def), choices = choices, choiceLabels = labels, nyquistType = ny)
@@ -710,13 +717,13 @@ internal object FxCatalog {
                 scale(d, Dsp.dbToLin(p.d("Gain")))
             })
         list += FxDef("Change Pitch", "Change Pitch", "process", description = "Changes the pitch of a track without changing its tempo",
-            params = listOf(pDouble("Percentage", "Percent change", 0.0, -99.0, 3000.0, "%"), pBool("SBSMS", "Use high quality stretching (slow)", false)))
+            params = listOf(pRatio("Percentage", "Percent change", -99.0, 3000.0, semitones = true), pBool("SBSMS", "Use high quality stretching (slow)", false)))
         list += FxDef("Change Speed and Pitch", "Change Speed and Pitch", "process",
             description = "Changes the speed of a track, also changing its pitch",
-            params = listOf(pDouble("Percentage", "Speed multiplier (percent change)", 0.0, -99.0, 4900.0, "%")),
+            params = listOf(pRatio("Percentage", "Speed multiplier (percent change)", -99.0, 4900.0)),
             impl = FxImpl.Process { d, _, p, _ -> stretchAll(d, (d[0].size / (1 + p.d("Percentage") / 100)).roundToInt()) })
         list += FxDef("Change Tempo", "Change Tempo", "process", description = "Changes the tempo of a selection without changing its pitch",
-            params = listOf(pDouble("Percentage", "Percent change", 0.0, -95.0, 3000.0, "%"), pBool("SBSMS", "Use high quality stretching (slow)", false)),
+            params = listOf(pRatio("Percentage", "Percent change", -95.0, 3000.0), pBool("SBSMS", "Use high quality stretching (slow)", false)),
             impl = FxImpl.Process { d, _, p, _ -> stretchAll(d, (d[0].size / (1 + p.d("Percentage") / 100)).roundToInt()) })
         list += FxDef("Classic Filters", "Classic Filters", "process",
             description = "Performs IIR filtering that emulates analog filters",
@@ -926,12 +933,12 @@ internal object FxCatalog {
         list += FxDef("Sliding Stretch", "Sliding Stretch", "process",
             description = "Allows continuous changes to the tempo and/or pitch",
             params = listOf(
-                pDouble("RatePercentChangeStart", "Initial Tempo Change", 0.0, -90.0, 500.0, "%"),
-                pDouble("RatePercentChangeEnd", "Final Tempo Change", 0.0, -90.0, 500.0, "%"),
+                pRatio("RatePercentChangeStart", "Initial Tempo Change", -90.0, 500.0),
+                pRatio("RatePercentChangeEnd", "Final Tempo Change", -90.0, 500.0),
                 pDouble("PitchHalfStepsStart", "Initial Pitch Shift (semitones)", 0.0, -12.0, 12.0),
                 pDouble("PitchHalfStepsEnd", "Final Pitch Shift (semitones)", 0.0, -12.0, 12.0),
-                pDouble("PitchPercentChangeStart", "Initial Pitch Shift (percent)", 0.0, -50.0, 100.0, "%"),
-                pDouble("PitchPercentChangeEnd", "Final Pitch Shift (percent)", 0.0, -50.0, 100.0, "%"),
+                pRatio("PitchPercentChangeStart", "Initial Pitch Shift (percent)", -50.0, 100.0, semitones = true),
+                pRatio("PitchPercentChangeEnd", "Final Pitch Shift (percent)", -50.0, 100.0, semitones = true),
             ),
             impl = FxImpl.Process { d, _, p, _ ->
                 val avg = 1 + (p.d("RatePercentChangeStart") + p.d("RatePercentChangeEnd")) / 200

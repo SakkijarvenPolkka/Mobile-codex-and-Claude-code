@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths: File ▸ Share Audio stages its export in cacheDir/share/<uuid>/
+     (ShareAudio.STAGING); nothing else of the app is served.
+     SPDX-License-Identifier: GPL-2.0-or-later -->
+<paths>
+    <cache-path name="share" path="share/" />
+</paths>

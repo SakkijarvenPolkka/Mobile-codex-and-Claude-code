@@ -9,6 +9,7 @@ package io.github.sakkijarvenpolkka.audacity
 import android.os.Bundle
 import io.github.sakkijarvenpolkka.audacity.editor.ContextTarget
 import io.github.sakkijarvenpolkka.audacity.engine.model.ProjectFileEntry
+import io.github.sakkijarvenpolkka.audacity.files.SafFiles
 import io.github.sakkijarvenpolkka.audacity.util.UiText
 import kotlinx.coroutines.CompletableDeferred
 
@@ -31,14 +32,25 @@ sealed interface AppDialog {
         val result: CompletableDeferred<Boolean> = CompletableDeferred(),
     ) : AppDialog
 
-    /** One-line text input; [result] gets null when cancelled. */
+    /**
+     * One-line text input; [result] gets null when cancelled. [maxBytes]
+     * limits the UTF-8 length of the trimmed text (file names: the file
+     * system allows 255 bytes, i.e. about 85 Korean characters).
+     */
     class TextInput(
         val title: UiText,
         val label: UiText,
         val initial: String,
         val result: CompletableDeferred<String?> = CompletableDeferred(),
         val allowEmpty: Boolean = false,
-    ) : AppDialog
+        val maxBytes: Int = Int.MAX_VALUE,
+    ) : AppDialog {
+        /** [value] is longer than [maxBytes] (it is flagged, not cut: cutting would break a Korean IME's composition). */
+        fun tooLong(value: String): Boolean = SafFiles.utf8Length(value.trim()) > maxBytes
+
+        /** OK is enabled for [value]. */
+        fun accepts(value: String): Boolean = (allowEmpty || value.isNotBlank()) && !tooLong(value)
+    }
 
     /** Pick one of [options] (radio buttons); [result] gets the index, null when cancelled. */
     class Choice(
@@ -71,6 +83,15 @@ sealed interface AppDialog {
     data object Resample : AppDialog
     data object DeviceInfo : AppDialog
     data object LabelEditor : AppDialog
+
+    /** The edit bar's Effects button: one-tap effects and shortcuts to effect dialogs. */
+    data object QuickEffects : AppDialog
+
+    /** The whole Effect menu as a sheet ("All effects..." of [QuickEffects]). */
+    data object EffectMenu : AppDialog
+
+    /** File ▸ Share Audio...: quick format and range, then the Android share sheet. */
+    data object Share : AppDialog
 
     /** Context menu for a long-press target of the editor. */
     data class Context(val target: ContextTarget) : AppDialog
@@ -154,6 +175,8 @@ sealed interface HostRequest {
     /** POST_NOTIFICATIONS (API 33+) for the recording/playback notification. */
     data object NotificationPermission : HostRequest
     data class OpenUrl(val url: String) : HostRequest
+    /** ACTION_SEND of [file] (in `cacheDir/share`, served by the FileProvider) through the system share sheet. */
+    data class ShareFile(val file: java.io.File, val mimeType: String) : HostRequest
     data object AppLanguageSettings : HostRequest
 }
 

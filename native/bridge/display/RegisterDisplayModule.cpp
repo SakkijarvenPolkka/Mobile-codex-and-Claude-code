@@ -7,7 +7,9 @@
 
   The bridge "display" module (MODULES.md, API.md §7): installs the
   display providers (waveform columns, envelope columns, samples,
-  spectrogram) and the waveVersion provider, and registers
+  spectrogram), the waveVersion provider and the recording preparer
+  (display::PrepareForRecording, run by the audio module before
+  AudioIO::StartStream), and registers
   display.setViewportWidth, display.trimCaches and the test-only debug
   commands (DebugCommands.cpp).
 
@@ -16,6 +18,7 @@
 
 #include "ClipDisplayCache.h"
 #include "DisplayInternal.h"
+#include "DisplayTracks.h"
 #include "Hooks.h"
 
 namespace aubridge {
@@ -25,6 +28,7 @@ void RegisterDisplayModule(ModuleRegistry &registry)
    SetDisplayProviders({ display::WaveColumns, display::EnvelopeColumns,
       display::WaveSamples, display::SpectrogramColumns });
    SetWaveVersionProvider(display::DisplayWaveVersion);
+   SetRecordingPreparer(display::PrepareForRecording);
 
    registry.AddCommand("display.setViewportWidth", [](const json &args) {
       const auto px = ArgInt(args, "px");

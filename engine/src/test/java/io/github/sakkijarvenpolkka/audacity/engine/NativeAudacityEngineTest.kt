@@ -232,6 +232,42 @@ class NativeAudacityEngineTest {
     }
 
     @Test
+    fun mobileEditCommandsSendTheirArgumentsAndDecodeResults() = runBlocking {
+        val bridge = FakeBridge()
+        val e = engine(bridge)
+        e.start()
+        bridge.respond = { cmd, _ ->
+            when (cmd) {
+                "edit.splitAt" -> """{"ok":true,"result":{"splits":2,"trackIds":[3,7]},"generation":5}"""
+                "clips.trim" -> """{"ok":true,"result":{"trimLeft":0.5,"trimRight":0.0,"start":1.5,"end":3.0},"generation":5}"""
+                "labels.add" -> """{"ok":true,"result":{"trackId":9,"index":1},"generation":6}"""
+                else -> """{"ok":true,"result":{},"generation":5}"""
+            }
+        }
+        val split = e.splitAt(1.25)
+        assertEquals(2, split.splits)
+        assertEquals(listOf(3L, 7L), split.trackIds)
+        e.splitAt(2.0, listOf(3L))
+        val trim = e.trimClip(3, 1, 5, trimLeft = 0.5, final = false)
+        assertEquals(0.5, trim.trimLeft, 0.0)
+        assertEquals(1.5, trim.start, 0.0)
+        e.trimClip(3, 1, 5, trimRight = 0.25)
+        assertEquals(9L to 1, e.addLabel("Here", 2.5))
+        e.addLabel("Range", 1.0, 2.0)
+        assertEquals(
+            listOf(
+                "edit.splitAt" to """{"t":1.25}""",
+                "edit.splitAt" to """{"t":2.0,"trackIds":[3]}""",
+                "clips.trim" to """{"trackId":3,"clipIndex":1,"generation":5,"trimLeft":0.5,"final":false}""",
+                "clips.trim" to """{"trackId":3,"clipIndex":1,"generation":5,"trimRight":0.25,"final":true}""",
+                "labels.add" to """{"title":"Here","t0":2.5}""",
+                "labels.add" to """{"title":"Range","t0":1.0,"t1":2.0}""",
+            ),
+            bridge.calls.map { it.first to it.second },
+        )
+    }
+
+    @Test
     fun snapshotEmittedBeforeResponseIsVisibleWhenTheCallReturns() = runBlocking {
         val bridge = FakeBridge()
         val e = engine(bridge)

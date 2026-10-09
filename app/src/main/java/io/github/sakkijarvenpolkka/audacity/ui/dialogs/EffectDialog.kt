@@ -5,12 +5,17 @@
  * sliders, fields, switches and drop-downs; "Presets & settings" menu
  * (user/factory presets, defaults), Preview/Stop and Apply. Special cases:
  * Noise Reduction (two steps), Filter Curve EQ / Graphic EQ (curve editor),
- * Auto Duck (control-track hint), generators (duration).
+ * Auto Duck (control-track hint), generators (duration), and the percent
+ * changes of Change Tempo/Pitch/Speed and Sliding Stretch (`display:"ratio"`),
+ * edited as multipliers (×1.25 instead of +25 %) with a log-scale slider,
+ * preset chips, ±0.05 steps, the semitones of a pitch ratio
+ * (ChangePitch.cpp's "Semitones (half-steps)") and the resulting length.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 package io.github.sakkijarvenpolkka.audacity.ui.dialogs
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +25,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
@@ -29,6 +36,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -47,6 +55,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -55,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.audacity.AppDialog
 import io.github.sakkijarvenpolkka.audacity.AppViewModel
 import io.github.sakkijarvenpolkka.audacity.R
+import io.github.sakkijarvenpolkka.audacity.effects.BuiltinEffects
 import io.github.sakkijarvenpolkka.audacity.effects.ParamCodec
 import io.github.sakkijarvenpolkka.audacity.engine.model.EffectDescription
 import io.github.sakkijarvenpolkka.audacity.engine.model.EffectParam
@@ -62,6 +74,7 @@ import io.github.sakkijarvenpolkka.audacity.engine.model.EqCurve
 import io.github.sakkijarvenpolkka.audacity.ui.AppDialogFrame
 import io.github.sakkijarvenpolkka.audacity.ui.Dropdown
 import io.github.sakkijarvenpolkka.audacity.ui.SwitchRow
+import io.github.sakkijarvenpolkka.audacity.util.TimeCodec
 import io.github.sakkijarvenpolkka.audacity.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonElement
@@ -76,6 +89,7 @@ fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
     val engine = vm.engine
     val effects by vm.effectList.collectAsState()
     val transport by engine.transportState.collectAsState()
+    val snapshot by engine.snapshot.collectAsState()
     val info = effects?.effects?.firstOrNull { it.id == d.effectId }
 
     var desc by remember(d) { mutableStateOf<EffectDescription?>(null) }
@@ -217,9 +231,12 @@ fun EffectDialog(d: AppDialog.Effect, vm: AppViewModel) {
                 modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
             )
         }
+        // Change Tempo / Change Speed: the selection gets (length / multiplier) long
+        val sel = snapshot.selection
+        val length = if (BuiltinEffects.changesLength(de.id) && sel.t1 > sel.t0) sel.t1 - sel.t0 else null
         for (p in de.params) {
             if (de.special in EQ_SPECIALS && p.key in EQ_UI_KEYS) continue
-            ParamEditor(p, ParamCodec.current(p, edits)) { v -> edits[p.key] = v }
+            ParamEditor(p, ParamCodec.current(p, edits), length, ratioLabel(de.id, p) ?: ParamCodec.label(p)) { v -> edits[p.key] = v }
         }
         if (de.params.isEmpty() && !de.supportsDuration && de.special == null) {
             Text(stringResource(R.string.fx_no_params), style = MaterialTheme.typography.bodyMedium)
@@ -346,10 +363,19 @@ private fun PresetsMenu(
     }
 }
 
-/** One parameter row: switch, drop-down, text, or slider + number field. */
+/**
+ * One parameter row: switch, drop-down, text, slider + number field, or the
+ * multiplier editor of a ratio parameter ([lengthSeconds]: the selection
+ * length, shown divided by the multiplier).
+ */
 @Composable
-fun ParamEditor(p: EffectParam, value: JsonElement?, onChange: (JsonElement) -> Unit) {
-    val label = ParamCodec.label(p)
+fun ParamEditor(
+    p: EffectParam,
+    value: JsonElement?,
+    lengthSeconds: Double? = null,
+    label: String = ParamCodec.label(p),
+    onChange: (JsonElement) -> Unit,
+) {
     when (p.kind) {
         "bool" -> SwitchRow(label, ParamCodec.bool(value), { onChange(ParamCodec.encodeBool(it)) })
         "enum" -> {
@@ -362,8 +388,134 @@ fun ParamEditor(p: EffectParam, value: JsonElement?, onChange: (JsonElement) -> 
             value = ParamCodec.string(value), onValueChange = { onChange(ParamCodec.encodeString(it)) },
             label = { Text(label) }, singleLine = true, modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         )
-        else -> NumberParam(p, label, ParamCodec.number(value) ?: 0.0, onChange)
+        else -> if (ParamCodec.isRatio(p)) RatioParam(p, label, ParamCodec.number(value) ?: 0.0, lengthSeconds, onChange)
+        else NumberParam(p, label, ParamCodec.number(value) ?: 0.0, onChange)
     }
+}
+
+/**
+ * Label of a ratio parameter: the engine's ("Percent change") would
+ * contradict the multiplier shown, so the known ones are named after what
+ * they multiply; null for other parameters.
+ */
+@Composable
+private fun ratioLabel(effectId: String, p: EffectParam): String? {
+    if (!ParamCodec.isRatio(p)) return null
+    val res = when (BuiltinEffects.symbolOf(effectId)) {
+        BuiltinEffects.CHANGE_TEMPO -> R.string.fx_ratio_tempo
+        BuiltinEffects.CHANGE_PITCH -> R.string.fx_ratio_pitch
+        BuiltinEffects.CHANGE_SPEED -> R.string.fx_ratio_speed
+        // TimeScaleBase.h
+        BuiltinEffects.SLIDING_STRETCH -> when (p.key) {
+            "RatePercentChangeStart" -> R.string.fx_ratio_tempo_start
+            "RatePercentChangeEnd" -> R.string.fx_ratio_tempo_end
+            "PitchPercentChangeStart" -> R.string.fx_ratio_pitch_start
+            "PitchPercentChangeEnd" -> R.string.fx_ratio_pitch_end
+            else -> null
+        }
+        else -> null
+    }
+    return if (res != null) stringResource(res) else stringResource(R.string.fx_ratio_generic, ParamCodec.label(p))
+}
+
+/**
+ * A percent change edited as a multiplier: −/+ 0.05 buttons around a text
+ * field (`1.25`, `1,25`, `×1.25`, `+25%`), hints (percent, semitones, new
+ * length), a log-scale slider over ×0.25 … ×4 and preset chips. [raw] and
+ * the values sent with [onChange] are the engine's percent.
+ */
+@Composable
+private fun RatioParam(p: EffectParam, label: String, raw: Double, lengthSeconds: Double?, onChange: (JsonElement) -> Unit) {
+    val ratio = ParamCodec.roundRatio(ParamCodec.percentToRatio(raw))
+    val range = ParamCodec.ratioRange(p)
+    val sliderRange = ParamCodec.ratioSliderRange(p)
+    var focused by remember(p.key) { mutableStateOf(false) }
+    var text by remember(p.key) { mutableStateOf("") }
+    val formatted = ParamCodec.formatRatio(ratio)
+    val display = if (focused) text else formatted
+    val typed = ParamCodec.parseRatio(text)
+    val invalid = focused && (typed == null || !ParamCodec.ratioInRange(p, typed))
+
+    /** A value from a button, chip or the slider: also shown in the field while it has the focus. */
+    fun set(r: Double) {
+        val v = ParamCodec.encodeRatio(p, r)
+        onChange(v)
+        text = ParamCodec.formatRatio(ParamCodec.percentToRatio(ParamCodec.number(v) ?: raw))
+    }
+    fun commitText() {
+        typed?.takeIf { ParamCodec.ratioInRange(p, it) }?.let { onChange(ParamCodec.encodeRatio(p, it)) }
+    }
+    val down = stringResource(R.string.fx_ratio_down, ParamCodec.formatRatio(ParamCodec.RATIO_STEP))
+    val up = stringResource(R.string.fx_ratio_up, ParamCodec.formatRatio(ParamCodec.RATIO_STEP))
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp).testTag("ratio:${p.key}")) {
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(
+                onClick = { set(ParamCodec.stepRatio(p, ratio, -ParamCodec.RATIO_STEP)) },
+                enabled = ratio > range.start + 1e-9,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = down }.testTag("ratio:${p.key}:down"),
+            ) { Text("−") }
+            OutlinedTextField(
+                value = display,
+                onValueChange = {
+                    text = it
+                    ParamCodec.parseRatio(it)?.takeIf { r -> ParamCodec.ratioInRange(p, r) }?.let { r -> onChange(ParamCodec.encodeRatio(p, r)) }
+                },
+                singleLine = true,
+                isError = invalid,
+                prefix = { Text("×") },
+                supportingText = {
+                    Text(
+                        if (invalid) stringResource(R.string.fx_ratio_range, ParamCodec.formatRatio(range.start), ParamCodec.formatRatio(range.endInclusive))
+                        else stringResource(R.string.fx_ratio_percent, ParamCodec.formatPercentChange(ratio)),
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { commitText() }),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("ratio:${p.key}:field")
+                    .onFocusChanged { f ->
+                        if (f.isFocused && !focused) text = formatted
+                        if (focused && !f.isFocused) commitText()
+                        focused = f.isFocused
+                    },
+            )
+            OutlinedButton(
+                onClick = { set(ParamCodec.stepRatio(p, ratio, ParamCodec.RATIO_STEP)) },
+                enabled = ratio < range.endInclusive - 1e-9,
+                modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = up }.testTag("ratio:${p.key}:up"),
+            ) { Text("+") }
+        }
+        val hints = buildList {
+            if (p.semitones) add(stringResource(R.string.fx_ratio_semitones, ParamCodec.formatSemitones(ParamCodec.semitones(ratio))))
+            if (lengthSeconds != null && ratio > 0.0) add(stringResource(R.string.fx_ratio_length, TimeCodec.format(lengthSeconds / ratio)))
+        }
+        if (hints.isNotEmpty()) {
+            Text(
+                hints.joinToString("   "), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.testTag("ratio:${p.key}:hint"),
+            )
+        }
+        if (sliderRange != null) {
+            Slider(
+                value = ParamCodec.ratioToSlider(ratio, sliderRange),
+                onValueChange = { pos -> set(ParamCodec.sliderToRatio(pos, sliderRange)) },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            for (preset in ParamCodec.ratioPresets(p)) {
+                FilterChip(
+                    selected = kotlin.math.abs(preset - ratio) < 1e-9,
+                    onClick = { set(preset) },
+                    label = { Text("×" + ParamCodec.formatRatio(preset)) },
+                    modifier = Modifier.testTag("ratio:${p.key}:chip:${ParamCodec.formatRatio(preset)}"),
+                )
+            }
+        }
+    }
+    Spacer(Modifier.size(2.dp))
 }
 
 @Composable

@@ -8,7 +8,10 @@
 **********************************************************************/
 #include "Session.h"
 
+#include <cerrno>
 #include <chrono>
+
+#include <sys/stat.h>
 
 #include "Events.h"
 #include "ModuleRegistry.h"
@@ -35,6 +38,22 @@ std::string StripSlash(std::string path)
    while (path.size() > 1 && path.back() == '/')
       path.pop_back();
    return path;
+}
+
+//! mkdir -p without throwing; true when `path` is a directory afterwards
+bool EnsureDirectory(const std::string &path)
+{
+   struct stat st {};
+   if (::stat(path.c_str(), &st) == 0)
+      return S_ISDIR(st.st_mode);
+   for (size_t pos = path.find('/', 1); ; pos = path.find('/', pos + 1)) {
+      const auto partial = path.substr(0, pos);
+      if (::mkdir(partial.c_str(), 0755) != 0 && errno != EEXIST)
+         return false;
+      if (pos == std::string::npos)
+         break;
+   }
+   return ::stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 std::string RequirePath(const json &config, const char *key)
@@ -135,6 +154,24 @@ void Session::FlushPendingSnapshot(int minIntervalMs)
 {
    if (mSnapshotPending && NowMs() - mLastSnapshotMs >= minIntervalMs)
       EmitSnapshot();
+}
+
+void Session::EnsureWorkDirectories()
+{
+   const auto &paths = mConfig.paths;
+   struct stat st {};
+   if (paths.tmpDir.empty() || ::stat(paths.tmpDir.c_str(), &st) == 0)
+      return;
+   bool ok = true;
+   for (const auto *dir : { &paths.tmpDir, &paths.importDir, &paths.exportDir })
+      if (!dir->empty() && !EnsureDirectory(*dir)) {
+         ok = false;
+         Events::Log(Events::LogLevel::Warning,
+            "cannot re-create the directory " + *dir);
+      }
+   if (ok)
+      Events::Log(Events::LogLevel::Info,
+         "re-created the temporary directories in " + paths.cacheDir);
 }
 
 void Session::SetRecordPermission(bool granted)

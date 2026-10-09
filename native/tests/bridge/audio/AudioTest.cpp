@@ -21,7 +21,9 @@
      loopback mode with the measured latency correction (alignment of the
      recorded copy within 2 ms, also of the first take, which is re-aligned
      to its own measurement), the correction stored per route (connected
-     devices), re-alignment of late and early takes
+     devices), re-alignment of late and early takes; waveform and
+     spectrogram requests for the recording targets use the clip caches
+     prepared before StartStream (debug.displayCaches: none detached)
    * transport.pause {paused, cause} (audio focus, headphones unplugged,
      microphone silenced: no toggle, transport event reason "device")
    * audio.setInputOptions (input presets of the AAudio streams)
@@ -520,6 +522,35 @@ void TestPauseSeekSkip()
    CHECK(sel.value("t0", 1.0) == 0.0 && sel.value("t1", 1.0) == 0.0);
 }
 
+//! Draws `trackId` like the track panel (waveform and spectrogram tiles of
+//! its first 4 s) while AudioIO records into it.  The display must use the
+//! clip caches attached before the capture started (the audio module runs
+//! the display module's recording preparer before StartStream) and never
+//! attach one now: the AudioIO thread iterates the attachments of the
+//! recording clip (WaveClip::MarkChanged)
+void DrawWhileRecording(int64_t trackId)
+{
+   std::vector<float> wave(256 * 3);
+   std::vector<uint8_t> spectro(256 * 64);
+   int found = 0;
+   for (int round = 0; round < 5; ++round) {
+      // zoom level 64: 256 columns per second
+      for (int64_t c = 0; c < 1024; c += 256) {
+         if (aubridge::WaveColumns(trackId, 0, 64, c, 256, wave.data(),
+                wave.size()) != -1)
+            ++found;
+         if (aubridge::SpectrogramColumns(trackId, 0, 64, c, 256, 64,
+                spectro.data(), spectro.size()) != -1)
+            ++found;
+      }
+      std::this_thread::sleep_for(20ms);
+   }
+   CHECK(found == 40);
+   auto caches = Call("debug.displayCaches");
+   CHECK_MSG(Ok(caches) && caches["result"].value("detached", -1) == 0,
+      caches.dump());
+}
+
 void TestRecordNewTrack()
 {
    std::fprintf(stderr, "== record new track (Shift+R)\n");
@@ -535,8 +566,10 @@ void TestRecordNewTrack()
    {
       auto tracks = WaveTracks(Snap());
       CHECK(tracks.size() == 1);
-      if (!tracks.empty())
+      if (!tracks.empty()) {
          CHECK(tracks[0].value("id", 0) <= -2);
+         DrawWhileRecording(tracks[0].value("id", int64_t(-1)));
+      }
    }
    CHECK(Err("debug.makeTestTrack") == "AUDIO_BUSY");
    CHECK(Err("transport.seek", { { "t", 0.5 } }) == "");   // ignored
@@ -647,6 +680,7 @@ void TestRecordAppend()
       return false;
    });
    CHECK(live.has_value());
+   DrawWhileRecording(id);
    StopAndWait();
    auto tracks = WaveTracks(Snap());
    CHECK(tracks.size() == 1);
