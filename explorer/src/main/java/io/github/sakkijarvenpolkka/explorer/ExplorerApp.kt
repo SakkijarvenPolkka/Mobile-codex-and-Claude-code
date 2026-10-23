@@ -22,4 +22,9 @@ class ExplorerApp : Application() {
 
     /** Settings, favorites, recent files, folder views and the saved tabs, read on first use. */
     val settings: SettingsStore by lazy { SettingsStore(this) }
+
+    override fun onCreate() {
+        super.onCreate()
+        volumes.start()
+    }
 }

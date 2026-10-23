@@ -63,8 +63,11 @@ private val FILE_CHANGES = setOf(
     NEW_FOLDER, NEW_TEXT, CUT, PASTE, RENAME, DELETE, DELETE_PERMANENT, COMPRESS, EXTRACT, RESTORE, EMPTY_BIN,
 )
 
-/** Commands that add items to the folder or rename them; a restricted folder offers none of them. */
-private val FOLDER_WRITES = setOf(NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS, EXTRACT)
+/**
+ * Commands that add, rename or remove items of the folder; a restricted folder offers none of
+ * them, since Android lets the app only read other apps' data there.
+ */
+private val FOLDER_WRITES = setOf(NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS, EXTRACT, CUT, DELETE, DELETE_PERMANENT)
 
 /**
  * The commands available in [c]. Options is always available. Home offers Refresh, and Open

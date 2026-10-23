@@ -3,4 +3,91 @@
 <resources>
     <string name="app_name">파일 탐색기</string>
     <string name="close">닫기</string>
+
+    <!-- All files access -->
+    <string name="permission_title">모든 파일에 대한 접근 권한이 필요합니다</string>
+    <string name="permission_body">파일 탐색기가 내부 저장소와 SD 카드의 파일을 보여 주고 관리하려면 ‘모든 파일 관리’ 권한을 허용해 주세요.</string>
+    <string name="permission_button">설정 열기</string>
+
+    <!-- Navigation pane and address bar -->
+    <string name="nav_pane">탐색 창</string>
+    <string name="nav_home">홈</string>
+    <string name="nav_favorites">즐겨찾기</string>
+    <string name="nav_this_pc">내 PC</string>
+    <string name="nav_recycle_bin">휴지통</string>
+    <string name="volume_internal">내부 저장소</string>
+    <string name="volume_unavailable">드라이브를 사용할 수 없습니다</string>
+    <string name="back">뒤로</string>
+    <string name="forward">앞으로</string>
+    <string name="go_up">위로</string>
+    <string name="more">더 보기</string>
+    <string name="outside_storage">저장소 밖의 경로는 열 수 없습니다</string>
+    <string name="usb_restart">앱을 다시 시작하면 이 드라이브를 열 수 있습니다</string>
+    <string name="restart">다시 시작</string>
+
+    <!-- Folder contents -->
+    <string name="restricted_banner">Android에서 제한한 폴더입니다. 다른 앱의 데이터는 볼 수만 있고 바꿀 수 없습니다.</string>
+    <string name="error_access_denied">이 폴더에 접근할 수 없습니다</string>
+    <string name="error_not_found">위치를 찾을 수 없습니다</string>
+    <string name="selection_mode_on">선택 모드</string>
+    <string name="type_folder">파일 폴더</string>
+    <string name="type_file_ext">%s 파일</string>
+    <string name="type_file">파일</string>
+
+    <!-- Status bar -->
+    <plurals name="items_count">
+        <item quantity="other">항목 %d개</item>
+    </plurals>
+    <string name="selected_count">%d개 선택됨</string>
+    <string name="selected_items">%d개 항목 선택됨</string>
+
+    <!-- Commands -->
+    <string name="cmd_new">새로 만들기</string>
+    <string name="cmd_new_folder">새 폴더</string>
+    <string name="cmd_new_text">텍스트 문서</string>
+    <string name="cmd_cut">잘라내기</string>
+    <string name="cmd_copy">복사</string>
+    <string name="cmd_paste">붙여넣기</string>
+    <string name="cmd_rename">이름 바꾸기</string>
+    <string name="cmd_share">공유</string>
+    <string name="cmd_delete">삭제</string>
+    <string name="cmd_delete_permanent">영구 삭제</string>
+    <string name="cmd_select_all">모두 선택</string>
+    <string name="cmd_select_none">선택 안 함</string>
+    <string name="cmd_invert">선택 영역 반전</string>
+    <string name="cmd_compress">압축(ZIP)</string>
+    <string name="cmd_extract">모두 압축 풀기</string>
+    <string name="cmd_pin">즐겨찾기에 고정</string>
+    <string name="cmd_unpin">즐겨찾기에서 제거</string>
+    <string name="cmd_properties">속성</string>
+    <string name="cmd_refresh">새로 고침</string>
+    <string name="cmd_open">열기</string>
+    <string name="cmd_open_with">연결 프로그램</string>
+    <string name="cmd_restore">복원</string>
+    <string name="cmd_empty_bin">휴지통 비우기</string>
+    <string name="cmd_sort">정렬</string>
+    <string name="cmd_view">보기</string>
+    <string name="cmd_hidden">숨긴 항목</string>
+    <string name="cmd_extensions">파일 확장명</string>
+    <string name="cmd_preview_pane">미리보기 창</string>
+    <string name="cmd_options">옵션</string>
+
+    <!-- Views and sorting -->
+    <string name="view_details">자세히</string>
+    <string name="view_list">목록</string>
+    <string name="view_tiles">타일</string>
+    <string name="view_large">큰 아이콘</string>
+    <string name="sort_name">이름</string>
+    <string name="sort_modified">수정한 날짜</string>
+    <string name="sort_type">유형</string>
+    <string name="sort_size">크기</string>
+    <string name="sort_asc">오름차순</string>
+    <string name="sort_desc">내림차순</string>
+
+    <!-- Options -->
+    <string name="theme_title">테마</string>
+    <string name="theme_system">시스템 설정 사용</string>
+    <string name="theme_light">밝게</string>
+    <string name="theme_dark">어둡게</string>
+    <string name="system_accent">시스템 강조색 사용</string>
 </resources>

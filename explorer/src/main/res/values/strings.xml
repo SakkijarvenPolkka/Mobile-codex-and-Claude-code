@@ -3,4 +3,92 @@
 <resources>
     <string name="app_name">Files</string>
     <string name="close">Close</string>
+
+    <!-- All files access -->
+    <string name="permission_title">Access to all files is needed</string>
+    <string name="permission_body">To show and manage the files on your internal storage and SD card, allow “All files access”.</string>
+    <string name="permission_button">Open settings</string>
+
+    <!-- Navigation pane and address bar -->
+    <string name="nav_pane">Navigation pane</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_favorites">Favorites</string>
+    <string name="nav_this_pc">This PC</string>
+    <string name="nav_recycle_bin">Recycle Bin</string>
+    <string name="volume_internal">Internal storage</string>
+    <string name="volume_unavailable">The drive isn\'t available</string>
+    <string name="back">Back</string>
+    <string name="forward">Forward</string>
+    <string name="go_up">Up</string>
+    <string name="more">See more</string>
+    <string name="outside_storage">Paths outside your storage can\'t be opened</string>
+    <string name="usb_restart">Restart the app to open this drive</string>
+    <string name="restart">Restart</string>
+
+    <!-- Folder contents -->
+    <string name="restricted_banner">Android restricts this folder. Other apps\' data can\'t be changed here.</string>
+    <string name="error_access_denied">You don\'t have access to this folder</string>
+    <string name="error_not_found">The location couldn\'t be found</string>
+    <string name="selection_mode_on">Selection mode</string>
+    <string name="type_folder">File folder</string>
+    <string name="type_file_ext">%s File</string>
+    <string name="type_file">File</string>
+
+    <!-- Status bar -->
+    <plurals name="items_count">
+        <item quantity="one">%d item</item>
+        <item quantity="other">%d items</item>
+    </plurals>
+    <string name="selected_count">%d selected</string>
+    <string name="selected_items">%d items selected</string>
+
+    <!-- Commands -->
+    <string name="cmd_new">New</string>
+    <string name="cmd_new_folder">Folder</string>
+    <string name="cmd_new_text">Text document</string>
+    <string name="cmd_cut">Cut</string>
+    <string name="cmd_copy">Copy</string>
+    <string name="cmd_paste">Paste</string>
+    <string name="cmd_rename">Rename</string>
+    <string name="cmd_share">Share</string>
+    <string name="cmd_delete">Delete</string>
+    <string name="cmd_delete_permanent">Delete permanently</string>
+    <string name="cmd_select_all">Select all</string>
+    <string name="cmd_select_none">Select none</string>
+    <string name="cmd_invert">Invert selection</string>
+    <string name="cmd_compress">Compress to ZIP file</string>
+    <string name="cmd_extract">Extract all</string>
+    <string name="cmd_pin">Pin to Favorites</string>
+    <string name="cmd_unpin">Unpin from Favorites</string>
+    <string name="cmd_properties">Properties</string>
+    <string name="cmd_refresh">Refresh</string>
+    <string name="cmd_open">Open</string>
+    <string name="cmd_open_with">Open with</string>
+    <string name="cmd_restore">Restore</string>
+    <string name="cmd_empty_bin">Empty Recycle Bin</string>
+    <string name="cmd_sort">Sort</string>
+    <string name="cmd_view">View</string>
+    <string name="cmd_hidden">Hidden items</string>
+    <string name="cmd_extensions">File name extensions</string>
+    <string name="cmd_preview_pane">Preview pane</string>
+    <string name="cmd_options">Options</string>
+
+    <!-- Views and sorting -->
+    <string name="view_details">Details</string>
+    <string name="view_list">List</string>
+    <string name="view_tiles">Tiles</string>
+    <string name="view_large">Large icons</string>
+    <string name="sort_name">Name</string>
+    <string name="sort_modified">Date modified</string>
+    <string name="sort_type">Type</string>
+    <string name="sort_size">Size</string>
+    <string name="sort_asc">Ascending</string>
+    <string name="sort_desc">Descending</string>
+
+    <!-- Options -->
+    <string name="theme_title">Theme</string>
+    <string name="theme_system">Use system setting</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="system_accent">Use system accent color</string>
 </resources>

@@ -134,9 +134,9 @@ class CommandsTest {
     }
 
     @Test
-    fun restrictedFolderCannotGainOrRenameItems() {
+    fun restrictedFolderCannotChangeItems() {
         val restricted = commands(restricted = true, clipboard = clipboard, selection = listOf(file("a.zip")))
-        assertLacks(restricted, NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS, EXTRACT)
+        assertLacks(restricted, NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS, EXTRACT, CUT, DELETE, DELETE_PERMANENT)
         assertHas(restricted, OPEN, COPY, PROPERTIES, REFRESH)
     }
 
