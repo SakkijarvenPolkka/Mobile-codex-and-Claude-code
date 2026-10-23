@@ -21,6 +21,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -28,6 +29,9 @@ class OperationJournalTest {
 
     @get:Rule
     val folder = TemporaryFolder()
+
+    @get:Rule
+    val log = CapturedLog()
 
     /** Where the journal keeps its files. */
     private val dir: File by lazy { folder.newFolder("ops") }
@@ -200,5 +204,54 @@ class OperationJournalTest {
             assertEquals("crash at step $crashAt", mapOf(name to "jpeg"), tree(volume))
             assertEquals("crash at step $crashAt", emptySet<String>(), files(at))
         }
+    }
+
+    @Test
+    fun malformedJournalFilesAreDeletedNotACrash() {
+        // JSON as the journal writes it, but with paths no file system takes (a NUL in them).
+        dir.resolve("bad1.json").writeText("""{"id":"bad1","kind":"COPY","sources":["/a\u0000b"],"target":"/dst"}""")
+        dir.resolve("bad2.progress.json").writeText("""{"temps":["/dst/.a\u0000b.bad2.xpart"]}""")
+        dir.resolve("bad3.progress.json").writeText("""{"renames":{"/dst/.~ren-1":"/dst/a\u0000b"}}""")
+        // And not JSON at all.
+        dir.resolve("bad4.json").writeText("{")
+        OperationJournal(dir, NioFsBackend).begin(spec)
+
+        val interrupted = restarted().sweep()
+
+        // Each is logged and deleted; the journal that is sound is found as before.
+        assertEquals(listOf(InterruptedOp(spec, 0)), interrupted)
+        assertEquals(setOf("op1.json"), files())
+        assertEquals(log.warnings.toString(), 4, log.warnings.count { it.startsWith("Deleting ") })
+    }
+
+    @Test
+    fun sweepSkipsWhatItCannotRead() {
+        for ((round, unreadable) in listOf("op1.json", "op1.progress.json").withIndex()) {
+            val at = folder.newFolder()
+            val temp = write(volume, "round$round/.a.txt.op1.xpart", "part")
+            OperationJournal(at, NioFsBackend).apply {
+                begin(spec)
+                add(temp)
+                committed(OP_ID, 2)
+            }
+            val record = at.resolve("op1.progress.json").readText()
+            val failing = FaultyFs().apply {
+                wrapRead(unreadable) { stream ->
+                    stream.close()
+                    throw IOException("Input/output error")
+                }
+            }
+
+            // A file that cannot be read now is not a file that is not there: nothing of it is touched.
+            assertEquals(unreadable, emptyList<InterruptedOp>(), OperationJournal(at, failing).sweep())
+            assertTrue(unreadable, Files.exists(temp))
+            assertEquals(unreadable, record, at.resolve("op1.progress.json").readText())
+            assertEquals(unreadable, setOf("op1.json", "op1.progress.json"), files(at))
+
+            // A later sweep, which can read it, finds the operation as it was.
+            assertEquals(unreadable, listOf(InterruptedOp(spec, 2)), restarted(at).sweep())
+            assertFalse(unreadable, Files.exists(temp))
+        }
+        assertTrue(log.warnings.toString(), log.warnings.any { it.startsWith("Cannot read") })
     }
 }

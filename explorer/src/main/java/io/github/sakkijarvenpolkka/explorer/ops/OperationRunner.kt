@@ -120,7 +120,7 @@ class OperationRunner(
     /** The operations submitted, in order; the queue in [state] says which are still to run. */
     private val incoming = Channel<OperationSpec>(Channel.UNLIMITED)
 
-    /** Guards [busy] and [current], and keeps what the host hears in order. */
+    /** Guards [busy], [current] and [replaced], and keeps the queue and what the host hears in order. */
     private val lock = Any()
 
     /** Whether the host was last told there is work. */
@@ -136,6 +136,12 @@ class OperationRunner(
 
     private class Stop(val error: FsError?)
 
+    /**
+     * The interrupted operations run again, by the id of their new run: the journal of each is kept until
+     * its new run has one of its own, or has ended.
+     */
+    private val replaced = HashMap<String, String>()
+
     init {
         scope.launch(dispatcher) {
             for (spec in incoming) run(spec)
@@ -146,12 +152,13 @@ class OperationRunner(
     fun submit(spec: OperationSpec) {
         synchronized(lock) {
             mutableState.update { it.copy(queue = it.queue + spec) }
+            // Before anything else can submit (the host included): the order they run in is the queue's.
+            incoming.trySend(spec)
             if (!busy) {
                 busy = true
                 host?.onBusy()
             }
         }
-        incoming.trySend(spec)
     }
 
     /**
@@ -174,20 +181,23 @@ class OperationRunner(
      * delete, a restore), are those known to be gone ([FileOps.isGone]: a move or a delete that got to them
      * before it could note it). Any other source is run again, so that one out of reach (its volume away,
      * its folder unreadable) fails as such. A compression runs whole again: its archive is written at
-     * once. Its journal is discarded once the new operation is submitted. If nothing is left to run, none
-     * is: it stays in [RunnerState.interrupted], with its journal, until it is dismissed.
+     * once. Its journal is discarded once the new operation's is written, or once that ends before (so
+     * that a crash in between still finds it). If nothing is left to run, none is: it stays in
+     * [RunnerState.interrupted], with its journal, until it is dismissed. Only an operation still in
+     * [RunnerState.interrupted] is run again: a second call for it does nothing.
      */
     fun retry(interrupted: InterruptedOp) {
-        forgetInterrupted(interrupted.spec.id)
+        if (!forgetInterrupted(interrupted.spec.id)) return
         scope.launch(dispatcher) {
             val again = remainderOf(interrupted)
             if (again == null) {
                 mutableState.update { state ->
+                    if (state.interrupted.any { it.spec.id == interrupted.spec.id }) return@update state
                     state.copy(interrupted = (state.interrupted + interrupted).sortedBy { it.spec.id })
                 }
                 return@launch
             }
-            journal.discard(interrupted.spec.id)
+            synchronized(lock) { replaced[again.id] = interrupted.spec.id }
             submit(again)
         }
     }
@@ -200,8 +210,11 @@ class OperationRunner(
      *   name that folder got there), one operation for each folder;
      * - a delete takes the items that failed, and only them: not what was put in their folders since
      *   (the folders kept because of them stay);
-     * - a restore, emptying the bin, and the ZIP kinds run again on the top-level sources the failures
-     *   are in: a restore goes by bin item, emptying by bin, and an archive is read or written whole.
+     * - emptying the bin deletes for good the bin items that failed (`<bin>/<id>`), and only them: never
+     *   the whole bin again, whose items since were not asked about; a bin it could not reach at all is
+     *   not emptied again either;
+     * - a restore and the ZIP kinds run again on the top-level sources the failures are in: a restore
+     *   goes by bin item, and an archive is read or written whole.
      */
     fun retryFailed(op: FinishedOp) {
         val failed = (op.result as? OpResult.Done)?.failed.orEmpty().filterNot { it.copiedButSourceKept }
@@ -215,7 +228,12 @@ class OperationRunner(
             }
             OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT ->
                 listOf(spec.copy(id = newId(), sources = failed.map { it.path }))
-            OpKind.RESTORE, OpKind.EMPTY_BIN, OpKind.COMPRESS, OpKind.EXTRACT -> {
+            OpKind.EMPTY_BIN -> {
+                val bins = spec.sources.map { Paths.get(it) }
+                val items = failed.mapNotNull { binItemOf(bins, Paths.get(it.path)) }.distinct()
+                listOf(OperationSpec(newId(), OpKind.DELETE_PERMANENT, items.map { it.toString() }))
+            }
+            OpKind.RESTORE, OpKind.COMPRESS, OpKind.EXTRACT -> {
                 val paths = failed.map { Paths.get(it.path) }
                 val indices = spec.sources.indices.filter { i ->
                     val top = Paths.get(spec.sources[i])
@@ -262,7 +280,8 @@ class OperationRunner(
                 return@coroutineScope false
             }
             journal.sweep()
-            journal.begin(spec)
+            // The one this runs again is forgotten once a crash would find this one instead.
+            if (journal.begin(spec)) takeReplaced(spec.id)?.let(journal::discard)
             // One cancelled before it starts does not run at all.
             job.start()
             true
@@ -343,9 +362,13 @@ class OperationRunner(
         }
     }
 
-    /** Adds [op] to the finished ones and tells the host. Called with [lock] held. */
+    /**
+     * Adds [op] to the finished ones and tells the host; the interrupted operation it ran again, if its
+     * journal is still there, is forgotten. Called with [lock] held.
+     */
     private fun record(op: FinishedOp) {
         mutableState.update { it.copy(finished = (it.finished + op).takeLast(MAX_FINISHED)) }
+        replaced.remove(op.spec.id)?.let { old -> scope.launch(dispatcher) { journal.discard(old) } }
         host?.onFinished(op)
     }
 
@@ -358,8 +381,22 @@ class OperationRunner(
         }
     }
 
-    private fun forgetInterrupted(opId: String) {
-        mutableState.update { state -> state.copy(interrupted = state.interrupted.filterNot { it.spec.id == opId }) }
+    /** Forgets the interrupted operation [opId]; whether it was listed. */
+    private fun forgetInterrupted(opId: String): Boolean {
+        var listed = false
+        mutableState.update { state ->
+            listed = state.interrupted.any { it.spec.id == opId }
+            state.copy(interrupted = state.interrupted.filterNot { it.spec.id == opId })
+        }
+        return listed
+    }
+
+    private fun takeReplaced(opId: String): String? = synchronized(lock) { replaced.remove(opId) }
+
+    /** The item of one of [bins] that [path] is in or is (`<bin>/<id>`); null for a bin itself, or in none. */
+    private fun binItemOf(bins: List<Path>, path: Path): Path? {
+        val bin = bins.firstOrNull { path.startsWith(it) && path != it } ?: return null
+        return bin.resolve(bin.relativize(path).getName(0))
     }
 
     /** What [op] had not done, under a new id (see [retry]); null if nothing is left. */

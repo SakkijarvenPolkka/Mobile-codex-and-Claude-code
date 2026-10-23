@@ -11,6 +11,13 @@
     <!-- To hand APKs to the system installer; once the user allows it, Android/obb opens to the app too. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- The file operations go on in a data sync foreground service, keeping the CPU awake, with a
+         notification (which Android 13 and later ask the user for). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- The settings are neither backed up nor moved to another device (the rules: Android 12 and later). -->
     <application
         android:name=".ExplorerApp"
@@ -32,6 +39,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Runs while there are file operations; only the app starts it. -->
+        <service
+            android:name=".ops.FileOpsService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Hands files to other apps as content URIs, readable only by the app they are given to. -->
         <provider

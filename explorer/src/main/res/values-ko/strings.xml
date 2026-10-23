@@ -114,4 +114,15 @@
     <string name="label_new_folder">새 폴더</string>
     <string name="label_new_text">새 텍스트 문서</string>
     <string name="label_copy_suffix">" - 복사본"</string>
+
+    <!-- The file operations' notification -->
+    <string name="notif_channel">파일 작업</string>
+    <string name="notif_copying">%1$d/%2$d개 항목 복사 중</string>
+    <string name="notif_moving">%1$d/%2$d개 항목 이동 중</string>
+    <string name="notif_deleting">%1$d/%2$d개 항목 삭제 중</string>
+    <string name="notif_compressing">%1$d/%2$d개 항목 압축 중</string>
+    <string name="notif_extracting">%1$d/%2$d개 항목 압축 푸는 중</string>
+    <string name="notif_needs_decision">확인이 필요합니다</string>
+    <string name="cancel">취소</string>
+    <string name="fgs_refused">백그라운드 작업을 시작할 수 없습니다. 앱을 연 채로 두세요.</string>
 </resources>

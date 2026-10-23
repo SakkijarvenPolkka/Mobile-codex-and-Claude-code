@@ -27,6 +27,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
+import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
 import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
@@ -116,6 +117,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     init {
         viewModelScope.launch { deps.volumes.volumes.collect(volumeTracking::rememberRoots) }
         viewModelScope.launch { deps.volumes.events.collect(::onVolumeEvent) }
+        viewModelScope.launch { deps.opsEvents.collect(::onOpsEvent) }
         viewModelScope.launch { activeListing.collect { (id, state) -> onListing(id, state) } }
         viewModelScope.launch {
             val viewRevision = shell.map { it.viewRevision }.distinctUntilChanged()
@@ -548,6 +550,17 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         change.ejected.forEach(loadedFor::remove)
         if (tabs.value.activeId in change.ejected) closeOverlay()
         change.moves.forEach(::reduce)
+    }
+
+    /**
+     * What the file operations tell from outside: refused the foreground service, they go on only while
+     * the app is open, which a message about no place asks for until it is dismissed.
+     */
+    private fun onOpsEvent(e: OpsEvent) = when (e) {
+        OpsEvent.ForegroundRefused -> {
+            val message = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+            shell.update { it.copy(message = message, messageAt = null) }
+        }
     }
 
     /**

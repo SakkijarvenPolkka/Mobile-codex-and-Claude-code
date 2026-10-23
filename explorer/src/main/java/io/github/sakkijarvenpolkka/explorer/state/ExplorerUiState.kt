@@ -16,6 +16,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
+import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
@@ -23,12 +24,15 @@ import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import java.nio.file.Path
 
 /**
  * What [ExplorerViewModel] works with; [io] reads folders and resolves paths. Without
  * [openWith], files are not handed to other apps. [bin] is the app's one Recycle Bin, shared with
- * the file operations; without it, there is none. [runner] is the app's one operation runner.
+ * the file operations; without it, there is none. [runner] is the app's one operation runner, and
+ * [opsEvents] what the file operations tell from outside any activity.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -40,6 +44,7 @@ data class ExplorerDeps(
     val openWith: OpenWith? = null,
     val bin: RecycleBin? = null,
     val runner: OperationRunner? = null,
+    val opsEvents: Flow<OpsEvent> = emptyFlow(),
 )
 
 /**

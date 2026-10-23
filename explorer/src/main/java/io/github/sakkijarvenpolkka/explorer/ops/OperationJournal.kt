@@ -91,11 +91,11 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
 
     private var folderMade = false
 
-    /** Starts the journal of [spec]. */
-    fun begin(spec: OperationSpec) {
+    /** Starts the journal of [spec]; whether its spec is written (else it runs without one). */
+    fun begin(spec: OperationSpec): Boolean {
         synchronized(lock) {
             running += spec.id
-            write(specFileOf(spec.id), JOURNAL_JSON.encodeToString(OperationSpec.serializer(), spec))
+            return write(specFileOf(spec.id), JOURNAL_JSON.encodeToString(OperationSpec.serializer(), spec))
         }
     }
 
@@ -128,7 +128,8 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
      * its temporary name the name it was going to (unless that is taken); returns the operations that did
      * not end (their specs), by id. Their journals stay, without what is done now. A temporary file
      * whose folder is not there is kept recorded (its volume may be away), and so is a rename whose new
-     * name is taken.
+     * name is taken. A journal that cannot be read now is left as it is, for a later sweep; one that is
+     * not a journal (it does not decode, or names a path no file system takes) is deleted.
      */
     fun sweep(): List<InterruptedOp> {
         synchronized(lock) {
@@ -153,8 +154,14 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
             val interrupted = ArrayList<InterruptedOp>()
             for (key in keys) {
                 if (key in running || key in live) continue
-                val spec = if (key + SPEC_SUFFIX in names) readSpec(key) else null
-                val record = (if (key + RECORD_SUFFIX in names) readRecord(key) else null) ?: Record()
+                val (spec, record) = try {
+                    val spec = if (key + SPEC_SUFFIX in names) readSpec(key) else null
+                    spec to ((if (key + RECORD_SUFFIX in names) readRecord(key) else null) ?: Record())
+                } catch (e: IOException) {
+                    // Not a file that is not there: how far it got may be in it.
+                    LOG.log(Level.WARNING, "Cannot read the journal of $key", e)
+                    continue
+                }
                 // Without its operation, how far that got means nothing.
                 val left = tidied(if (spec == null) record.copy(committed = 0) else record)
                 spec?.let { interrupted += InterruptedOp(it, left.committed) }
@@ -172,7 +179,13 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
         synchronized(lock) {
             if (opId in running || opId in live) return
             deleteQuietly(specFileOf(opId))
-            val record = readRecord(opId) ?: return
+            val record = try {
+                readRecord(opId)
+            } catch (e: IOException) {
+                // Left for a sweep, which takes it for the record of no operation.
+                LOG.log(Level.WARNING, "Cannot read the journal of $opId", e)
+                return
+            } ?: return
             settle(opId, record, tidied(record.copy(committed = 0)))
         }
     }
@@ -285,19 +298,31 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
 
     private fun recordFileOf(key: String): Path = folder.resolve(key + RECORD_SUFFIX)
 
-    private fun readSpec(opId: String): OperationSpec? =
-        read(specFileOf(opId)) { JOURNAL_JSON.decodeFromString(OperationSpec.serializer(), it) }
+    private fun readSpec(opId: String): OperationSpec? = read(specFileOf(opId)) { text ->
+        JOURNAL_JSON.decodeFromString(OperationSpec.serializer(), text).also { spec ->
+            (spec.sources + listOfNotNull(spec.target)).forEach { checkPath(it) }
+        }
+    }
 
-    private fun readRecord(key: String): Record? =
-        read(recordFileOf(key)) { JOURNAL_JSON.decodeFromString(Record.serializer(), it) }
+    private fun readRecord(key: String): Record? = read(recordFileOf(key)) { text ->
+        JOURNAL_JSON.decodeFromString(Record.serializer(), text).also { record ->
+            (record.temps + record.renames.keys + record.renames.values).forEach { checkPath(it) }
+        }
+    }
 
-    /** What [decode] makes of [file]; null if there is none, or it cannot be read (a corrupt one is deleted). */
+    /** Throws [java.nio.file.InvalidPathException], an [IllegalArgumentException], if [path] is not one. */
+    private fun checkPath(path: String) {
+        Paths.get(path)
+    }
+
+    /**
+     * What [decode] makes of [file]; null if there is none, or if it is not a journal file: [decode]
+     * throws [IllegalArgumentException] (a [kotlinx.serialization.SerializationException] or a path no
+     * file system takes), and it is deleted. Throws [IOException] if it cannot be read.
+     */
     private fun <T> read(file: Path, decode: (String) -> T): T? = try {
         decode(fs.openRead(file).use { it.readBytes() }.decodeToString())
     } catch (e: NoSuchFileException) {
-        null
-    } catch (e: IOException) {
-        LOG.log(Level.WARNING, "Cannot read $file", e)
         null
     } catch (e: IllegalArgumentException) {
         LOG.log(Level.WARNING, "Deleting $file, which is not a journal", e)
@@ -305,14 +330,15 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
         null
     }
 
-    private fun write(file: Path, text: String) {
-        try {
-            writeAtomically(file, text.toByteArray())
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            LOG.log(Level.WARNING, "Cannot write $file", e)
-        }
+    /** Writes [text] to [file] ([writeAtomically]); whether it did (a failure is logged). */
+    private fun write(file: Path, text: String): Boolean = try {
+        writeAtomically(file, text.toByteArray())
+        true
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        LOG.log(Level.WARNING, "Cannot write $file", e)
+        false
     }
 
     /**

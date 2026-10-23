@@ -14,13 +14,18 @@ import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
@@ -66,9 +71,10 @@ class ExplorerViewModelTest {
         settings: SettingsStore = SettingsStore(null),
         volumes: FakeVolumes = FakeVolumes(FakeVolumes.primary(root)),
         io: CoroutineDispatcher = Dispatchers.Unconfined,
+        opsEvents: Flow<OpsEvent> = emptyFlow(),
     ): ExplorerViewModel {
         this.volumes = volumes
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io)
+        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, opsEvents = opsEvents)
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         settle()
         return vm
@@ -440,5 +446,25 @@ class ExplorerViewModelTest {
         settle()
         assertEquals(ListingState.Error(FsError.NotFound), ui.listing)
         assertNull(ui.up)
+    }
+
+    @Test
+    fun refusedForegroundServiceAsksToKeepTheAppOpen() {
+        dir("a")
+        val events = MutableSharedFlow<OpsEvent>(extraBufferCapacity = 1)
+        start(opsEvents = events)
+
+        events.tryEmit(OpsEvent.ForegroundRefused)
+        settle()
+
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        assertEquals(keepOpen, ui.message)
+        // About no place: it stays until it is dismissed.
+        vm.navigate(Location.Folder(root.resolve("a")))
+        settle()
+        assertEquals(keepOpen, ui.message)
+        vm.dismissMessage()
+        settle()
+        assertNull(ui.message)
     }
 }

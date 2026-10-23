@@ -116,4 +116,15 @@
     <string name="label_new_folder">New folder</string>
     <string name="label_new_text">New Text Document</string>
     <string name="label_copy_suffix">" - Copy"</string>
+
+    <!-- The file operations' notification -->
+    <string name="notif_channel">File operations</string>
+    <string name="notif_copying">Copying %1$d of %2$d items</string>
+    <string name="notif_moving">Moving %1$d of %2$d items</string>
+    <string name="notif_deleting">Deleting %1$d of %2$d items</string>
+    <string name="notif_compressing">Compressing %1$d of %2$d items</string>
+    <string name="notif_extracting">Extracting %1$d of %2$d items</string>
+    <string name="notif_needs_decision">Your decision is needed</string>
+    <string name="cancel">Cancel</string>
+    <string name="fgs_refused">Couldn\'t start in the background. Keep the app open.</string>
 </resources>

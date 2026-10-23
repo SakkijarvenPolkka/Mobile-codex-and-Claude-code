@@ -41,6 +41,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.FilterInputStream
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -49,6 +50,9 @@ class OperationRunnerTest {
 
     @get:Rule
     val folder = TemporaryFolder()
+
+    @get:Rule
+    val log = CapturedLog()
 
     private val internal: Path by lazy { folder.newFolder("internal").toPath().toRealPath() }
     private val sd: Path by lazy { folder.newFolder("sd").toPath().toRealPath() }
@@ -475,6 +479,9 @@ class OperationRunnerTest {
         assertEquals("a", read(dst.resolve("a.txt")))
         assertTrue(readOnly.calls.isNotEmpty())
         assertEquals(emptyList<String>(), journalDir.list().orEmpty().toList())
+        // Each failed write is logged.
+        assertTrue(log.warnings.toString(), log.warnings.isNotEmpty())
+        assertTrue(log.warnings.toString(), log.warnings.all { it.startsWith("Cannot write $journalDir/op1.") })
     }
 
     @Test
@@ -489,5 +496,148 @@ class OperationRunnerTest {
         assertEquals((2..21).map { "op$it" }, runner.state.value.finished.map { it.spec.id })
         runner.dismiss("op21")
         assertEquals((2..20).map { "op$it" }, runner.state.value.finished.map { it.spec.id })
+    }
+
+    @Test
+    fun queueOrderIsRunOrderEvenWhenTheHostSubmits() = runTest {
+        val a = write(internal, "src/a.txt", "a")
+        val b = write(internal, "src/b.txt", "b")
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        lateinit var runner: OperationRunner
+        // Told of the work, the host brings more, as another thread's submit can come in between.
+        val host = object : RunnerHost {
+            override fun onBusy() = runner.submit(copy("op2", listOf(b), dst))
+
+            override fun onIdle() = Unit
+
+            override fun onFinished(op: FinishedOp) = Unit
+        }
+        runner = runner(host = host)
+
+        runner.submit(copy("op1", listOf(a), dst))
+        assertEquals(listOf("op1", "op2"), runner.state.value.queue.map { it.id })
+        advanceUntilIdle()
+
+        // They run in the order the queue shows.
+        assertEquals(listOf("op1", "op2"), runner.state.value.finished.map { it.spec.id })
+    }
+
+    @Test
+    fun retryKeepsTheOldJournalUntilTheNewOneBegins() = runTest {
+        val src = internal.resolve("src")
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        write(src, "c.txt", "c")
+        write(src, "d.txt", "d")
+        val first = OperationSpec("old1", OpKind.COPY, listOf("$src/c.txt"), dst.toString())
+        val second = OperationSpec("old2", OpKind.COPY, listOf("$src/d.txt"), dst.toString())
+        OperationJournal(journalDir, NioFsBackend).apply {
+            begin(first)
+            begin(second)
+        }
+        val runner = runner()
+        runner.loadInterrupted()
+        advanceUntilIdle()
+        // Another operation waits for an answer, so the new runs wait in the queue.
+        val a = write(internal, "src/a.txt", "new a")
+        write(dst, "a.txt", "old a")
+        runner.submit(copy("op1", listOf(a), dst))
+        val pending = runner.pending()
+
+        runner.state.value.interrupted.forEach(runner::retry)
+        advanceUntilIdle()
+        val (again, cancelled) = runner.state.value.queue
+        runner.cancel(cancelled.id)
+        advanceUntilIdle()
+
+        // A crash now would still find the first; the second's new run ended, so its journal went with it.
+        assertEquals(setOf("old1.json", "op1.json"), journalDir.list().orEmpty().toSet())
+        pending.answer(Resolution(ConflictAction.SKIP))
+        advanceUntilIdle()
+
+        assertEquals(OpResult.Done(listOf(dst.resolve("c.txt")), emptyList()), runner.results()[again.id])
+        assertEquals(OpResult.Cancelled, runner.results()[cancelled.id])
+        assertEquals(emptyList<String>(), journalDir.list().orEmpty().toList())
+    }
+
+    @Test
+    fun retryFailedOfEmptyBinPurgesOnlyTheItemsThatFailed() = runTest {
+        val bin = internal.resolve(".Recycle.Bin")
+        val sdBin = sd.resolve(".Recycle.Bin")
+        val empty = OperationSpec("op1", OpKind.EMPTY_BIN, listOf(bin.toString(), sdBin.toString()))
+        val failed = listOf(
+            // A folder, part of which is left, and a file something else put in the bin itself.
+            ItemFailure("$bin/b1/d", FsError.IoError),
+            ItemFailure("$bin/b2", FsError.AccessDenied),
+            // A bin it could not reach: what is in it now was never asked about.
+            ItemFailure(sdBin.toString(), FsError.BinUnavailable),
+        )
+        val runner = runner()
+
+        runner.retryFailed(FinishedOp(empty, OpResult.Done(emptyList(), failed)))
+
+        // Those items, and nothing put in the bin since.
+        val again = runner.state.value.queue.single()
+        assertEquals(OperationSpec(again.id, OpKind.DELETE_PERMANENT, listOf("$bin/b1", "$bin/b2")), again)
+        assertNotEquals(empty.id, again.id)
+    }
+
+    @Test
+    fun retryRunsAnInterruptedOpOnce() = runTest {
+        val src = internal.resolve("src")
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        write(src, "c.txt", "c")
+        write(dst, "a.txt", "a")
+        val move = OperationSpec("old1", OpKind.MOVE, listOf("$src/c.txt"), dst.toString())
+        // One that got to its only source before it could note it: nothing is left to run.
+        val allDone = OperationSpec("old2", OpKind.MOVE, listOf("$src/a.txt"), dst.toString())
+        OperationJournal(journalDir, NioFsBackend).apply {
+            begin(move)
+            begin(allDone)
+        }
+        val runner = runner()
+        runner.loadInterrupted()
+        advanceUntilIdle()
+
+        // Twice each, as a double tap does.
+        val listed = runner.state.value.interrupted
+        repeat(2) { listed.forEach(runner::retry) }
+        advanceUntilIdle()
+
+        val retried = runner.state.value.finished.single()
+        assertEquals(OpResult.Done(listOf(dst.resolve("c.txt")), emptyList()), retried.result)
+        assertEquals(listOf(InterruptedOp(allDone, 0)), runner.state.value.interrupted)
+    }
+
+    @Test
+    fun cancelDuringAWriteDeletesItsPart() = runTest {
+        val big = write(internal, "src/big.bin", "x".repeat(3 shl 20))
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        lateinit var runner: OperationRunner
+        var partsWhileWriting = emptyMap<Path, Long>()
+        // The user cancels while the file is copied, once its first megabyte is written.
+        val fs = FaultyFs().apply {
+            wrapRead("big.bin") { stream ->
+                object : FilterInputStream(stream) {
+                    private var reads = 0
+
+                    override fun read(b: ByteArray, off: Int, len: Int): Int {
+                        if (++reads == 2) {
+                            partsWhileWriting = partsUnder(dst).associateWith { Files.size(it) }
+                            runner.cancel("op1")
+                        }
+                        return super.read(b, off, len)
+                    }
+                }
+            }
+        }
+        runner = runner(fs)
+
+        runner.submit(copy("op1", listOf(big), dst))
+        advanceUntilIdle()
+
+        assertEquals(mapOf(dst.resolve(".big.bin.op1.xpart") to (1L shl 20)), partsWhileWriting)
+        assertEquals(mapOf("op1" to OpResult.Cancelled), runner.results())
+        assertEquals(emptyMap<String, String>(), tree(dst))
+        assertEquals(emptyList<String>(), journalDir.list().orEmpty().toList())
     }
 }
