@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — launcher icon foreground: a folder inside the 66dp safe zone. SPDX-License-Identifier: MIT -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Back of the folder with its tab (a darker shade of the front). -->
+    <path
+        android:fillColor="#FFE6A12E"
+        android:pathData="M30,37 a3,3 0 0 1 3,-3 h13.5 a3,3 0 0 1 2.1,0.9 l3.6,3.6 a3,3 0 0 0 2.1,0.9 H75 a3,3 0 0 1 3,3 V71 a3,3 0 0 1 -3,3 H33 a3,3 0 0 1 -3,-3 z" />
+    <!-- Front of the folder. -->
+    <path
+        android:fillColor="#FFFFC83D"
+        android:pathData="M30,47 a3,3 0 0 1 3,-3 H75 a3,3 0 0 1 3,3 V71 a3,3 0 0 1 -3,3 H33 a3,3 0 0 1 -3,-3 z" />
+</vector>

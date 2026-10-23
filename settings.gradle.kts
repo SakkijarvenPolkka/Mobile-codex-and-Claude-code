@@ -21,3 +21,4 @@ rootProject.name = "AudacityAndroid"
 include(":engine")
 include(":editor")
 include(":app")
+include(":explorer")

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — window theme (the UI itself is drawn by Compose). SPDX-License-Identifier: MIT -->
+<resources>
+    <style name="Theme.Explorer" parent="android:Theme.Material.NoActionBar" />
+</resources>
