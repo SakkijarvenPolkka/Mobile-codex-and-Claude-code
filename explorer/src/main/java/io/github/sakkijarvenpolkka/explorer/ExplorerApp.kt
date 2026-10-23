@@ -23,11 +23,11 @@ import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerHost
+import io.github.sakkijarvenpolkka.explorer.ops.scanTargets
 import io.github.sakkijarvenpolkka.explorer.platform.AndroidMediaScan
 import io.github.sakkijarvenpolkka.explorer.platform.MediaScan
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeRegistry
-import io.github.sakkijarvenpolkka.explorer.platform.scanTargets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob

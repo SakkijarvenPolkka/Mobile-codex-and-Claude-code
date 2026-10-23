@@ -97,7 +97,11 @@ class FileOpsService : Service() {
         if (intent?.action == OpsNotifications.ACTION_CANCEL) {
             intent.getStringExtra(OpsNotifications.EXTRA_OP_ID)?.let(runner::cancel)
         }
-        if (watching == null) watching = watch(runner)
+        when {
+            watching == null -> watching = watch(runner)
+            // Its work ended before this start came, and the watch already stopped for an older one.
+            runner.state.value.idle -> stopSelf(startId)
+        }
         return START_NOT_STICKY
     }
 

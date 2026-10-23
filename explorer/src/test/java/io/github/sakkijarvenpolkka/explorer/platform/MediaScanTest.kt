@@ -11,6 +11,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.VolumeRoot
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.fs.volumesOf
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
+import io.github.sakkijarvenpolkka.explorer.ops.scanTargets
 import org.junit.Assert.assertEquals
 import org.junit.Before
 import org.junit.Test

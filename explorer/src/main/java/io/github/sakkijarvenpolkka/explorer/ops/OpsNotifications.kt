@@ -16,6 +16,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 
 /** The steps of the progress bar when it goes by bytes. */
 private const val PROGRESS_STEPS = 1000
@@ -45,8 +46,8 @@ object OpsNotifications {
 
     /**
      * The notification for [state]: what the operation running (or else the next one) does, with how many
-     * of its items are done, a progress bar and its cancel action; "Your decision is needed" over that
-     * while it waits for an answer. Tapping it opens the app.
+     * of its items are done, the name it is at ([DisplayName.of]), a progress bar and its cancel action;
+     * "Your decision is needed" over that while it waits for an answer. Tapping it opens the app.
      */
     fun progress(context: Context, state: RunnerState): Notification {
         val builder = NotificationCompat.Builder(context, CHANNEL)
@@ -68,7 +69,7 @@ object OpsNotifications {
         if (state.pending != null) {
             builder.setContentTitle(context.getString(R.string.notif_needs_decision)).setContentText(doing)
         } else {
-            builder.setContentTitle(doing).setContentText(progress?.currentName)
+            builder.setContentTitle(doing).setContentText(progress?.currentName?.let(DisplayName::of))
         }
         when {
             progress == null -> builder.setProgress(0, 0, true)

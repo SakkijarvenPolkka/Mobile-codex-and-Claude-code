@@ -5,6 +5,7 @@ import android.app.Application
 import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationManager
+import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
@@ -13,6 +14,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.KO_LABELS
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpProgress
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.Resolution
@@ -155,6 +157,21 @@ class FileOpsServiceTest {
     }
 
     @Test
+    fun stopsWhenStartedAfterTheRunnerWentIdle() {
+        val pending = waitingCopy()
+        val service = start().get()
+        pending.answer(Resolution(ConflictAction.REPLACE))
+        runOps()
+        assertEquals(1, shadowOf(service).stopSelfId)
+
+        // Started for more work that ended before the start came: nothing would tell it to stop again.
+        service.onStartCommand(Intent(app, FileOpsService::class.java), 0, 2)
+        idle()
+
+        assertEquals(2, shadowOf(service).stopSelfId)
+    }
+
+    @Test
     fun onTimeoutCancelsAndStops() {
         val dst = submitConflictingCopy()
         runOps()
@@ -207,6 +224,19 @@ class FileOpsServiceTest {
         assertEquals("Copying 0 of 1 items", shown.text())
         assertNotNull(shown?.contentIntent)
         assertEquals(listOf("Cancel"), shown?.actions?.map { it.title.toString() })
+    }
+
+    @Test
+    fun notificationShowsNamesAsDisplayed() {
+        val spec = OperationSpec("op1", OpKind.COPY, listOf("$volume/a"), "$volume/dst")
+        fun shown(name: String): String? {
+            val running = RunningOp(spec, OpProgress(10, 1, 1, 0, name))
+            return OpsNotifications.progress(app, RunnerState(running = running)).text()
+        }
+
+        // A name that reorders the text or breaks the line cannot pass for another one.
+        assertEquals("a\u00B7txt.exe", shown("a\u202Etxt.exe"))
+        assertEquals("a\u240Ab.txt", shown("a\nb.txt"))
     }
 
     @Test
