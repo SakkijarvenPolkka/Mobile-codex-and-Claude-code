@@ -194,4 +194,12 @@
     <string name="yes">예</string>
     <string name="no">아니요</string>
     <string name="ok">확인</string>
+
+    <!-- The text viewer -->
+    <string name="text_truncated">처음 1MB만 표시합니다</string>
+    <string name="text_binary">이 파일은 텍스트 파일이 아닙니다</string>
+    <string name="encoding_auto">자동</string>
+    <string name="encoding_utf8">UTF-8</string>
+    <string name="encoding_korean">한국어(CP949)</string>
+    <string name="encoding_utf16">UTF-16</string>
 </resources>

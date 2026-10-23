@@ -196,4 +196,12 @@
     <string name="yes">Yes</string>
     <string name="no">No</string>
     <string name="ok">OK</string>
+
+    <!-- The text viewer -->
+    <string name="text_truncated">Showing the first 1 MB</string>
+    <string name="text_binary">This file isn\'t a text file</string>
+    <string name="encoding_auto">Auto</string>
+    <string name="encoding_utf8">UTF-8</string>
+    <string name="encoding_korean">Korean (CP949)</string>
+    <string name="encoding_utf16">UTF-16</string>
 </resources>
