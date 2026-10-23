@@ -196,7 +196,7 @@ C0/C1 제어 문자(줄바꿈 포함)는 U+2400 블록의 보이는 기호로 �
 - `ExplorerViewModel`: 화면이 쓰는 창구. 아래 부품을 묶어 `StateFlow<ExplorerUiState>`를 만들 뿐
   상태를 직접 갖지 않는다.
 - `TabsStore`: 순수 리듀서 `(TabsModel, TabAction) -> TabsModel`. 안정적인 `TabId`, 활성 탭,
-  탭마다 `location`, 뒤로·앞으로 스택(각 최대 50), `SelectionState`, `viewOverride`.
+  탭마다 `location`, 뒤로·앞으로 스택(각 최대 50), `SelectionState`. 보기 설정은 탭이 아니라 폴더마다 저장한다(§3.5).
   처음부터 여러 탭 구조(①a에서는 탭 UI만 숨김).
 - `SelectionState(items: LinkedHashSet<Path>(목록 순서), anchor: Path?, focus: Path?)`. 선택이 비어 있지
   않으면 선택 모드. 이동하면 선택 해제. 목록이 바뀌면 존재하는 항목만 남김. 작업이
