@@ -24,6 +24,9 @@ internal interface ShellHost {
     /** Shows [message] about no place: it stays until it is dismissed or replaced. */
     fun showUnbound(message: UiMessage)
 
+    /** The message shown, if any. */
+    fun shown(): UiMessage?
+
     fun dismissMessage()
 
     /** Reads the active tab's folder again. */

@@ -669,6 +669,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
         override fun showUnbound(message: UiMessage) = shell.update { it.copy(message = message, messageAt = null) }
 
+        override fun shown(): UiMessage? = shell.value.message
+
         override fun dismissMessage() = this@ExplorerViewModel.dismissMessage()
 
         override fun refresh() = this@ExplorerViewModel.refresh()

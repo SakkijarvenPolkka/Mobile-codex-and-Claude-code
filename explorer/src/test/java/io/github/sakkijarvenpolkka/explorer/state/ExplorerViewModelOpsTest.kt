@@ -11,6 +11,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.ConflictAction
 import io.github.sakkijarvenpolkka.explorer.fs.ConflictKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
@@ -23,6 +24,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.Resolution
 import io.github.sakkijarvenpolkka.explorer.ops.CapturedLog
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
@@ -30,6 +32,7 @@ import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -84,16 +87,24 @@ class ExplorerViewModelOpsTest {
         runnerScope.cancel()
     }
 
-    /** A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them. */
-    private fun start(extra: List<Volume> = emptyList()) {
+    /**
+     * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
+     * [fs], and the app's [notice] of the operations.
+     */
+    private fun start(
+        extra: List<Volume> = emptyList(),
+        fs: FsBackend = NioFsBackend,
+        notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
+    ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
-        val journal = OperationJournal(journalDir, NioFsBackend)
-        bin = RecycleBin(NioFsBackend, volumes, { 1_700_000_000_000L }, ::newId)
-        val fileOps = FileOps(NioFsBackend, volumes, LABELS, journal, ids = ::newId, bin = bin)
+        val journal = OperationJournal(journalDir, fs)
+        bin = RecycleBin(fs, volumes, { 1_700_000_000_000L }, ::newId)
+        val fileOps = FileOps(fs, volumes, LABELS, journal, ids = ::newId, bin = bin)
         runner = OperationRunner(runnerScope, fileOps, journal, io, host = null)
         val deps = ExplorerDeps(
-            NioFsBackend, SettingsStore(null), volumes, volumes, MimeResolver(), io,
+            fs, SettingsStore(null), volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
+            opsNotice = notice, clearOpsNotice = { notice.value = null },
         )
         vm = ExplorerViewModel(app, deps)
         drain()
@@ -498,6 +509,59 @@ class ExplorerViewModelOpsTest {
         assertNull(ui.confirm)
         assertEquals(listOf("b.txt", "c.txt"), bin.list(listOf(root)).map { it.name }.sorted())
         assertEquals(listOf("b.txt", "c.txt"), names())
+    }
+
+    @Test
+    fun successAfterFatalStopKeepsTheErrorBar() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        val c = file("c.txt")
+        val d = file("d.txt")
+        val full = dir("full")
+        // Next to no space left in full: a copy there stops before it starts.
+        start(fs = object : FsBackend by NioFsBackend {
+            override fun availableBytes(path: Path): Long =
+                if (path.startsWith(full)) 1L else NioFsBackend.availableBytes(path)
+        })
+
+        // The copy that stops, then, queued behind it, one that does all it is asked.
+        runner.submit(OperationSpec(newId(), OpKind.COPY, listOf(a.toString()), full.toString()))
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(b.toString())))
+        drain()
+        assertFalse(Files.exists(b))
+        // The stop is told, and stays told: nothing else reports it.
+        val stopped = UiMessage(
+            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            detail = UiText.res(R.string.err_no_space),
+        )
+        assertEquals(stopped, ui.message)
+
+        // Once it is closed, a success is told, and the next success takes its place.
+        vm.dismissMessage()
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(c.toString())))
+        drain()
+        assertEquals(done(1), ui.message)
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a.toString(), d.toString())))
+        drain()
+        assertEquals(done(2), ui.message)
+    }
+
+    @Test
+    fun successKeepsTheKeepAppOpenNotice() {
+        val a = file("a.txt")
+        val notice = MutableStateFlow<OpsNotice?>(null)
+        start(notice = notice)
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        notice.value = OpsNotice.ForegroundRefused
+        drain()
+        assertEquals(keepOpen, ui.message)
+
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a.toString())))
+        drain()
+        assertFalse(Files.exists(a))
+        // Still asked to keep the app open, and the app still knows why.
+        assertEquals(keepOpen, ui.message)
+        assertEquals(OpsNotice.ForegroundRefused, notice.value)
     }
 
     /** A copy of [sources] into [target] that a crash stopped after [committed] of them, as its journal shows. */

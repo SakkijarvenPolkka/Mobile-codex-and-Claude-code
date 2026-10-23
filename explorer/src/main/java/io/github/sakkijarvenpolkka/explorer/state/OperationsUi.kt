@@ -382,12 +382,12 @@ internal class OperationsUi(
     }
 
     /**
-     * How [op] ended, as messages about no place: one that did all it was asked with how many items, a
-     * refused one (nothing done) by its error only, one that stopped with how far it got and why, a move
-     * that left items in its sources with how many; a cancelled one, not at all. Its failures are listed
-     * ([State.failures]), but those of a delete to the Recycle Bin: the items that could not go there are
-     * asked about ([ConfirmRequest.BinUnavailable]), unless another question is open (they stay where they
-     * are), and those already gone need no word.
+     * How [op] ended, as messages about no place: one that did all it was asked with how many items (unless
+     * a message that matters more is shown: [showSuccess]), a refused one (nothing done) by its error only,
+     * one that stopped with how far it got and why, a move that left items in its sources with how many; a
+     * cancelled one, not at all. Its failures are listed ([State.failures]), but those of a delete to the
+     * Recycle Bin: the items that could not go there are asked about ([ConfirmRequest.BinUnavailable]),
+     * unless another question is open (they stay where they are), and those already gone need no word.
      */
     private fun tell(op: FinishedOp) {
         val kind = op.spec.kind
@@ -405,8 +405,7 @@ internal class OperationsUi(
             }
             is OpResult.Done -> {
                 if (result.failed.isEmpty() && result.leftInSource == 0) {
-                    val done = UiText.res(R.string.op_done, op.spec.sources.size)
-                    shell.showUnbound(UiMessage(done, InfoSeverity.SUCCESS))
+                    showSuccess(UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), InfoSeverity.SUCCESS))
                 }
                 if (result.leftInSource > 0) {
                     val left = UiText.res(R.string.left_in_source, result.leftInSource)
@@ -420,6 +419,16 @@ internal class OperationsUi(
                 }
             }
         }
+    }
+
+    /**
+     * Shows [success] about no place, but only over no message or another success: an error or a warning
+     * (an operation that stopped, items left in a source, the notice to keep the app open, an interrupted
+     * operation) matters more, and may be all that tells of what it is about.
+     */
+    private fun showSuccess(success: UiMessage) {
+        val shown = shell.shown()
+        if (shown == null || shown.severity == InfoSeverity.SUCCESS) shell.showUnbound(success)
     }
 
     private fun askIfFree(request: ConfirmRequest) = mutableState.update {
