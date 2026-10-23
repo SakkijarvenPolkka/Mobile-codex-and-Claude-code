@@ -56,6 +56,7 @@ import java.io.File
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 import java.time.Duration
 import java.util.UUID
 
@@ -731,10 +732,13 @@ class ExplorerViewModelOpsTest {
         val a = file("a.txt")
         val dst = dir("dst")
         var failChecks = false
+        // As NioFsBackend does with an item it may not look at: exists() says no, attributes() says why.
         start(fs = object : FsBackend by NioFsBackend {
-            override fun exists(path: Path): Boolean {
-                if (failChecks) throw AccessDeniedException(path.toString())
-                return NioFsBackend.exists(path)
+            override fun exists(path: Path): Boolean = !(failChecks && path == a) && NioFsBackend.exists(path)
+
+            override fun attributes(path: Path): BasicFileAttributes {
+                if (failChecks && path == a) throw AccessDeniedException(path.toString())
+                return NioFsBackend.attributes(path)
             }
         })
         select("a.txt")
@@ -801,6 +805,41 @@ class ExplorerViewModelOpsTest {
         assertFalse(Files.exists(a))
         assertEquals(listOf("a.txt", "b.txt"), names())
         assertNull(ui.clipboard)
+    }
+
+    @Test
+    fun moveCheckFailureKeepsCutClipboard() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        val dst = dir("dst")
+        var unreadableA = false
+        // a.txt cannot be moved, and from then on not looked at: exists() says no, as NioFsBackend's does.
+        start(fs = object : FsBackend by NioFsBackend {
+            override fun atomicMove(from: Path, to: Path) {
+                if (from == a) {
+                    unreadableA = true
+                    throw AccessDeniedException(from.toString())
+                }
+                NioFsBackend.atomicMove(from, to)
+            }
+
+            override fun exists(path: Path): Boolean = !(unreadableA && path == a) && NioFsBackend.exists(path)
+
+            override fun attributes(path: Path): BasicFileAttributes {
+                if (unreadableA && path == a) throw AccessDeniedException(path.toString())
+                return NioFsBackend.attributes(path)
+            }
+        })
+        select("a.txt", "b.txt")
+        vm.cut()
+        goTo(dst)
+        vm.paste()
+        drain()
+
+        // Whether a.txt is gone cannot be told, so the cut clipboard stays as it is.
+        assertTrue(Files.exists(a))
+        assertEquals(listOf("b.txt"), names())
+        assertEquals(Clipboard(listOf(a, b), ClipMode.CUT), ui.clipboard)
     }
 
     @Test

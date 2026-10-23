@@ -12,6 +12,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.BinItem
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
@@ -523,8 +524,22 @@ internal class OperationsUi(
             target?.startsWith(path) == true
     }
 
-    /** The items of [paths] that are there, looked for off the main thread; throws when that cannot be told. */
-    private suspend fun present(paths: List<Path>): List<Path> = withContext(deps.io) { paths.filter(deps.fs::exists) }
+    /**
+     * The items of [paths] that are there, looked for off the main thread; throws when that cannot be told.
+     * Their attributes are read: [FsBackend.exists] also says no when it cannot tell (an item the app may
+     * not look at), and only an item not found is gone.
+     */
+    private suspend fun present(paths: List<Path>): List<Path> = withContext(deps.io) {
+        paths.filter { path ->
+            try {
+                deps.fs.attributes(path)
+                true
+            } catch (e: IOException) {
+                if (e.toFsError() != FsError.NotFound) throw e
+                false
+            }
+        }
+    }
 
     /** The name [typed] for [entry] comes to, as the rename checks it ([NameValidator]): as typed when invalid. */
     private fun checkedName(entry: FileEntry, typed: String): String {
