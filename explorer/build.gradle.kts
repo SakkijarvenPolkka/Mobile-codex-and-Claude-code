@@ -44,6 +44,9 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            // Host JVMs in the POSIX locale cannot create non-ASCII file names (InvalidPathException),
+            // and the file system tests use Korean ones.
+            all { it.environment("LC_ALL", "C.UTF-8") }
         }
     }
 }
