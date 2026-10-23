@@ -113,13 +113,18 @@ class WriteProtocolTest {
         // A part file of the same name that this write did not create (left by a crash).
         val temp = Files.write(dir.resolve(tempNameFor("out.txt", OP)), old)
         val target = dir.resolve("out.txt")
+        // Recorded by the run that left it, whose sweep has not deleted it yet.
+        val journal = MemoryJournal().apply { recorded.add(temp) }
 
-        val e = assertThrows(FsException::class.java) { protocol().writeBlocking(target) }
+        val e = assertThrows(FsException::class.java) { protocol(journal = journal).writeBlocking(target) }
 
         // Not reported as a taken target, and not deleted: it is not this write's to delete.
         assertEquals(FsError.AlreadyExists, e.error)
         assertArrayEquals(old, Files.readAllBytes(temp))
         assertFalse(Files.exists(target))
+        // Nor forgotten: it is still on disk, so the journal keeps it for the sweep.
+        assertEquals(listOf("add .out.txt.op1.xpart"), journal.events)
+        assertEquals(setOf(temp), journal.recorded)
     }
 
     @Test

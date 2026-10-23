@@ -75,11 +75,12 @@ class WriteProtocol(
      *    it was until this moment;
      * 8. removes it from the journal.
      *
-     * If anything fails or the write is cancelled, the temporary file, and nothing else, is deleted and
-     * removed from the journal (if it cannot be deleted it stays recorded, for a later sweep), and the
-     * failure is rethrown: an IOException as an [FsException] with its [toFsError], except a taken
-     * [target], which stays a [FileAlreadyExistsException]. An [Error] is not caught, so it passes
-     * without any cleanup.
+     * If anything fails or the write is cancelled, the temporary file it created, and nothing else, is
+     * deleted and removed from the journal, and the failure is rethrown: an IOException as an
+     * [FsException] with its [toFsError], except a taken [target], which stays a
+     * [FileAlreadyExistsException]. What stays on disk stays in the journal, for a later sweep: a
+     * temporary file that cannot be deleted, or a file that already had its name (left by a crash).
+     * An [Error] is not caught, so it passes without any cleanup.
      */
     suspend fun write(
         target: Path,
@@ -106,7 +107,7 @@ class WriteProtocol(
             read
         } catch (e: Exception) {
             // CancellationException included: the cleanup runs, then the cancellation goes on.
-            withContext(NonCancellable) { discard(temp, created) }
+            withContext(NonCancellable) { discard(temp, created, e) }
             // Only the target can be taken once the temporary file exists; before, it was that name.
             throw if (e is FileAlreadyExistsException && created) e else e.asWriteFailure()
         }
@@ -137,16 +138,22 @@ class WriteProtocol(
         }
     }
 
-    /** Deletes [temp] if this write [created] it, then forgets it, unless it is still there. */
-    private fun discard(temp: Path, created: Boolean) {
+    /**
+     * Deletes [temp] if this write [created] it, then forgets it, unless it is still there: because it
+     * could not be deleted, or because creating it [failed] on a file that already had the name (left by
+     * a crash, whose run may have recorded it). The journal's sweep deletes what is still there.
+     */
+    private fun discard(temp: Path, created: Boolean, failed: Exception) {
         if (created) {
             try {
                 fs.delete(temp)
             } catch (e: NoSuchFileException) {
                 // Already gone.
             } catch (e: IOException) {
-                return // Still on disk: it stays in the journal, whose sweep deletes it.
+                return // Still on disk.
             }
+        } else if (failed is FileAlreadyExistsException) {
+            return // Not this write's file, so not deleted.
         }
         journal.remove(temp)
     }
