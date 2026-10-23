@@ -18,6 +18,7 @@ import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewSetting
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.BinItem
 import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
@@ -27,10 +28,9 @@ import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
-import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
-import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
+import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
-import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
@@ -70,6 +70,12 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val codec = VolumeLocationCodec { deps.volumes.volumes.value }
     private val loader = ListingLoader(viewModelScope, deps.fs, deps.io, deps.mime::mimeOf)
     private val clipboard = ClipboardHolder()
+    private val host = Host()
+    private val handOver = HandOver(app, deps, viewModelScope, host)
+    private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
+
+    /** What the app's file operations are doing: the one running, its conflict, the queue. */
+    val runner: StateFlow<RunnerState> = ops.runner
 
     private val tabs: MutableStateFlow<TabsModel>
 
@@ -102,6 +108,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         combine(settings.global, deps.volumes.volumes, clipboard.state, settings.favorites) { g, v, c, f ->
             Env(g, v, c, f)
         },
+        ops.state,
         ::build,
     ).stateIn(
         viewModelScope,
@@ -111,13 +118,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                 tabs.value, tabs.value.activeId to ListingState.Loading, volumeTracking.unavailable.value, shell.value,
             ),
             Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, settings.favorites.value),
+            ops.state.value,
         ),
     )
 
     init {
         viewModelScope.launch { deps.volumes.volumes.collect(volumeTracking::rememberRoots) }
         viewModelScope.launch { deps.volumes.events.collect(::onVolumeEvent) }
-        viewModelScope.launch { deps.opsNotice.collect(::onOpsNotice) }
+        viewModelScope.launch { ops.follow(shell.map { it.message }.distinctUntilChanged()) }
         viewModelScope.launch { activeListing.collect { (id, state) -> onListing(id, state) } }
         viewModelScope.launch {
             val viewRevision = shell.map { it.viewRevision }.distinctUntilChanged()
@@ -152,30 +160,26 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            EntryKind.FILE -> handOver(listOf(entry.path)) { openWith ->
-                if (entry.mime == APK_MIME && openWith.needsInstallPermission()) {
-                    Prepared.Refused(OpenResult.NeedsInstallPermission)
-                } else {
-                    Prepared.Launch(openWith.viewIntent(entry.path))
-                }
-            }
+            EntryKind.FILE -> handOver.open(entry)
             // A pipe, socket or device: no app reads it as a file.
             EntryKind.OTHER -> showError(here(), UiText.res(R.string.open_unsupported))
         }
     }
 
-    /** A tap: toggles the item in selection mode, opens it otherwise. */
+    /** A tap: toggles the item in selection mode and in the Recycle Bin, opens it otherwise. */
     fun onTap(entry: FileEntry) {
-        if (tabs.value.active.selection.active) reduce(TabAction.Toggle(entry.path)) else open(entry)
+        val toggles = tabs.value.active.selection.active || here() == Location.RecycleBin
+        if (toggles) reduce(TabAction.Toggle(entry.path)) else open(entry)
     }
 
     /**
      * A long press: selects the item (entering selection mode), adds it to the selection in
-     * selection mode, or opens its context menu when it is already selected.
+     * selection mode, or opens its context menu when it is already selected (the Recycle Bin has none).
      */
     fun onLongPress(entry: FileEntry) {
         val selection = tabs.value.active.selection
         when {
+            entry.path in selection.items && here() == Location.RecycleBin -> Unit
             entry.path in selection.items -> shell.update { it.copy(overlay = Overlay.ContextMenu(entry)) }
             selection.active -> reduce(TabAction.Toggle(entry.path))
             else -> reduce(TabAction.Select(entry.path))
@@ -221,22 +225,70 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     }
 
     fun dismissMessage() {
-        // The app forgets the notice of the file operations once it is dismissed, or it would come back.
-        if (shell.value.message == KEEP_APP_OPEN) deps.clearOpsNotice()
+        // First: what closing it does may change what shows once it is gone.
+        ops.onDismissed(shell.value.message)
         shell.update { it.copy(message = null, messageAt = null) }
     }
+
+    // The file operations, as OperationsUi describes them.
+
+    fun cut() = ops.cut(selectedEntries())
+
+    fun copy() = ops.copy(selectedEntries())
+
+    fun paste() = ops.paste()
+
+    fun delete(permanent: Boolean) = ops.delete(permanent, selectedEntries())
+
+    fun confirmPermanent(paths: List<Path>) = ops.confirmPermanent(paths)
+
+    fun startRename(entry: FileEntry) = ops.startRename(entry)
+
+    fun commitRename(entry: FileEntry, newName: String) = ops.commitRename(entry, newName)
+
+    fun cancelRename() = ops.cancelRename()
+
+    fun newFolder() = ops.newFolder()
+
+    fun newTextFile() = ops.newTextFile()
+
+    fun restore(items: List<BinItem>) = ops.restore(items)
+
+    fun emptyBin() = ops.emptyBin()
+
+    fun answerConfirm(yes: Boolean) = ops.answerConfirm(yes)
+
+    fun cancelOperation(opId: String) = ops.cancel(opId)
+
+    fun runInBackground() = ops.setInBackground(true)
+
+    fun showProgress() = ops.setInBackground(false)
+
+    fun retryFailed(op: FinishedOp) = ops.retryFailed(op)
+
+    fun dismissFailures(op: FinishedOp) = ops.dismissFailures(op)
 
     /** Runs a command of the command bar or a menu; commands of later phases do nothing yet. */
     fun command(c: Command) {
         when (c) {
+            Command.CUT -> cut()
+            Command.COPY -> copy()
+            Command.PASTE -> paste()
+            Command.DELETE -> delete(permanent = false)
+            Command.DELETE_PERMANENT -> delete(permanent = true)
+            Command.RENAME -> selectedEntries().singleOrNull()?.let(::startRename)
+            Command.NEW_FOLDER -> newFolder()
+            Command.NEW_TEXT -> newTextFile()
+            Command.RESTORE -> restore(ops.binItemsOf(selectedEntries()))
+            Command.EMPTY_BIN -> emptyBin()
             Command.SELECT_ALL -> reduce(TabAction.SelectAll(listedRows().map { it.entry.path }))
             Command.SELECT_NONE -> reduce(TabAction.ClearSelection)
             Command.INVERT -> reduce(TabAction.Invert(listedRows().map { it.entry.path }))
             Command.REFRESH -> refresh()
             Command.OPTIONS -> shell.update { it.copy(overlay = Overlay.Options) }
             Command.OPEN -> selectedEntries().singleOrNull()?.let(::open)
-            Command.OPEN_WITH -> selectedEntries().singleOrNull()?.let(::openWith)
-            Command.SHARE -> share(selectedEntries().map { it.path })
+            Command.OPEN_WITH -> selectedEntries().singleOrNull()?.let(handOver::openWith)
+            Command.SHARE -> handOver.share(selectedEntries().map { it.path })
             Command.PROPERTIES -> showProperties()
             else -> Unit
         }
@@ -249,7 +301,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun launched(intent: Intent, result: OpenResult) {
         val pending = shell.value.launch?.takeIf { it.intent === intent } ?: return
         shell.update { it.copy(launch = null) }
-        onOpenResult(result, pending.at)
+        handOver.onOpenResult(result, pending.at)
     }
 
     /** What [entries] hold, counted off the main thread while the flow is collected ([countContents]). */
@@ -352,22 +404,25 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun leavingEntry(): HistoryEntry = tabs.value.active.let { scrollOf(it.id, it.current) }
 
     /**
-     * Reads the active tab's folder when it is not read for its current options yet, or always
-     * with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
+     * Reads the active tab's folder, or the Recycle Bin, when it is not read for its current options
+     * yet, or always with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
      */
     private fun ensureLoaded(refresh: Boolean = false) {
         val tab = tabs.value.active
-        val folder = (tab.current.location as? Location.Folder)?.path ?: return
+        val location = tab.current.location
+        val folder = (location as? Location.Folder)?.path
+        if (folder == null && location != Location.RecycleBin) return
         if (tab.id in volumeTracking.unavailable.value) return
-        if (deps.lookup.volumeOf(folder) == null) return placeOffVolume(tab.id, folder)
+        if (folder != null && deps.lookup.volumeOf(folder) == null) return placeOffVolume(tab.id, folder)
         val global = settings.global.value
-        val options = ListOptions(global.showHidden, viewFor(tab.current.location, global).sort)
-        val key = LoadKey(folder, options)
+        val options = ListOptions(global.showHidden, viewFor(location, global).sort)
+        val key = LoadKey(location, options)
         val previous = loadedFor[tab.id]
         val stale = loader.isStale(tab.id)
         if (!refresh && !stale && key == previous) return
         loadedFor[tab.id] = key
-        loader.load(tab.id, folder, options, refresh = refresh || stale || previous?.folder == folder)
+        if (folder == null) return loader.setSource(tab.id, ops.binListing())
+        loader.load(tab.id, folder, options, refresh = refresh || stale || previous?.location == location)
     }
 
     private fun onListing(id: TabId, state: ListingState) {
@@ -461,68 +516,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         if (here() == at) shell.update { it.copy(message = message, messageAt = at) }
     }
 
-    /** "Open with": the system chooser for the file [entry], which asks every time. */
-    private fun openWith(entry: FileEntry) {
-        if (entry.kind != EntryKind.FILE) return
-        val title = getApplication<Application>().getString(R.string.open_with_title)
-        handOver(listOf(entry.path)) { Prepared.Launch(it.chooserIntent(entry.path, title)) }
-    }
-
-    /** Shares the files [paths] through the system share sheet. */
-    private fun share(paths: List<Path>) {
-        if (paths.isEmpty()) return
-        handOver(paths) { Prepared.Launch(Intent.createChooser(it.shareIntent(paths), null)) }
-    }
-
-    /**
-     * Hands [files] to another app with the intent [prepare] makes, off the main thread, for the
-     * shell to start ([ExplorerUiState.launch]). A file gone since its folder was read shows "not
-     * found" and the folder is read again; one the FileProvider does not serve cannot be opened.
-     * Nothing is handed over without [ExplorerDeps.openWith].
-     */
-    private fun handOver(files: List<Path>, prepare: (OpenWith) -> Prepared) {
-        val openWith = deps.openWith ?: return
-        val at = here()
-        viewModelScope.launch {
-            val prepared = try {
-                withContext(deps.io) {
-                    if (files.all(deps.fs::exists)) prepare(openWith) else Prepared.Refused(OpenResult.NotFound)
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                val error = e.toFsError()
-                if (error == FsError.Unsupported) Prepared.Refused(OpenResult.Unsupported) else Prepared.Failed(error)
-            }
-            when (prepared) {
-                is Prepared.Launch -> shell.update { it.copy(launch = PendingLaunch(prepared.intent, at)) }
-                is Prepared.Refused -> onOpenResult(prepared.result, at)
-                is Prepared.Failed -> showError(at, errorText(prepared.error))
-            }
-        }
-    }
-
-    /** What [result] of handing a file to another app, asked for at [at], tells the user. */
-    private fun onOpenResult(result: OpenResult, at: Location) {
-        when (result) {
-            OpenResult.Started -> Unit
-            OpenResult.NoApp -> showError(at, UiText.res(R.string.open_no_app))
-            OpenResult.Unsupported -> showError(at, UiText.res(R.string.open_unsupported))
-            OpenResult.NotFound -> {
-                showError(at, UiText.res(R.string.error_not_found))
-                if (here() == at) refresh()
-            }
-            OpenResult.NeedsInstallPermission -> {
-                val openWith = deps.openWith ?: return
-                val allow = UiText.res(R.string.permission_button) to {
-                    dismissMessage()
-                    shell.update { it.copy(launch = PendingLaunch(openWith.installPermissionIntent(), at)) }
-                }
-                showAt(at, UiMessage(UiText.res(R.string.install_permission), InfoSeverity.WARNING, allow))
-            }
-        }
-    }
-
     /** The properties of the selection, else of the current folder (read off the main thread). */
     private fun showProperties() {
         val selected = selectedEntries()
@@ -554,15 +547,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         change.ejected.forEach(loadedFor::remove)
         if (tabs.value.activeId in change.ejected) closeOverlay()
         change.moves.forEach(::reduce)
-    }
-
-    /**
-     * What the file operations tell from outside, kept by the app until it is dismissed here: refused the
-     * foreground service, they go on only while the app is open, which a message about no place asks for.
-     */
-    private fun onOpsNotice(notice: OpsNotice?) = when (notice) {
-        OpsNotice.ForegroundRefused -> shell.update { it.copy(message = KEEP_APP_OPEN, messageAt = null) }
-        null -> Unit
     }
 
     /**
@@ -599,7 +583,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun viewFor(location: Location, global: GlobalSettings): ViewSetting =
         codec.encode(location)?.let(settings::viewFor) ?: global.defaultView
 
-    private fun build(core: Core, env: Env): ExplorerUiState {
+    private fun build(core: Core, env: Env, opsState: OperationsUi.State): ExplorerUiState {
         val tab = core.tabs.active
         val location = tab.current.location
         val unavailable = core.unavailable[tab.id]
@@ -612,6 +596,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val restricted = folder != null && volume != null &&
             isRestrictedAppDataPath(volume.root, folder, obbAllowed = core.shell.obbAllowed)
         val roots = env.volumes.mapNotNull { it.root }
+        val inBin = location == Location.RecycleBin
         val commands = if (unavailable != null) {
             setOf(Command.REFRESH, Command.OPTIONS)
         } else {
@@ -621,10 +606,11 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     selection = selected,
                     clipboard = env.clipboard,
                     restricted = restricted,
-                    volumeWritable = volume != null &&
+                    // The Recycle Bin is on every volume; an item on a read-only one fails by itself.
+                    volumeWritable = inBin || volume != null &&
                         env.volumes.none { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY },
                     pinned = pinned(selected, folder, env.favorites),
-                    binEmpty = true,
+                    binEmpty = !inBin || rows.isEmpty(),
                     hasEntries = rows.isNotEmpty(),
                 ),
             )
@@ -651,6 +637,10 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             selected = selected,
             up = upFrom(location, unavailable != null, roots),
             launch = core.shell.launch?.intent,
+            renaming = opsState.renaming,
+            confirm = opsState.confirm,
+            progressInBackground = opsState.inBackground,
+            failedOp = opsState.failures.firstOrNull(),
         )
     }
 
@@ -669,6 +659,32 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         is Location.Folder -> LocationKind.FOLDER
         Location.RecycleBin -> LocationKind.BIN
         is Location.SearchResults -> LocationKind.SEARCH
+    }
+
+    /** What [handOver] and [ops] need of the view model. */
+    private inner class Host : ShellHost {
+        override fun here(): Location = this@ExplorerViewModel.here()
+
+        override fun showAt(at: Location, message: UiMessage) = this@ExplorerViewModel.showAt(at, message)
+
+        override fun showUnbound(message: UiMessage) = shell.update { it.copy(message = message, messageAt = null) }
+
+        override fun dismissMessage() = this@ExplorerViewModel.dismissMessage()
+
+        override fun refresh() = this@ExplorerViewModel.refresh()
+
+        override fun refreshShowing(affected: (Location) -> Boolean) {
+            val model = tabs.value
+            for (tab in model.tabs.filter { affected(it.current.location) }) {
+                if (tab.id == model.activeId) refresh() else loader.markStale(tab.id)
+            }
+        }
+
+        override fun selectAt(at: Location, paths: List<Path>) {
+            if (here() == at) reduce(TabAction.SetSelection(paths))
+        }
+
+        override fun setLaunch(launch: PendingLaunch) = shell.update { it.copy(launch = launch) }
     }
 
     /**
@@ -704,17 +720,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val favorites: List<Favorite>,
     )
 
-    private data class LoadKey(val folder: Path, val options: ListOptions)
-
-    /** An [intent] for the shell to start, asked for while the active tab was [at]. */
-    private class PendingLaunch(val intent: Intent, val at: Location)
-
-    /** What handing files to another app comes to before anything is started. */
-    private sealed interface Prepared {
-        class Launch(val intent: Intent) : Prepared
-        class Refused(val result: OpenResult) : Prepared
-        class Failed(val error: FsError) : Prepared
-    }
+    private data class LoadKey(val location: Location, val options: ListOptions)
 
     private class ScrollSpot(val location: Location, val index: Int, val offset: Int)
 
@@ -727,8 +733,5 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private companion object {
         val MEDIA_RW: Path = Paths.get("/mnt/media_rw")
-
-        /** The message of [OpsNotice.ForegroundRefused]. */
-        val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
     }
 }

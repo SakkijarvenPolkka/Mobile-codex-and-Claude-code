@@ -6,13 +6,17 @@
  */
 package io.github.sakkijarvenpolkka.explorer
 
+import android.Manifest
 import android.content.ActivityNotFoundException
+import android.content.pm.PackageManager
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -20,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
@@ -34,6 +39,8 @@ import io.github.sakkijarvenpolkka.explorer.ui.PermissionScreen
 import io.github.sakkijarvenpolkka.explorer.ui.WidthClass
 import io.github.sakkijarvenpolkka.explorer.ui.isDarkTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -48,6 +55,7 @@ class MainActivity : ComponentActivity() {
                 val mime = MimeResolver()
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
+                    fileOps = app.fileOps, bin = app.bin, runner = app.runner,
                     opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice,
                 )
                 ExplorerViewModel(app, deps)
@@ -55,10 +63,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Asks for the notification permission; the answer changes nothing else. */
+    private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         granted = PermissionGate.granted()
+        askForNotificationsOnFirstOperation()
         val settings = (application as ExplorerApp).settings
         setContent {
             val global by settings.global.collectAsStateWithLifecycle()
@@ -86,6 +98,25 @@ class MainActivity : ComponentActivity() {
         granted = PermissionGate.granted()
         // A view model created for this activity has just read everything; one that was already there reads again.
         if (granted && model.isInitialized()) model.value.onResume()
+    }
+
+    /**
+     * Android 13 and later show the notification of the file operations only with the user's leave: it is
+     * asked for once, when the first operation is submitted. The operations run whatever the answer.
+     */
+    private fun askForNotificationsOnFirstOperation() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val app = application as ExplorerApp
+        if (app.notificationsAsked) return
+        lifecycleScope.launch {
+            // Submitted by the user, in this activity: it is in the foreground.
+            app.runner.state.first { it.running != null || it.queue.isNotEmpty() }
+            val permission = Manifest.permission.POST_NOTIFICATIONS
+            if (!app.notificationsAsked && checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED) {
+                app.notificationsAsked = true
+                askNotifications.launch(permission)
+            }
+        }
     }
 
     /** The first of the settings screens that grant all files access that this device has. */

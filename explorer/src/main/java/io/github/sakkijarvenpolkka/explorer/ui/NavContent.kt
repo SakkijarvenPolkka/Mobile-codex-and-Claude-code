@@ -1,5 +1,5 @@
 /*
- * Files — the places of the navigation pane: the drives of This PC.
+ * Files — the places of the navigation pane: the drives of This PC and the Recycle Bin.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -22,8 +22,8 @@ import java.nio.file.Path
 
 /**
  * The navigation pane: every volume under This PC, an unmounted one dimmed with "The drive
- * isn't available". The volume of the current folder is selected; choosing a volume goes to
- * its root.
+ * isn't available", then the Recycle Bin. The volume of the current folder, or the Recycle Bin,
+ * is selected; choosing a volume goes to its root.
  */
 @Composable
 fun NavContent(
@@ -43,11 +43,18 @@ fun NavContent(
             sublabel = if (volume.root == null) unavailable else null,
         )
     }
-    val current = (location as? Location.Folder)?.let { volumeAt(volumes, it.path)?.uuid }
+    // Keyed by its location, which no volume's uuid is.
+    val bin = NavItem(Location.RecycleBin, stringResource(R.string.nav_recycle_bin), FluentIcons.RecycleBin)
+    val current = when (location) {
+        is Location.Folder -> volumeAt(volumes, location.path)?.uuid
+        Location.RecycleBin -> Location.RecycleBin
+        else -> null
+    }
     NavPane(
-        sections = listOf(NavSection(stringResource(R.string.nav_this_pc), drives)),
+        sections = listOf(NavSection(stringResource(R.string.nav_this_pc), drives), NavSection(null, listOf(bin))),
         selectedKey = current,
         onSelect = { item ->
+            if (item.key == Location.RecycleBin) return@NavPane onNavigate(Location.RecycleBin)
             volumes.firstOrNull { it.uuid == item.key }?.root?.let { onNavigate(Location.Folder(it)) }
         },
         modifier = modifier.testTag(Tags.NAV_PANE),

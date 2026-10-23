@@ -44,8 +44,9 @@ import java.nio.file.Path
 import java.nio.file.Paths
 
 /**
- * ☰ (with [showMenuButton]), ←, →, ↑ and the breadcrumb of the active tab's folder. The first
- * segment is the volume's name; its real path shows only while typing ([Overlay.AddressEdit]).
+ * ☰ (with [showMenuButton]), ←, →, ↑ and the breadcrumb of the active tab's folder (or of the
+ * Recycle Bin). The first segment is the volume's name; its real path shows only while typing
+ * ([Overlay.AddressEdit]).
  * A segment's chevron asks for its subfolders ([onSubfolders]), listed while
  * [Overlay.Subfolders] is open.
  */
@@ -77,10 +78,15 @@ fun AddressBar(
                 AddressEditor((ui.location as? Location.Folder)?.path?.toString().orEmpty(), onSubmit, onCloseOverlay)
             } else {
                 val internal = stringResource(R.string.volume_internal)
+                val crumbs = if (ui.location == Location.RecycleBin) {
+                    listOf(Crumb(stringResource(R.string.nav_recycle_bin), Location.RecycleBin))
+                } else {
+                    crumbsOf(ui, internal)
+                }
                 Breadcrumb(
-                    crumbs = crumbsOf(ui, internal),
-                    onCrumb = { onNavigate(Location.Folder(it.key as Path)) },
-                    onChildren = { onSubfolders(it.key as Path) },
+                    crumbs = crumbs,
+                    onCrumb = { crumb -> (crumb.key as? Path)?.let { onNavigate(Location.Folder(it)) } },
+                    onChildren = { crumb -> (crumb.key as? Path)?.let(onSubfolders) },
                     onEdit = onEdit,
                 )
             }

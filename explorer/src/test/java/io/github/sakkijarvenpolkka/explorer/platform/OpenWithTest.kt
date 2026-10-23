@@ -2,6 +2,7 @@
 package io.github.sakkijarvenpolkka.explorer.platform
 
 import android.app.Application
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
@@ -109,6 +110,15 @@ class OpenWithTest {
         shadowOf(context).checkActivities(true)
         val intent = openWith.viewIntent(sd("x.unknownext"))
         assertEquals(OpenResult.NoApp, launch(activity, intent))
+    }
+
+    @Test
+    fun launchRefusedBySecurityReturnsNoApp() {
+        // An app whose activity is not exported, or that needs a permission this app lacks.
+        val refusing = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent?) = throw SecurityException("Permission Denial")
+        }
+        assertEquals(OpenResult.NoApp, launch(refusing, openWith.viewIntent(sd("a.pdf"))))
     }
 
     @Test

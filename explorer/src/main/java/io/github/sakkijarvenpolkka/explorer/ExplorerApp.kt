@@ -36,6 +36,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Path
@@ -78,6 +80,9 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         AndroidMediaScan(this, volumes) { root -> volumes.volumes.value.any { it.root == root && it.fuseBacked } }
     }
 
+    /** Whether the user was asked to allow notifications since the process started (main thread only). */
+    internal var notificationsAsked = false
+
     /** How the foreground service is started; a test puts its own. */
     internal var serviceStarter = ServiceStarter(ContextCompat::startForegroundService)
 
@@ -112,7 +117,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     }
 
     /** Work came: it goes on in the foreground service ([startService]). */
-    override fun onBusy() = synchronized(serviceLock) { startService() }
+    override fun onBusy() = startService()
 
     /** No work left: the service stops itself once it sees that, and no work goes on without it. */
     override fun onIdle() = synchronized(serviceLock) { workWithoutService = null }
@@ -134,12 +139,12 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
 
     /**
      * Starts the foreground service, so that the work goes on with the app in the background. Refused
-     * that, it goes on in the process all the same ([onForegroundRefused]). Called with [serviceLock] held.
+     * that, it goes on in the process all the same ([onForegroundRefused]). Called without [serviceLock]:
+     * the start is a call to the system.
      */
     private fun startService() {
         try {
             serviceStarter.start(this, Intent(this, FileOpsService::class.java))
-            workWithoutService = null
         } catch (e: IllegalStateException) {
             // ForegroundServiceStartNotAllowedException: the app is not in the foreground.
             onForegroundRefused()
@@ -154,16 +159,18 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     /**
      * Starts the service again whenever an operation is submitted while the runner is busy without it,
      * which [onBusy] does not hear of: the user just did something, so the app is in the foreground now.
-     * The state is read again under [serviceLock], where [onBusy] and [onIdle] change what it is compared
-     * with, so that one submit starts the service once.
+     * It wakes only when the work changes, not on each progress report. Whether to start is decided under
+     * [serviceLock], where [onIdle] changes what it is compared with, and the work is then no longer
+     * without the service (a refusal says so again), so that one submit starts the service once.
      */
     private fun restartServiceForNewWork() {
         appScope.launch(Dispatchers.Main.immediate) {
-            runner.state.collect {
-                synchronized(serviceLock) {
+            runner.state.map(::workOf).distinctUntilChanged().collect {
+                val start = synchronized(serviceLock) {
                     val before = workWithoutService ?: return@collect
-                    if (workOf(runner.state.value).any { it !in before }) startService()
+                    workOf(runner.state.value).any { it !in before }.also { if (it) workWithoutService = null }
                 }
+                if (start) startService()
             }
         }
     }

@@ -53,6 +53,13 @@ object Tags {
     const val PROPERTIES = "properties"
     const val PROP_HIDDEN = "prop_hidden"
 
+    const val RENAME_FIELD = "rename_field"
+    const val APPLY_TO_ALL = "apply_to_all"
+    const val PROGRESS = "progress"
+    const val PROGRESS_CHIP = "progress_chip"
+    const val FAILURES = "failures"
+    const val RECYCLE_BIN = "recycle_bin"
+
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"
 

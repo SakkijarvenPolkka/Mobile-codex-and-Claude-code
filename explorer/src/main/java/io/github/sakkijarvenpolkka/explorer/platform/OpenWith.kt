@@ -110,10 +110,15 @@ sealed interface OpenResult {
     data object NotFound : OpenResult
 }
 
-/** Starts [intent] from [context]: [OpenResult.NoApp] when no app takes it. */
+/**
+ * Starts [intent] from [context]: [OpenResult.NoApp] when no app takes it, or the one that would
+ * refuses this app (an activity it does not export, a permission this app lacks).
+ */
 fun launch(context: Context, intent: Intent): OpenResult = try {
     context.startActivity(intent)
     OpenResult.Started
 } catch (e: ActivityNotFoundException) {
+    OpenResult.NoApp
+} catch (e: SecurityException) {
     OpenResult.NoApp
 }

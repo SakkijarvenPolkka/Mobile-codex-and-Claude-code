@@ -486,4 +486,25 @@ class ExplorerViewModelTest {
         // The app forgets it, or the next view model would show it again.
         assertEquals(1, cleared)
     }
+
+    @Test
+    fun opsNoticeReplacedIsForgottenSoTheNextRefusalShows() {
+        val notice = MutableStateFlow<OpsNotice?>(null)
+        start(opsNotice = notice, clearOpsNotice = { notice.value = null })
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        notice.value = OpsNotice.ForegroundRefused
+        settle()
+        assertEquals(keepOpen, ui.message)
+
+        // Another message takes its place: the app forgets the notice ...
+        vm.typedPath("/proc")
+        settle()
+        assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
+        assertNull(notice.value)
+
+        // ... so that the next refusal is told again.
+        notice.value = OpsNotice.ForegroundRefused
+        settle()
+        assertEquals(keepOpen, ui.message)
+    }
 }

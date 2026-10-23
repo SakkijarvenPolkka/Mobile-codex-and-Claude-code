@@ -12,9 +12,12 @@ import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewSetting
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
@@ -30,10 +33,11 @@ import java.nio.file.Path
 
 /**
  * What [ExplorerViewModel] works with; [io] reads folders and resolves paths. Without
- * [openWith], files are not handed to other apps. [bin] is the app's one Recycle Bin, shared with
- * the file operations; without it, there is none. [runner] is the app's one operation runner,
- * [opsNotice] what the file operations tell from outside any activity, which the app keeps until
- * the user dismisses it here ([clearOpsNotice]).
+ * [openWith], files are not handed to other apps. [fileOps] renames and creates items right away;
+ * [runner], the app's one operation runner, runs the other file operations: without both, files
+ * are not changed. [bin] is the app's one Recycle Bin, shared with the file operations; without
+ * it, there is none. [opsNotice] is what the file operations tell from outside any activity,
+ * which the app keeps until it leaves the screen here ([clearOpsNotice]).
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -43,6 +47,7 @@ data class ExplorerDeps(
     val mime: MimeResolver,
     val io: CoroutineDispatcher,
     val openWith: OpenWith? = null,
+    val fileOps: FileOps? = null,
     val bin: RecycleBin? = null,
     val runner: OperationRunner? = null,
     val opsNotice: StateFlow<OpsNotice?> = MutableStateFlow(null),
@@ -50,11 +55,35 @@ data class ExplorerDeps(
 )
 
 /**
- * A message shown in an info bar: [text], [severity] and an optional [action], as its label and
- * what it does. One about the active tab's location goes when the tab leaves it; any other stays
- * until it is dismissed.
+ * A message shown in an info bar: [text], [severity], an optional [action], as its label and
+ * what it does, and an optional [detail] on a line of its own (such as why an operation stopped).
+ * One about the active tab's location goes when the tab leaves it; any other stays until it is
+ * dismissed or replaced.
  */
-data class UiMessage(val text: UiText, val severity: InfoSeverity, val action: Pair<UiText, () -> Unit>? = null)
+data class UiMessage(
+    val text: UiText,
+    val severity: InfoSeverity,
+    val action: Pair<UiText, () -> Unit>? = null,
+    val detail: UiText? = null,
+)
+
+/** A question about a file operation, answered yes or no ([ExplorerViewModel.answerConfirm]). */
+sealed interface ConfirmRequest {
+    /** Delete [paths] for good, [count] items: always asked, it cannot be undone. */
+    data class PermanentDelete(val paths: List<Path>, val count: Int) : ConfirmRequest
+
+    /** [paths] could not go to the Recycle Bin: delete them for good instead? */
+    data class BinUnavailable(val paths: List<Path>) : ConfirmRequest
+
+    /** Rename [entry] to [newName], which changes its extension. */
+    data class ExtensionChange(val entry: FileEntry, val newName: String) : ConfirmRequest
+
+    /** Delete all [count] items of the Recycle Bin for good. */
+    data class EmptyBin(val count: Int) : ConfirmRequest
+
+    /** [count] items cannot be stored on the destination drive: skip them, running [spec] (the rest)? */
+    data class SkipUnstorable(val count: Int, val spec: OperationSpec) : ConfirmRequest
+}
 
 /** What is open over the shell; Back closes it before anything else. */
 sealed interface Overlay {
@@ -80,7 +109,9 @@ sealed interface Overlay {
  * apps, `Android/obb`. [selected] are the selected items in listing order; [up] is where Up
  * goes, null when it is disabled. [launch] is an intent for the shell to start from the
  * activity, so that the app it opens comes back here, and to report with
- * [ExplorerViewModel.launched].
+ * [ExplorerViewModel.launched]. [renaming] is the item the rename dialog is open for; [confirm]
+ * a question to answer; [progressInBackground] whether the progress of the operations shows as a
+ * chip of the status bar instead of a dialog; [failedOp] an operation whose failures to list.
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -99,6 +130,10 @@ data class ExplorerUiState(
     val selected: List<FileEntry> = emptyList(),
     val up: Location? = null,
     val launch: Intent? = null,
+    val renaming: FileEntry? = null,
+    val confirm: ConfirmRequest? = null,
+    val progressInBackground: Boolean = false,
+    val failedOp: FinishedOp? = null,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location

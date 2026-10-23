@@ -133,7 +133,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
  * line); list shows names only; tiles and large icons are grids. In selection mode the check
  * column (inset by the system gesture area) toggles a row when tapped and selects from the
  * anchor when dragged along. [contextMenu] is placed with the row of
- * [ExplorerUiState.contextMenuFor], so that it opens next to it.
+ * [ExplorerUiState.contextMenuFor], so that it opens next to it. The item being renamed
+ * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view.
  */
 @Composable
 fun FileList(
@@ -165,6 +166,7 @@ fun FileList(
         .semantics { if (selection.active) stateDescription = modeLabel }
     val reportScroll by rememberUpdatedState(onScrolled)
     val location = ui.location
+    val renamed = ui.renaming?.path?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
     val cell: @Composable (Row) -> Unit = { row ->
         Box {
             val selected = row.entry.path in selection.items
@@ -179,6 +181,9 @@ fun FileList(
             LaunchedEffect(state) {
                 snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
                     .collect { (index, offset) -> reportScroll(location, index, offset) }
+            }
+            LaunchedEffect(state, renamed) {
+                if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
             }
             Column(modifier) {
                 if (mode == ViewMode.DETAILS) {
@@ -205,6 +210,9 @@ fun FileList(
             LaunchedEffect(state) {
                 snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
                     .collect { (index, offset) -> reportScroll(location, index, offset) }
+            }
+            LaunchedEffect(state, renamed) {
+                if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
             }
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(if (mode == ViewMode.TILES) 220.dp else 104.dp),
@@ -377,7 +385,7 @@ internal fun EntryIcon(entry: FileEntry, modifier: Modifier) {
 
 /** A name on one line, cut in the middle so that the extension stays visible. */
 @Composable
-private fun Name(text: String, modifier: Modifier = Modifier) {
+internal fun Name(text: String, modifier: Modifier = Modifier) {
     BasicText(
         text,
         modifier = modifier,
@@ -387,8 +395,9 @@ private fun Name(text: String, modifier: Modifier = Modifier) {
     )
 }
 
+/** Secondary text of a row (a date, a size) on one line. */
 @Composable
-private fun Secondary(text: String, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Start) {
+internal fun Secondary(text: String, modifier: Modifier = Modifier, align: TextAlign = TextAlign.Start) {
     BasicText(
         text,
         modifier = modifier,

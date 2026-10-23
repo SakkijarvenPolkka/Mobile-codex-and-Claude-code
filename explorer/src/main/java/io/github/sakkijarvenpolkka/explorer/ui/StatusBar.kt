@@ -1,5 +1,6 @@
 /*
- * Files — the status bar: item count, selection, its size, and quick view switches.
+ * Files — the status bar: item count, selection, its size, the progress of the operations in the
+ * background, and quick view switches.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.ViewMode
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
+import io.github.sakkijarvenpolkka.explorer.ops.RunningOp
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.ListingState
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
@@ -34,12 +36,19 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.Formats
 
 /**
- * "N items · M selected  size" and, at the end, the details and large icons switches
- * ([onSetMode]). The size of the selection shows only when it holds files only; with a folder
- * in it the bar reads "N items selected".
+ * "N items · M selected  size" and, at the end, the chip of the operation [running] in the
+ * background ([ExplorerUiState.progressInBackground]; [onShowProgress] shows its dialog again) and
+ * the details and large icons switches ([onSetMode]). The size of the selection shows only when it
+ * holds files only; with a folder in it the bar reads "N items selected".
  */
 @Composable
-fun StatusBar(ui: ExplorerUiState, onSetMode: (ViewMode) -> Unit, modifier: Modifier = Modifier) {
+fun StatusBar(
+    ui: ExplorerUiState,
+    onSetMode: (ViewMode) -> Unit,
+    modifier: Modifier = Modifier,
+    running: RunningOp? = null,
+    onShowProgress: () -> Unit = {},
+) {
     val listed = ui.listing is ListingState.Loaded || ui.listing is ListingState.Streaming
     val selected = ui.selected
     val korean = LocalConfiguration.current.locales[0].language == "ko"
@@ -66,6 +75,7 @@ fun StatusBar(ui: ExplorerUiState, onSetMode: (ViewMode) -> Unit, modifier: Modi
                 if (filesOnly) StatusText(Formats.size(selected.sumOf { it.size }, korean), Tags.STATUS_SIZE)
             }
         }
+        if (running != null && ui.progressInBackground) ProgressChip(running, onShowProgress)
         val mode = ui.viewSetting.mode
         val details = stringResource(R.string.view_details)
         ViewSwitch(FluentIcons.Menu, details, mode == ViewMode.DETAILS, Tags.STATUS_DETAILS) {

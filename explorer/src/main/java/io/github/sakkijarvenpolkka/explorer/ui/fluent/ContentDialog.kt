@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
@@ -32,9 +34,10 @@ import androidx.compose.ui.window.DialogProperties
 
 /**
  * A modal dialog with [title], [content] (scrolls when long) and a row of buttons: [primary]
- * as the accent button, then [secondary] and [close]; each pair is a label and its action.
- * The buttons only call their actions; the caller removes the dialog. Back calls [onDismiss];
- * touching outside does not, so typed input is not lost by accident.
+ * as the accent button (disabled unless [primaryEnabled]), then [secondary] and [close]; each
+ * pair is a label and its action. The buttons only call their actions; the caller removes the
+ * dialog. Back calls [onDismiss]; touching outside does not, so typed input is not lost by
+ * accident. The dialog keeps clear of the system bars and of the keyboard.
  */
 @Composable
 fun ContentDialog(
@@ -43,16 +46,24 @@ fun ContentDialog(
     primary: Pair<String, () -> Unit>?,
     secondary: Pair<String, () -> Unit>? = null,
     close: Pair<String, () -> Unit>?,
+    primaryEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
-        properties = DialogProperties(dismissOnClickOutside = false, usePlatformDefaultWidth = false),
+        // The insets reach the content, which pads itself for the keyboard (imePadding).
+        properties = DialogProperties(
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
     ) {
         val colors = FluentTheme.colors
         val shape = FluentTheme.shapes.overlay
         Column(
             Modifier
+                .systemBarsPadding()
+                .imePadding()
                 .padding(24.dp)
                 .widthIn(min = 280.dp, max = 548.dp)
                 .shadow(16.dp, shape)
@@ -83,7 +94,7 @@ fun ContentDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 primary?.let { (label, action) ->
-                    FluentButton(label, action, Modifier.weight(1f), style = ButtonStyle.ACCENT)
+                    FluentButton(label, action, Modifier.weight(1f), style = ButtonStyle.ACCENT, enabled = primaryEnabled)
                 }
                 secondary?.let { (label, action) -> FluentButton(label, action, Modifier.weight(1f)) }
                 close?.let { (label, action) -> FluentButton(label, action, Modifier.weight(1f)) }

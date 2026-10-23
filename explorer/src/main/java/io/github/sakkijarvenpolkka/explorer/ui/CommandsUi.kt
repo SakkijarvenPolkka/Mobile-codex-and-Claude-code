@@ -34,9 +34,10 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.MenuFlyout
 /**
  * New ▾, Cut, Copy, Paste, Rename, Share, Delete, Sort ▾ and View ▾, then "⋯" with the
  * selection commands, Delete permanently, Compress, Extract, Pin or Unpin, Properties,
- * Refresh, the hidden items and file name extensions switches and Options. A command not in
- * [ExplorerUiState.commands] is shown disabled; the commands the window has no room for move
- * into "⋯".
+ * Refresh, the hidden items and file name extensions switches and Options; in the Recycle Bin,
+ * Restore, Delete permanently and Empty Recycle Bin, then "⋯" with the selection commands,
+ * Refresh and Options. A command not in [ExplorerUiState.commands] is shown disabled; the
+ * commands the window has no room for move into "⋯".
  */
 @Composable
 fun CommandsUi(
@@ -53,7 +54,8 @@ fun CommandsUi(
         CommandItem(Tags.command(c), res.getString(c.label()), c.icon(), c in offered) { onCommand(c) }
     val canView = ui.location is Location.Folder && ui.unavailable == null
     val canCreate = NEW_COMMANDS.any { it in offered }
-    val primary = listOf(
+    val inBin = ui.location == Location.RecycleBin
+    val primary = if (inBin) BIN_COMMANDS.map(::item) else listOf(
         CommandItem(Tags.CMD_NEW, res.getString(R.string.cmd_new), FluentIcons.Add, canCreate) {
             menu = BarMenu.NEW
         },
@@ -69,8 +71,10 @@ fun CommandsUi(
     val global = ui.global
     val pin = if (Command.UNPIN in offered) Command.UNPIN else Command.PIN
     val extensionsLabel = res.getString(R.string.cmd_extensions)
-    val overflow = OVERFLOW_COMMANDS.map { item(if (it == Command.PIN) pin else it) } +
-        listOf(
+    val overflow = if (inBin) {
+        (BIN_OVERFLOW + Command.OPTIONS).map(::item)
+    } else {
+        OVERFLOW_COMMANDS.map { item(if (it == Command.PIN) pin else it) } + listOf(
             CommandItem(Tags.CMD_HIDDEN, res.getString(R.string.cmd_hidden), checkIf(global.showHidden), true) {
                 onSetGlobal { it.copy(showHidden = !it.showHidden) }
             },
@@ -79,6 +83,7 @@ fun CommandsUi(
             },
             item(Command.OPTIONS),
         )
+    }
     Box(modifier) {
         CommandBar(primary, overflow, res.getString(R.string.more), Modifier.fillMaxWidth().testTag(Tags.COMMAND_BAR))
         // The menus open under the bar: the bar's buttons cannot hold them.
@@ -111,6 +116,10 @@ private val OVERFLOW_COMMANDS = listOf(
     Command.SELECT_ALL, Command.SELECT_NONE, Command.INVERT, Command.DELETE_PERMANENT, Command.COMPRESS,
     Command.EXTRACT, Command.PIN, Command.PROPERTIES, Command.REFRESH,
 )
+
+private val BIN_COMMANDS = listOf(Command.RESTORE, Command.DELETE_PERMANENT, Command.EMPTY_BIN)
+
+private val BIN_OVERFLOW = listOf(Command.SELECT_ALL, Command.SELECT_NONE, Command.INVERT, Command.REFRESH)
 
 private val CONTEXT_COMMANDS = listOf(
     Command.OPEN, Command.OPEN_WITH, Command.CUT, Command.COPY, Command.RENAME, Command.SHARE, Command.COMPRESS,

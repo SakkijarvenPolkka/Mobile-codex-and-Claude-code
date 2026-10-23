@@ -1,6 +1,7 @@
 /*
  * Files — the shell: address bar, command bar, navigation pane, folder contents and status
- * bar, laid out for the window width; and the app theme from the settings.
+ * bar, laid out for the window width, with the dialogs of the file operations; and the app theme
+ * from the settings.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -55,6 +56,8 @@ import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.ThemeChoice
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
+import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.platform.launch
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
@@ -105,11 +108,13 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
  * display cutout; Back is handled only while the state has something for it to do. The
  * keyboard shortcuts ([shortcutFor]) are read here first, so the shell keeps the focus while
  * nothing is open over it; the intents the view model asks for are started from here, from
- * the activity.
+ * the activity. The file operations show from the runner's state ([OperationsDialogs]), which
+ * outlives the activity.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     val ui by vm.ui.collectAsStateWithLifecycle()
+    val runner by vm.runner.collectAsStateWithLifecycle()
     val expanded = widthClass == WidthClass.EXPANDED
     BackHandler(enabled = ui.backTarget != null, onBack = vm::systemBack)
     LaunchedEffect(expanded) { if (expanded) vm.setDrawerOpen(false) }
@@ -172,6 +177,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                 ui,
                 onSetMode = { mode -> vm.setView(ui.viewSetting.copy(mode = mode)) },
                 modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+                running = runner.running,
+                onShowProgress = vm::showProgress,
             )
         }
         if (!expanded && ui.drawerOpen) {
@@ -186,6 +193,32 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
         }
         else -> Unit
     }
+    OperationsDialogs(ui, runner, vm)
+}
+
+/**
+ * The dialogs of the file operations, the later over the earlier: the conflict the running one waits
+ * on, else its progress (unless it runs in the background); the failures of one that ended; the
+ * rename dialog; and a question to answer, over the rename dialog it may come from.
+ */
+@Composable
+private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: ExplorerViewModel) {
+    val running = runner.running
+    val pending = runner.pending
+    if (pending != null) {
+        val progress = running?.progress
+        // The items still to come, of which some may clash too.
+        val remaining = progress?.let { (it.totalItems - it.doneItems - 1).coerceAtLeast(0) } ?: 0
+        ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer) { vm.cancelOperation(pending.opId) }
+    } else if (running != null && !ui.progressInBackground) {
+        ProgressDialog(running, onBackground = vm::runInBackground) { vm.cancelOperation(running.spec.id) }
+    }
+    ui.failedOp?.let { op -> FailuresDialog(op, onRetry = { vm.retryFailed(op) }) { vm.dismissFailures(op) } }
+    ui.renaming?.let { entry ->
+        val traits = volumeAt(ui.volumes, entry.path)?.traits ?: VolumeTraits()
+        RenameDialog(entry, traits, onCommit = { vm.commitRename(entry, it) }, onDismiss = vm::cancelRename)
+    }
+    ui.confirm?.let { ConfirmDialog(it, onAnswer = vm::answerConfirm) }
 }
 
 /**
@@ -225,7 +258,8 @@ private fun Banners(ui: ExplorerUiState, onDismiss: () -> Unit) {
     if (message != null) {
         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.MESSAGE)) {
             val action = message.action?.let { (label, run) -> label.text() to run }
-            InfoBar(message.severity, message.text.text(), action, onClose = onDismiss)
+            val text = listOfNotNull(message.text.text(), message.detail?.text()).joinToString("\n")
+            InfoBar(message.severity, text, action, onClose = onDismiss)
         }
     }
     if (ui.restricted) {
@@ -249,6 +283,11 @@ private fun Contents(
         when {
             ui.unavailable != null -> Note(stringResource(R.string.volume_unavailable), Tags.UNAVAILABLE)
             listing is ListingState.Error -> ListingError(listing.error, ui.up, onUp = vm::navigate)
+            ui.location == Location.RecycleBin -> if (listing is ListingState.Loading) {
+                LoadingBar()
+            } else {
+                RecycleBinView(ui, widthClass, onTap = vm::onTap, onLongPress = vm::onLongPress)
+            }
             ui.location !is Location.Folder -> Unit
             listing is ListingState.Loading -> LoadingBar()
             else -> {

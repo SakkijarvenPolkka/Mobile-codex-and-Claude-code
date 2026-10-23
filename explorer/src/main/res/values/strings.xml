@@ -127,4 +127,69 @@
     <string name="notif_needs_decision">Your decision is needed</string>
     <string name="cancel">Cancel</string>
     <string name="fgs_refused">Couldn\'t start in the background. Keep the app open.</string>
+
+    <!-- File operations: conflicts -->
+    <string name="conflict_title">Replace or Skip Files</string>
+    <string name="conflict_folder_title">Merge folders</string>
+    <string name="conflict_body">The destination already has an item named “%s”</string>
+    <string name="conflict_replace">Replace the file in the destination</string>
+    <string name="conflict_skip">Skip this item</string>
+    <string name="conflict_keep_both">Keep both</string>
+    <string name="conflict_merge">Merge the folders</string>
+    <string name="conflict_apply_all">Do this for the next %d conflicts</string>
+
+    <!-- File operations: progress and results -->
+    <string name="progress_title_copy">Copying %1$d items</string>
+    <string name="progress_title_move">Moving %1$d items</string>
+    <string name="progress_title_delete">Deleting %1$d items</string>
+    <string name="progress_title_compress">Compressing %1$d items</string>
+    <string name="progress_title_extract">Extracting %1$d items</string>
+    <string name="progress_background">Run in background</string>
+    <string name="progress_remaining">Items remaining: %1$d (%2$s)</string>
+    <string name="op_done_failed">%d items couldn\'t be processed</string>
+    <string name="retry_failed">Retry failed items</string>
+    <string name="op_interrupted">An operation was interrupted: %1$d of %2$d done</string>
+    <string name="retry">Retry</string>
+    <string name="left_in_source">%d items were left in the source</string>
+    <string name="op_fatal">Stopped %3$s: %1$d of %2$d done</string>
+    <string name="op_name_copy">copying</string>
+    <string name="op_name_move">moving</string>
+    <string name="op_name_delete">deleting</string>
+    <string name="op_name_restore">restoring</string>
+    <string name="op_name_empty_bin">emptying the Recycle Bin</string>
+    <string name="op_name_compress">compressing</string>
+    <string name="op_name_extract">extracting</string>
+
+    <!-- File operations: errors -->
+    <string name="err_no_space">There isn\'t enough space</string>
+    <string name="err_read_only">The drive is read-only</string>
+    <string name="err_io">A disk error occurred</string>
+    <string name="err_volume_removed">The drive was removed</string>
+    <string name="err_into_self">The destination folder is a subfolder of the source folder</string>
+    <string name="err_too_large_fat">This drive (FAT32) can\'t store files larger than 4 GB</string>
+    <string name="err_name_volume">The name isn\'t allowed on the destination drive</string>
+    <string name="err_unsupported_item">Unsupported item (link or special file)</string>
+    <string name="err_busy">An operation in progress is using this item</string>
+    <string name="err_already_exists">An item with this name already exists</string>
+
+    <!-- Names, renaming -->
+    <string name="name_fat_chars">A file name can\'t contain any of the following characters: \\ / : * ? \" &lt; &gt; |</string>
+    <string name="name_empty">Enter a name</string>
+    <string name="name_too_long">The name is too long</string>
+    <string name="name_invalid">This name can\'t be used</string>
+    <string name="rename_title">Rename</string>
+    <string name="ext_change">If you change a file name extension, the file might become unusable. Are you sure you want to change it?</string>
+
+    <!-- Deleting and the Recycle Bin -->
+    <string name="delete_permanent_title">Delete permanently</string>
+    <string name="delete_permanent_body">Permanently delete %d items? This can\'t be undone.</string>
+    <string name="bin_unavailable">These items can\'t be moved to the Recycle Bin — delete them permanently?</string>
+    <string name="empty_bin_body">Permanently delete all %d items in the Recycle Bin?</string>
+    <string name="bin_original">Original location</string>
+    <string name="bin_deleted">Date deleted</string>
+    <string name="bin_unknown">Original location unknown</string>
+    <string name="precheck_skip">Skip %d items that can\'t be stored on the destination drive?</string>
+    <string name="yes">Yes</string>
+    <string name="no">No</string>
+    <string name="ok">OK</string>
 </resources>
