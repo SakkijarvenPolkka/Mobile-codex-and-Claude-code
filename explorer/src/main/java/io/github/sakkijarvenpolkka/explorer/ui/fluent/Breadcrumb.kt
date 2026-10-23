@@ -10,8 +10,10 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -30,7 +32,8 @@ data class Crumb(val label: String, val key: Any)
  * [onChildren] for that segment (a drop-down list named after it for accessibility
  * services); tapping the empty space calls [onEdit] (read as the whole path by accessibility
  * services). The row fills the width and, when the path is too long, scrolls with its end
- * (the current folder) in view.
+ * (the current folder) in view; a touch-target-wide strip after the scrolling crumbs stays
+ * empty space, so path editing is reachable however long the path is.
  */
 @Composable
 fun Breadcrumb(crumbs: List<Crumb>, onCrumb: (Crumb) -> Unit, onChildren: (Crumb) -> Unit, onEdit: () -> Unit) {
@@ -45,24 +48,31 @@ fun Breadcrumb(crumbs: List<Crumb>, onCrumb: (Crumb) -> Unit, onChildren: (Crumb
             .semantics { contentDescription = path },
         contentAlignment = Alignment.CenterStart,
     ) {
-        Row(Modifier.horizontalScroll(scroll, reverseScrolling = true), verticalAlignment = Alignment.CenterVertically) {
-            crumbs.forEachIndexed { index, crumb ->
-                key(crumb.key) {
-                    FluentButton(text = crumb.label, onClick = { onCrumb(crumb) }, style = ButtonStyle.SUBTLE)
-                    ButtonFrame(
-                        onClick = { onChildren(crumb) },
-                        modifier = Modifier,
-                        style = ButtonStyle.SUBTLE,
-                        enabled = true,
-                        role = Role.DropdownList,
-                        contentDescription = crumb.label,
-                        iconOnly = true,
-                    ) { content ->
-                        val chevron = if (index == crumbs.lastIndex) FluentIcons.ChevronDown else FluentIcons.ChevronRight
-                        FluentIcon(chevron, contentDescription = null, tint = content)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.weight(1f, fill = false).horizontalScroll(scroll, reverseScrolling = true),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                crumbs.forEachIndexed { index, crumb ->
+                    key(crumb.key) {
+                        FluentButton(text = crumb.label, onClick = { onCrumb(crumb) }, style = ButtonStyle.SUBTLE)
+                        ButtonFrame(
+                            onClick = { onChildren(crumb) },
+                            modifier = Modifier,
+                            style = ButtonStyle.SUBTLE,
+                            enabled = true,
+                            role = Role.DropdownList,
+                            contentDescription = crumb.label,
+                            iconOnly = true,
+                        ) { content ->
+                            val chevron = if (index == crumbs.lastIndex) FluentIcons.ChevronDown else FluentIcons.ChevronRight
+                            FluentIcon(chevron, contentDescription = null, tint = content)
+                        }
                     }
                 }
             }
+            // Outside the scroll, so a long path still leaves empty space that reaches onEdit.
+            Spacer(Modifier.width(MinTouchTarget))
         }
     }
 }

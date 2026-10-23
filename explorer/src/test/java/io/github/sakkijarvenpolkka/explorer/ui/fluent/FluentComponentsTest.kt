@@ -30,6 +30,7 @@ import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsOff
@@ -369,6 +370,32 @@ class FluentComponentsTest {
         rule.onNodeWithContentDescription("SD").performClick()
         rule.onNodeWithContentDescription("PC › SD").performTouchInput { click(Offset(width - 4f, centerY)) }
         rule.runOnIdle { assertEquals(listOf("crumb:sd", "children:pc", "children:sd", "edit"), events) }
+    }
+
+    @Test
+    fun breadcrumbKeepsEditZoneWhenPathOverflows() {
+        val events = mutableListOf<String>()
+        val crumbs = listOf(
+            Crumb("Internal storage", "storage"),
+            Crumb("Download", "download"),
+            Crumb("Screenshots from the holiday", "screenshots"),
+            Crumb("Edited and shared", "edited"),
+        )
+        show {
+            Box(Modifier.width(200.dp)) {
+                Breadcrumb(
+                    crumbs,
+                    onCrumb = { events += "crumb:${it.key}" },
+                    onChildren = { events += "children:${it.key}" },
+                    onEdit = { events += "edit" },
+                )
+            }
+        }
+        rule.onNodeWithText("Internal storage").assertIsNotDisplayed()
+        rule.onNodeWithText("Edited and shared").assertIsDisplayed()
+        rule.onNodeWithContentDescription(crumbs.joinToString(" › ") { it.label })
+            .performTouchInput { click(Offset(width - 4f, centerY)) }
+        rule.runOnIdle { assertEquals(listOf("edit"), events) }
     }
 
     @OptIn(ExperimentalTestApi::class)
