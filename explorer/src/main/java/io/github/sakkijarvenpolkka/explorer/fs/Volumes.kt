@@ -7,11 +7,20 @@ package io.github.sakkijarvenpolkka.explorer.fs
 
 import java.nio.file.Path
 
+/** The largest file FAT32 (vfat) holds: 4 GiB − 1 bytes. */
+const val FAT32_MAX_FILE_SIZE = 4_294_967_295L
+
 /**
- * How names behave on a volume. Every volume is treated as [caseInsensitive] (FUSE shared
+ * How names and files behave on a volume. Every volume is treated as [caseInsensitive] (FUSE shared
  * storage, vfat and exFAT all are); [fatNames] adds the FAT naming rules of removable media.
+ * [maxFileSize] is the largest file the volume's file system holds, when it is known to have a limit
+ * ([FAT32_MAX_FILE_SIZE] on vfat); null when it has none (exFAT) or its file system is not known.
  */
-data class VolumeTraits(val caseInsensitive: Boolean = true, val fatNames: Boolean = false)
+data class VolumeTraits(
+    val caseInsensitive: Boolean = true,
+    val fatNames: Boolean = false,
+    val maxFileSize: Long? = null,
+)
 
 /**
  * A mounted volume: its [uuid] (`primary` for the primary volume), [root], naming [traits],

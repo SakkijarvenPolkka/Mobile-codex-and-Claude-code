@@ -95,6 +95,56 @@ class VolumeRegistryTest {
     }
 
     @Test
+    fun onlyVfatVolumesGetTheFat32SizeLimit() {
+        fun card(fsType: String?) = volumeFrom(
+            "1A2B-3C4D", "SD card", File("/storage/1A2B-3C4D"), "mounted", primary = false, removable = true,
+            fsType = fsType,
+        )
+
+        assertEquals(4_294_967_295L, card("vfat").traits.maxFileSize)
+        assertTrue(card("vfat").traits.fatNames)
+        // exFAT holds files of any size, and a type that cannot be told sets no limit.
+        for (other in listOf("exfat", "fuse", null)) {
+            assertNull("$other", card(other).traits.maxFileSize)
+            assertTrue("$other", card(other).traits.fatNames)
+        }
+    }
+
+    @Test
+    fun fsTypeForFindsTheMountUnderFuse() {
+        val sd = listOf("/storage/1A2B-3C4D", "/mnt/media_rw/1A2B-3C4D")
+        val usb = listOf("/storage/5E6F-7A8B", "/mnt/media_rw/5E6F-7A8B")
+
+        // The card's root is the FUSE layer; what it serves is the vfat mount under it.
+        assertEquals("vfat", fsTypeFor(sd, MOUNTS))
+        assertEquals("exfat", fsTypeFor(usb, MOUNTS))
+        assertEquals("vfat", fsTypeFor(listOf("/mnt/media_rw/1A2B-3C4D"), MOUNTS))
+        // Only the FUSE layer listed, or nothing: not known.
+        val fuseOnly = MOUNTS.lines().filterNot { "/mnt/media_rw/" in it }.joinToString("\n")
+        assertNull(fsTypeFor(sd, fuseOnly))
+        assertNull(fsTypeFor(listOf("/storage/emulated/0"), MOUNTS))
+        assertNull(fsTypeFor(listOf("/storage/1A2B-3C4"), MOUNTS))
+        assertNull(fsTypeFor(sd, ""))
+        // Spaces in a mount point are written as \040.
+        assertEquals("vfat", fsTypeFor(listOf("/mnt/my usb"), "/dev/block/sda1 /mnt/my\\040usb vfat rw 0 0"))
+    }
+
+    @Test
+    fun registryReadsTheFileSystemTypeOfEachVolume() {
+        storage.addStorageVolume(primaryVolume())
+        storage.addStorageVolume(publicVolume("1A2B-3C4D", "/storage/1A2B-3C4D"))
+        storage.addStorageVolume(publicVolume("5E6F-7A8B", "/storage/5E6F-7A8B"))
+
+        val registry = VolumeRegistry(context, mounts = { MOUNTS })
+
+        assertEquals(4_294_967_295L, registry.byUuid("1A2B-3C4D")?.traits?.maxFileSize)
+        assertNull(registry.byUuid("5E6F-7A8B")?.traits?.maxFileSize)
+        assertNull(registry.byUuid("primary")?.traits?.maxFileSize)
+        // Without the mount table, nothing is known.
+        assertNull(VolumeRegistry(context, mounts = { null }).byUuid("1A2B-3C4D")?.traits?.maxFileSize)
+    }
+
+    @Test
     fun volumeOfPicksLongestRoot() {
         storage.addStorageVolume(primaryVolume())
         storage.addStorageVolume(publicVolume("1A2B-3C4D", "/storage/1A2B-3C4D"))
@@ -150,5 +200,19 @@ class VolumeRegistryTest {
         broadcast(Intent.ACTION_MEDIA_MOUNTED, "mounted")
         assertEquals(listOf(VolumeEvent.Ejecting("1A2B-3C4D"), VolumeEvent.Mounted("1A2B-3C4D")), events)
         assertEquals(Paths.get("/storage/1A2B-3C4D"), registry.byUuid("1A2B-3C4D")?.root)
+    }
+
+    private companion object {
+        /** `/proc/self/mounts` of a phone with a vfat SD card and an exFAT USB drive, both behind FUSE. */
+        val MOUNTS = """
+            /dev/block/dm-5 / ext4 ro,seclabel,relatime 0 0
+            tmpfs /dev tmpfs rw,seclabel,nosuid,relatime,mode=755 0 0
+            /dev/block/vold/public:179,129 /mnt/media_rw/1A2B-3C4D vfat rw,dirsync,nosuid,nodev,noexec,uid=1023 0 0
+            /dev/fuse /mnt/user/0/1A2B-3C4D fuse rw,lazytime,nosuid,nodev,noexec,noatime,user_id=0 0 0
+            /dev/fuse /storage/1A2B-3C4D fuse rw,lazytime,nosuid,nodev,noexec,noatime,user_id=0 0 0
+            /dev/block/vold/public:8,1 /mnt/media_rw/5E6F-7A8B exfat rw,dirsync,nosuid,nodev,noexec,uid=1023 0 0
+            /dev/fuse /storage/5E6F-7A8B fuse rw,lazytime,nosuid,nodev,noexec,noatime,user_id=0 0 0
+            /dev/fuse /storage/emulated fuse rw,lazytime,nosuid,nodev,noexec,noatime,user_id=0 0 0
+        """.trimIndent()
     }
 }

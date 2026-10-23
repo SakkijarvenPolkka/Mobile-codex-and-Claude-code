@@ -78,7 +78,9 @@ data class ItemFailure(val path: String, val error: FsError, val copiedButSource
 sealed interface OpResult {
     /**
      * It ran to the end: the top-level items it [created], the items that [failed], and, for a move,
-     * how many items were left in a source folder that could not be removed ([leftInSource]).
+     * how many items (files and folders) were left inside the source folders it had to keep, because
+     * something in them was skipped or failed ([leftInSource]; the kept folders themselves are not
+     * counted, unless they are inside another).
      */
     data class Done(val created: List<Path>, val failed: List<ItemFailure>, val leftInSource: Int = 0) : OpResult
 

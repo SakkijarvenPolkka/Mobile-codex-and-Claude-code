@@ -7,6 +7,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -48,6 +49,13 @@ class FileOpsCopyTest {
     /** A stream that calls [onRead] after each read of [input] with the bytes it returned. */
     private class Watched(input: InputStream, private val onRead: (Int) -> Unit) : FilterInputStream(input) {
         override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also(onRead)
+    }
+
+    /** [NioFsBackend], keeping each folder it is asked to list in [listed]. */
+    private class Listed : FsBackend by NioFsBackend {
+        val listed = ArrayList<Path>()
+
+        override fun list(dir: Path): List<Path> = NioFsBackend.list(dir).also { listed.add(dir) }
     }
 
     @Test
@@ -98,12 +106,39 @@ class FileOpsCopyTest {
 
     @Test
     fun targetMustBeAFolder() {
-        val a = write(src, "a.txt")
+        val d = write(src, "d/a.txt").parent
         val file = write(dst, "file.txt")
+        val fs = Listed()
 
-        assertEquals(OpResult.Failed(FsError.NotFound, 0, 1), ops().runToEnd(copy(a, into = file)))
-        assertEquals(OpResult.Failed(FsError.NotFound, 0, 1), ops().runToEnd(copy(a, into = dst.resolve("gone"))))
+        // Refused before anything is walked, so nothing is counted.
+        assertEquals(OpResult.Failed(FsError.NotFound, 0, 0), ops(fs).runToEnd(copy(d, into = file)))
+        assertEquals(OpResult.Failed(FsError.NotFound, 0, 0), ops(fs).runToEnd(copy(d, into = dst.resolve("gone"))))
+        assertEquals(emptyList<Path>(), fs.listed)
         assertEquals(mapOf("file.txt" to "file.txt"), tree(dst))
+    }
+
+    @Test
+    fun resolverOrProgressFailureEndsTheRun() {
+        val a = write(src, "a.txt", "new")
+        val b = write(src, "b.txt", "b")
+        write(dst, "a.txt", "old")
+        val broken = ConflictResolver { throw IllegalStateException("broken resolver") }
+
+        // A bug of the caller's is not an item that failed: the run stops with it, and b.txt is not copied.
+        val thrown = assertThrows(IllegalStateException::class.java) { ops().runToEnd(copy(a, b), broken) }
+        assertEquals("broken resolver", thrown.message)
+        assertEquals(mapOf("a.txt" to "old"), tree(dst))
+
+        // Thrown while a file is written, it leaves no part behind.
+        var reports = 0
+        val fs = FaultyFs().apply { wrapRead("b.txt") { input -> Watched(input) { time += 200.milliseconds } } }
+        val onProgress = { _: OpProgress -> if (++reports > 1) throw IllegalStateException("broken progress") }
+        val again = assertThrows(IllegalStateException::class.java) {
+            ops(fs).runToEnd(copy(b), onProgress = onProgress)
+        }
+        assertEquals("broken progress", again.message)
+        assertEquals(mapOf("a.txt" to "old"), tree(dst))
+        assertEquals(emptySet<Path>(), journal.recorded)
     }
 
     @Test
@@ -283,14 +318,17 @@ class FileOpsCopyTest {
     fun refusesCopyIntoItself() {
         val a = write(src, "a/b/c.txt", "c").parent.parent
         val before = tree(src)
+        val fs = Listed()
 
         for (target in listOf(a.resolve("b"), a)) {
             for (kind in listOf(OpKind.COPY, OpKind.MOVE)) {
-                val result = ops().runToEnd(spec(kind, listOf(a), target))
-                assertEquals("$kind into $target", OpResult.Failed(FsError.CrossesIntoSelf, 0, 3), result)
+                val result = ops(fs).runToEnd(spec(kind, listOf(a), target))
+                assertEquals("$kind into $target", OpResult.Failed(FsError.CrossesIntoSelf, 0, 0), result)
             }
         }
         assertEquals(before, tree(src))
+        // Refused on the sources themselves, before walking what is in them.
+        assertEquals(emptyList<Path>(), fs.listed)
     }
 
     @Test
@@ -302,7 +340,7 @@ class FileOpsCopyTest {
         // /link/b is /a/b: the walk up from the target goes through /a, not /link.
         val result = ops().runToEnd(copy(a, into = link.resolve("b")))
 
-        assertEquals(OpResult.Failed(FsError.CrossesIntoSelf, 0, 3), result)
+        assertEquals(OpResult.Failed(FsError.CrossesIntoSelf, 0, 0), result)
         assertEquals(before, tree(src))
     }
 
@@ -413,7 +451,7 @@ class FileOpsCopyTest {
         val sd = dst
         val volumes = volumesOf(
             VolumeRoot("primary", internal, VolumeTraits(), removable = false),
-            VolumeRoot("1234-5678", sd, VolumeTraits(fatNames = true), removable = true),
+            VolumeRoot("1234-5678", sd, VolumeTraits(fatNames = true, maxFileSize = 4_294_967_295L), removable = true),
         )
         val colon = write(internal, "a:b.txt", "colon")
         val ok = write(internal, "ok.txt", "ok")
@@ -456,33 +494,69 @@ class FileOpsCopyTest {
     }
 
     @Test
+    fun removableTargetWithoutKnownSizeLimitWritesHugeFiles() {
+        val internal = src
+        val usb = dst
+        // exFAT, or a file system that could not be told: FAT names, but no size limit.
+        val volumes = volumesOf(
+            VolumeRoot("primary", internal, VolumeTraits(), removable = false),
+            VolumeRoot("5E6F-7A8B", usb, VolumeTraits(fatNames = true), removable = true),
+        )
+        val huge = write(internal, "huge.bin", "really 5 GiB")
+        val ok = write(internal, "ok.txt", "ok")
+        val faulty = FaultyFs().apply { fakeSize(huge, 5L shl 30) }
+        val fs = object : FsBackend by faulty {
+            override fun availableBytes(path: Path): Long = 1L shl 40
+        }
+        val spec = copy(huge, ok, into = usb)
+
+        val precheck = runBlocking { ops(fs, volumes).precheck(spec) }
+        assertEquals(Precheck(emptyList(), (5L shl 30) + 2, 1L shl 40), precheck)
+        assertEquals(done(listOf(usb.resolve("huge.bin"), usb.resolve("ok.txt"))), ops(fs, volumes).runToEnd(spec))
+        assertEquals(mapOf("huge.bin" to "really 5 GiB", "ok.txt" to "ok"), tree(usb))
+
+        // If the volume turns out not to hold it (FAT32 not told apart), that file fails, and only it.
+        val fat = folder.newFolder().toPath()
+        faulty.failAt(".huge.bin.$OP_ID.xpart", 4, "File too large")
+        val onFat = volumesOf(VolumeRoot("1234-5678", fat, VolumeTraits(fatNames = true), removable = true))
+        val result = ops(fs, onFat).runToEnd(copy(huge, ok, into = fat))
+        assertEquals(
+            done(listOf(fat.resolve("ok.txt")), listOf(ItemFailure(huge.toString(), FsError.TooLargeForVolume))),
+            result,
+        )
+        assertEquals(mapOf("ok.txt" to "ok"), tree(fat))
+        assertEquals(emptySet<Path>(), journal.recorded)
+    }
+
+    @Test
     fun symlinksAndSpecialFilesSkippedAsUnsupported() {
         val real = write(src, "real.txt", "real")
         val link = Files.createSymbolicLink(src.resolve("link.txt"), real)
         val d = write(src, "d/inner.txt", "inner").parent
         val dirLink = Files.createSymbolicLink(d.resolve("up"), src)
-        val fifo = d.resolve("pipe")
+
+        val result = ops().runToEnd(copy(link, d))
+
+        // A link is not followed, to a file or to a folder (here one that holds the copy).
+        val links = listOf(
+            ItemFailure(link.toString(), FsError.Unsupported),
+            ItemFailure(dirLink.toString(), FsError.Unsupported),
+        )
+        assertEquals(done(listOf(dst.resolve("d")), links), result)
+        assertEquals(mapOf("d/" to "", "d/inner.txt" to "inner"), tree(dst))
+
+        // A pipe is never opened, so it cannot block the copy.
+        val p = Files.createDirectory(src.resolve("p"))
+        val fifo = p.resolve("pipe")
         val made = try {
             ProcessBuilder("mkfifo", fifo.toString()).start().waitFor() == 0
         } catch (e: IOException) {
             false
         }
         assumeTrue("mkfifo is needed for a special file", made)
-
-        val result = ops().runToEnd(copy(link, d))
-
-        assertEquals(
-            done(
-                listOf(dst.resolve("d")),
-                listOf(
-                    ItemFailure(link.toString(), FsError.Unsupported),
-                    ItemFailure(fifo.toString(), FsError.Unsupported),
-                    ItemFailure(dirLink.toString(), FsError.Unsupported),
-                ),
-            ),
-            result,
-        )
-        assertEquals(mapOf("d/" to "", "d/inner.txt" to "inner"), tree(dst))
+        val special = ops().runToEnd(copy(p))
+        assertEquals(done(listOf(dst.resolve("p")), listOf(ItemFailure(fifo.toString(), FsError.Unsupported))), special)
+        assertEquals(mapOf("d/" to "", "d/inner.txt" to "inner", "p/" to ""), tree(dst))
     }
 
     @Test

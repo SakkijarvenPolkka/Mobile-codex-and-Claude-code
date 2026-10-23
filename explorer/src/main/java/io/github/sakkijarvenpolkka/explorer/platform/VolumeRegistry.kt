@@ -14,9 +14,11 @@ import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import io.github.sakkijarvenpolkka.explorer.fs.FAT32_MAX_FILE_SIZE
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeRoot
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,8 +51,9 @@ data class Volume(
 
 /**
  * A [Volume] from a `StorageVolume`'s fields: [state] is its `getState()` string, [directory]
- * its `getDirectory()`. A secondary volume without a file system UUID is keyed by its [label].
- * Removable volumes get the FAT naming rules.
+ * its `getDirectory()`, and [fsType] its file system type if known ([fsTypeFor]). A secondary
+ * volume without a file system UUID is keyed by its [label]. Removable volumes get the FAT naming
+ * rules; only a volume known to be vfat gets FAT32's size limit, since exFAT has none.
  */
 fun volumeFrom(
     uuid: String?,
@@ -59,6 +62,7 @@ fun volumeFrom(
     state: String,
     primary: Boolean,
     removable: Boolean,
+    fsType: String? = null,
 ): Volume {
     val volumeState = when (state) {
         "mounted" -> VolumeState.MOUNTED
@@ -77,12 +81,50 @@ fun volumeFrom(
         isPrimary = primary,
         isRemovable = removable,
         fuseBacked = path?.startsWith(FUSE_ROOT) == true,
-        traits = VolumeTraits(fatNames = removable),
+        traits = VolumeTraits(
+            fatNames = removable,
+            maxFileSize = if (fsType == VFAT) FAT32_MAX_FILE_SIZE else null,
+        ),
     )
+}
+
+/**
+ * The type of the file system [mountsText] (`/proc/self/mounts`) shows mounted at the first of
+ * [mountPoints] it lists with one, or null if it lists none. A layer that only passes another mount
+ * through (`fuse`, Android's shared storage, or the older `sdcardfs` and `esdfs`) does not count, so
+ * a card's root under `/storage` finds the file system of its `/mnt/media_rw` mount. Of several mounts
+ * on one point, the last (the one on top) counts.
+ */
+fun fsTypeFor(mountPoints: List<String>, mountsText: String): String? {
+    val types = HashMap<String, String>()
+    for (line in mountsText.lineSequence()) {
+        // device, mount point, type, options, ...
+        val fields = line.trim().split(WHITESPACE)
+        if (fields.size < 3) continue
+        val point = fields[1].replace(OCTAL_ESCAPE) { it.groupValues[1].toInt(8).toChar().toString() }
+        if (point in mountPoints) types[point] = fields[2]
+    }
+    return mountPoints.firstNotNullOfOrNull { point -> types[point]?.takeIf { it !in PASS_THROUGH_TYPES } }
 }
 
 private const val PRIMARY_UUID = "primary"
 private val FUSE_ROOT: Path = Paths.get("/storage")
+private const val RAW_MOUNT_ROOT = "/mnt/media_rw"
+private const val VFAT = "vfat"
+private val PASS_THROUGH_TYPES = setOf("fuse", "sdcardfs", "esdfs")
+private val WHITESPACE = Regex("""\s+""")
+
+/** How `/proc/mounts` writes a space, tab, line break or backslash in a mount point: `\040`, ... */
+private val OCTAL_ESCAPE = Regex("""\\([0-7]{3})""")
+
+/** The text of `/proc/self/mounts`, or null if it cannot be read. */
+private fun readMounts(): String? = try {
+    File("/proc/self/mounts").readText()
+} catch (e: CancellationException) {
+    throw e
+} catch (e: Exception) {
+    null
+}
 
 /** The volumes and their changes; what the UI depends on, so tests can feed their own. */
 interface VolumeSource {
@@ -110,9 +152,13 @@ sealed interface VolumeEvent {
  * The device's volumes from [StorageManager], read when created and on [refresh]; [start]
  * follows their changes through the storage volume callback and the `ACTION_MEDIA_EJECT` and
  * `ACTION_MEDIA_MOUNTED` broadcasts. Each change refreshes [volumes], then sends one event
- * (the callback and the broadcast for the same change send it once).
+ * (the callback and the broadcast for the same change send it once). Each read also reads
+ * [mounts] (`/proc/self/mounts`; null if it cannot be read) for the volumes' file system types.
  */
-class VolumeRegistry(context: Context) : VolumeLookup, VolumeSource {
+class VolumeRegistry(
+    context: Context,
+    private val mounts: () -> String? = ::readMounts,
+) : VolumeLookup, VolumeSource {
 
     private val context: Context = context.applicationContext
     private val storage: StorageManager = this.context.getSystemService(StorageManager::class.java)
@@ -193,16 +239,32 @@ class VolumeRegistry(context: Context) : VolumeLookup, VolumeSource {
         return best
     }
 
-    private fun read(): List<Volume> = storage.storageVolumes.map(::toVolume)
+    private fun read(): List<Volume> {
+        val table = mounts()
+        return storage.storageVolumes.map { toVolume(it, table) }
+    }
 
-    private fun toVolume(volume: StorageVolume): Volume = volumeFrom(
-        uuid = volume.uuid,
-        label = volume.getDescription(context),
-        directory = volume.directory,
-        state = volume.state,
-        primary = volume.isPrimary,
-        removable = volume.isRemovable,
-    )
+    /** [volume] as a [Volume]; its file system type is looked up in the mount [table], if given. */
+    private fun toVolume(volume: StorageVolume, table: String? = null): Volume {
+        val directory = volume.directory
+        val uuid = volume.uuid
+        val fsType = if (table == null || directory == null) {
+            null
+        } else {
+            // vold mounts the volume itself at /mnt/media_rw/<uuid>, and serves it at its directory.
+            val points = listOf(directory.path) + listOfNotNull(uuid?.let { "$RAW_MOUNT_ROOT/$it" })
+            fsTypeFor(points, table)
+        }
+        return volumeFrom(
+            uuid = uuid,
+            label = volume.getDescription(context),
+            directory = directory,
+            state = volume.state,
+            primary = volume.isPrimary,
+            removable = volume.isRemovable,
+            fsType = fsType,
+        )
+    }
 
     private fun send(event: VolumeEvent) {
         if (lastEvent.put(event.uuid, event) != event) _events.tryEmit(event)

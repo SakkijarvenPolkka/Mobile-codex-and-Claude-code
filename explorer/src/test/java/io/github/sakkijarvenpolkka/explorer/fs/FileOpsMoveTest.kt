@@ -80,21 +80,89 @@ class FileOpsMoveTest {
     fun crossVolumePartialFailureKeepsSourceAndReports() {
         val d = write(internal, "d/1.txt", "one").parent
         val second = write(internal, "d/2.txt", "two")
-        val fs = twoVolumes().apply { deny(second) }
+        val third = write(internal, "d/3.txt", "three")
+        val fs = twoVolumes().apply {
+            deny(second)
+            deny(third)
+        }
 
         val result = ops(fs).runToEnd(move(d, into = sd))
 
-        // The first file moved; the second stayed, and so did the folder that holds it.
+        // The first file moved; the other two stayed, and so did the folder that holds them.
         assertEquals(
             OpResult.Done(
                 listOf(sd.resolve("d")),
-                listOf(ItemFailure(second.toString(), FsError.AccessDenied, copiedButSourceKept = false)),
-                leftInSource = 1,
+                listOf(
+                    ItemFailure(second.toString(), FsError.AccessDenied, copiedButSourceKept = false),
+                    ItemFailure(third.toString(), FsError.AccessDenied, copiedButSourceKept = false),
+                ),
+                leftInSource = 2,
             ),
             result,
         )
-        assertEquals(mapOf("d/" to "", "d/2.txt" to "two"), tree(internal))
+        assertEquals(mapOf("d/" to "", "d/2.txt" to "two", "d/3.txt" to "three"), tree(internal))
         assertEquals(mapOf("d/" to "", "d/1.txt" to "one"), tree(sd))
+    }
+
+    @Test
+    fun leftInSourceCountsEverythingLeftInTheKeptFolders() {
+        val d = write(internal, "d/a.txt", "a").parent
+        val kept = write(internal, "d/sub/kept.txt", "kept")
+        write(internal, "d/sub/b.txt", "b")
+        val skipped = write(internal, "d/skipped/c.txt", "c").parent
+        write(sd, "d/skipped/c.txt", "old c")
+        val faulty = twoVolumes()
+        // kept.txt is copied, but cannot be deleted.
+        val fs = object : FsBackend by faulty {
+            override fun delete(path: Path) {
+                if (path == kept) throw AccessDeniedException(path.toString())
+                faulty.delete(path)
+            }
+        }
+        val resolver = Answering { c ->
+            Resolution(if (c.source.path == skipped) ConflictAction.SKIP else ConflictAction.MERGE)
+        }
+
+        val result = ops(fs).runToEnd(move(d, into = sd), resolver)
+
+        // Left: sub/kept.txt, sub (in d), and skipped with all it holds (one item in d).
+        assertEquals(
+            OpResult.Done(
+                listOf(sd.resolve("d")),
+                listOf(ItemFailure(kept.toString(), FsError.AccessDenied, copiedButSourceKept = true)),
+                leftInSource = 3,
+            ),
+            result,
+        )
+        assertEquals(
+            mapOf("d/" to "", "d/skipped/" to "", "d/skipped/c.txt" to "c", "d/sub/" to "", "d/sub/kept.txt" to "kept"),
+            tree(internal),
+        )
+    }
+
+    @Test
+    fun undeletableEmptiedSourceFolderIsMarked() {
+        val d = write(internal, "d/a.txt", "a").parent
+        val faulty = twoVolumes()
+        val fs = object : FsBackend by faulty {
+            override fun delete(path: Path) {
+                if (path == d) throw AccessDeniedException(path.toString())
+                faulty.delete(path)
+            }
+        }
+
+        val result = ops(fs).runToEnd(move(d, into = sd))
+
+        // Everything in it moved; the folder itself stayed, and is listed so a retry does not copy it again.
+        assertEquals(
+            OpResult.Done(
+                listOf(sd.resolve("d")),
+                listOf(ItemFailure(d.toString(), FsError.AccessDenied, copiedButSourceKept = true)),
+            ),
+            result,
+        )
+        assertEquals(mapOf("d/" to ""), tree(internal))
+        assertEquals(mapOf("d/" to "", "d/a.txt" to "a"), tree(sd))
     }
 
     @Test

@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -162,9 +163,11 @@ class WriteProtocol(
     private fun discardAfter(failure: Exception, temp: Path, created: Boolean, failed: Exception) {
         try {
             discard(temp, created, failed)
+        } catch (e: CancellationException) {
+            // Not rethrown: nothing here can be cancelled (it runs NonCancellable), and the caller rethrows
+            // the write's own failure, a cancellation included.
+            failure.addSuppressed(e)
         } catch (e: Exception) {
-            // A CancellationException too: nothing here can be cancelled (it runs NonCancellable), and the
-            // caller rethrows the write's own failure, a cancellation included.
             failure.addSuppressed(e)
         }
     }
