@@ -31,6 +31,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -43,17 +44,23 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowPowerManager
+import org.robolectric.shadows.ShadowSystemClock
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
 
-/** The application of these tests: the runner each test makes, and how often the service was refused. */
+/** The application of these tests: the runner each test makes, and how often the service was refused or timed out. */
 class ServiceTestApp : Application(), FileOpsHost {
     override lateinit var runner: OperationRunner
     var refusals = 0
+    var timeouts = 0
 
     override fun onForegroundRefused() {
         refusals++
+    }
+
+    override fun onForegroundTimedOut() {
+        timeouts++
     }
 }
 
@@ -181,6 +188,8 @@ class FileOpsServiceTest {
         service.onTimeout(0, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
 
         assertTrue(shadowOf(service).isStoppedBySelf)
+        // The app starts it again for the next operation.
+        assertEquals(1, app.timeouts)
         runOps()
         assertEquals(OpResult.Cancelled, runner.state.value.finished.single().result)
         // Cancelled as any operation is: what it was asked about is as it was.
@@ -208,6 +217,21 @@ class FileOpsServiceTest {
     }
 
     @Test
+    fun wakeLockHasSixHourTimeout() {
+        waitingCopy()
+        start()
+        idle()
+        val lock = ShadowPowerManager.getLatestWakeLock()
+        assertTrue(lock.isHeld)
+
+        // Should the work never end, the lock goes after six hours: the most a day's data sync time allows.
+        ShadowSystemClock.advanceBy(Duration.ofHours(6).minusMillis(1))
+        assertTrue(lock.isHeld)
+        ShadowSystemClock.advanceBy(Duration.ofMillis(2))
+        assertFalse(lock.isHeld)
+    }
+
+    @Test
     fun pendingConflictShowsNeedsDecision() {
         submitConflictingCopy()
         // Queued, not yet run: no item done of the one it copies.
@@ -224,6 +248,58 @@ class FileOpsServiceTest {
         assertEquals("Copying 0 of 1 items", shown.text())
         assertNotNull(shown?.contentIntent)
         assertEquals(listOf("Cancel"), shown?.actions?.map { it.title.toString() })
+    }
+
+    @Test
+    fun firstNotificationPostedOnce() {
+        // Long after the device started, as it always is.
+        ShadowSystemClock.advanceBy(Duration.ofMinutes(10))
+        val dst = submitConflictingCopy()
+        val service = start().get()
+        val posted = arrayListOf(shadowOf(service).lastForegroundNotification)
+        fun look() {
+            val shown = shownNotification() ?: return
+            if (posted.none { it === shown }) posted += shown
+        }
+
+        // Its first second, looked at every 10 ms, while the copy runs until it asks.
+        look()
+        runOps()
+        repeat(100) {
+            idleFor(10)
+            look()
+        }
+        assertEquals("Your decision is needed", shownNotification().title())
+        // What startForeground posted, and at most one update.
+        assertTrue("posted ${posted.size} times", posted.size <= 2)
+
+        // A change it does not show (another operation queued) is not posted again.
+        val shown = shownNotification()
+        runner.submit(OperationSpec("op2", OpKind.COPY, listOf("$volume/src/a.txt"), dst.toString()))
+        idleFor(2_000)
+        assertSame(shown, shownNotification())
+    }
+
+    @Test
+    fun progressBarBranches() {
+        val spec = OperationSpec("op1", OpKind.COPY, listOf("$volume/a", "$volume/b"), "$volume/dst")
+        // The progress bar shown for it: its steps, how many are done, and whether it is indeterminate.
+        fun bar(progress: OpProgress?): Triple<Int, Int, Boolean> {
+            val extras = OpsNotifications.progress(app, RunnerState(running = RunningOp(spec, progress))).extras
+            return Triple(
+                extras.getInt(Notification.EXTRA_PROGRESS_MAX),
+                extras.getInt(Notification.EXTRA_PROGRESS),
+                extras.getBoolean(Notification.EXTRA_PROGRESS_INDETERMINATE),
+            )
+        }
+
+        // By bytes, in 1000 steps, once their total is known.
+        assertEquals(Triple(1000, 250, false), bar(OpProgress(400, 100, 2, 1, "a")))
+        // By items when only those are known.
+        assertEquals(Triple(2, 1, false), bar(OpProgress(0, 0, 2, 1, "a")))
+        // Indeterminate when neither is, or before the first report.
+        assertEquals(Triple(0, 0, true), bar(OpProgress(0, 0, 0, 0, null)))
+        assertEquals(Triple(0, 0, true), bar(null))
     }
 
     @Test
@@ -251,6 +327,23 @@ class FileOpsServiceTest {
 
         assertEquals(OpResult.Cancelled, runner.state.value.finished.single().result)
         assertEquals(2, shadowOf(service).stopSelfId)
+    }
+
+    @Test
+    fun cancelActionWorksWhenStartForegroundFails() {
+        waitingCopy()
+        val controller = Robolectric.buildService(FileOpsService::class.java)
+        val refusal = "Time limit already exhausted for foreground service type dataSync"
+        shadowOf(controller.get()).setThrowInStartForeground(ForegroundServiceStartNotAllowedException(refusal))
+        val service = controller.create().get()
+
+        // A tap on the cancel action of a notification shown before, which cannot go into the foreground.
+        service.onStartCommand(shadowOf(OpsNotifications.cancelIntent(app, "op1")).savedIntent, 0, 1)
+        runOps()
+
+        assertEquals(OpResult.Cancelled, runner.state.value.finished.single().result)
+        assertEquals(1, app.refusals)
+        assertTrue(shadowOf(service).isStoppedBySelf)
     }
 
     @Test

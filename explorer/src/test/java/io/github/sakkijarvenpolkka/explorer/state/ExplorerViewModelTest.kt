@@ -14,7 +14,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
-import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
@@ -23,9 +23,8 @@ import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
@@ -71,10 +70,14 @@ class ExplorerViewModelTest {
         settings: SettingsStore = SettingsStore(null),
         volumes: FakeVolumes = FakeVolumes(FakeVolumes.primary(root)),
         io: CoroutineDispatcher = Dispatchers.Unconfined,
-        opsEvents: Flow<OpsEvent> = emptyFlow(),
+        opsNotice: StateFlow<OpsNotice?> = MutableStateFlow(null),
+        clearOpsNotice: () -> Unit = {},
     ): ExplorerViewModel {
         this.volumes = volumes
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, opsEvents = opsEvents)
+        val deps = ExplorerDeps(
+            NioFsBackend, settings, volumes, volumes, MimeResolver(), io,
+            opsNotice = opsNotice, clearOpsNotice = clearOpsNotice,
+        )
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         settle()
         return vm
@@ -451,10 +454,10 @@ class ExplorerViewModelTest {
     @Test
     fun refusedForegroundServiceAsksToKeepTheAppOpen() {
         dir("a")
-        val events = MutableSharedFlow<OpsEvent>(extraBufferCapacity = 1)
-        start(opsEvents = events)
+        val notice = MutableStateFlow<OpsNotice?>(null)
+        start(opsNotice = notice)
 
-        events.tryEmit(OpsEvent.ForegroundRefused)
+        notice.value = OpsNotice.ForegroundRefused
         settle()
 
         val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
@@ -466,5 +469,21 @@ class ExplorerViewModelTest {
         vm.dismissMessage()
         settle()
         assertNull(ui.message)
+    }
+
+    @Test
+    fun opsNoticeShownAndCleared() {
+        // Refused before there was a view model: the app kept it.
+        val notice = MutableStateFlow<OpsNotice?>(OpsNotice.ForegroundRefused)
+        var cleared = 0
+        start(opsNotice = notice, clearOpsNotice = { cleared++ })
+
+        assertEquals(UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING), ui.message)
+        vm.dismissMessage()
+        settle()
+
+        assertNull(ui.message)
+        // The app forgets it, or the next view model would show it again.
+        assertEquals(1, cleared)
     }
 }

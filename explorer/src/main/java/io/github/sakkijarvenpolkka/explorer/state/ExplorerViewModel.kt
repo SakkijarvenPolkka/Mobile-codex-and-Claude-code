@@ -27,7 +27,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
-import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
@@ -117,7 +117,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     init {
         viewModelScope.launch { deps.volumes.volumes.collect(volumeTracking::rememberRoots) }
         viewModelScope.launch { deps.volumes.events.collect(::onVolumeEvent) }
-        viewModelScope.launch { deps.opsEvents.collect(::onOpsEvent) }
+        viewModelScope.launch { deps.opsNotice.collect(::onOpsNotice) }
         viewModelScope.launch { activeListing.collect { (id, state) -> onListing(id, state) } }
         viewModelScope.launch {
             val viewRevision = shell.map { it.viewRevision }.distinctUntilChanged()
@@ -220,7 +220,11 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         ensureLoaded(refresh = true)
     }
 
-    fun dismissMessage() = shell.update { it.copy(message = null, messageAt = null) }
+    fun dismissMessage() {
+        // The app forgets the notice of the file operations once it is dismissed, or it would come back.
+        if (shell.value.message == KEEP_APP_OPEN) deps.clearOpsNotice()
+        shell.update { it.copy(message = null, messageAt = null) }
+    }
 
     /** Runs a command of the command bar or a menu; commands of later phases do nothing yet. */
     fun command(c: Command) {
@@ -553,14 +557,12 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     }
 
     /**
-     * What the file operations tell from outside: refused the foreground service, they go on only while
-     * the app is open, which a message about no place asks for until it is dismissed.
+     * What the file operations tell from outside, kept by the app until it is dismissed here: refused the
+     * foreground service, they go on only while the app is open, which a message about no place asks for.
      */
-    private fun onOpsEvent(e: OpsEvent) = when (e) {
-        OpsEvent.ForegroundRefused -> {
-            val message = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
-            shell.update { it.copy(message = message, messageAt = null) }
-        }
+    private fun onOpsNotice(notice: OpsNotice?) = when (notice) {
+        OpsNotice.ForegroundRefused -> shell.update { it.copy(message = KEEP_APP_OPEN, messageAt = null) }
+        null -> Unit
     }
 
     /**
@@ -725,5 +727,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private companion object {
         val MEDIA_RW: Path = Paths.get("/mnt/media_rw")
+
+        /** The message of [OpsNotice.ForegroundRefused]. */
+        val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
     }
 }

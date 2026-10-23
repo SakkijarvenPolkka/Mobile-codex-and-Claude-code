@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
                 val mime = MimeResolver()
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
-                    opsEvents = app.opsEvents,
+                    opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice,
                 )
                 ExplorerViewModel(app, deps)
             }

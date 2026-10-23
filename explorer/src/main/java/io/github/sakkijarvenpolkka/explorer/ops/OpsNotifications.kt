@@ -49,7 +49,36 @@ object OpsNotifications {
      * of its items are done, the name it is at ([DisplayName.of]), a progress bar and its cancel action;
      * "Your decision is needed" over that while it waits for an answer. Tapping it opens the app.
      */
-    fun progress(context: Context, state: RunnerState): Notification {
+    fun progress(context: Context, state: RunnerState): Notification = notification(context, contentOf(context, state))
+
+    /** What [progress] shows of [state]: two states it shows alike give equal ones. */
+    internal fun contentOf(context: Context, state: RunnerState): Content {
+        val spec = state.running?.spec ?: state.queue.firstOrNull()
+            ?: return Content(context.getString(R.string.notif_channel))
+        val progress = state.running?.progress
+        val doing = context.getString(
+            doingOf(spec.kind),
+            progress?.doneItems ?: 0,
+            progress?.totalItems ?: spec.sources.size,
+        )
+        val bar = when {
+            progress == null -> Bar.INDETERMINATE
+            progress.totalBytes > 0 -> {
+                val done = progress.doneBytes.coerceIn(0, progress.totalBytes) * PROGRESS_STEPS / progress.totalBytes
+                Bar(PROGRESS_STEPS, done.toInt())
+            }
+            progress.totalItems > 0 -> Bar(progress.totalItems, progress.doneItems)
+            else -> Bar.INDETERMINATE
+        }
+        return if (state.pending != null) {
+            Content(context.getString(R.string.notif_needs_decision), doing, bar, spec.id)
+        } else {
+            Content(doing, progress?.currentName?.let(DisplayName::of), bar, spec.id)
+        }
+    }
+
+    /** The notification that shows [content]. */
+    internal fun notification(context: Context, content: Content): Notification {
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(openApp(context))
@@ -58,29 +87,11 @@ object OpsNotifications {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
-        val spec = state.running?.spec ?: state.queue.firstOrNull()
-            ?: return builder.setContentTitle(context.getString(R.string.notif_channel)).build()
-        val progress = state.running?.progress
-        val doing = context.getString(
-            doingOf(spec.kind),
-            progress?.doneItems ?: 0,
-            progress?.totalItems ?: spec.sources.size,
-        )
-        if (state.pending != null) {
-            builder.setContentTitle(context.getString(R.string.notif_needs_decision)).setContentText(doing)
-        } else {
-            builder.setContentTitle(doing).setContentText(progress?.currentName?.let(DisplayName::of))
-        }
-        when {
-            progress == null -> builder.setProgress(0, 0, true)
-            progress.totalBytes > 0 -> {
-                val done = progress.doneBytes.coerceIn(0, progress.totalBytes) * PROGRESS_STEPS / progress.totalBytes
-                builder.setProgress(PROGRESS_STEPS, done.toInt(), false)
-            }
-            progress.totalItems > 0 -> builder.setProgress(progress.totalItems, progress.doneItems, false)
-            else -> builder.setProgress(0, 0, true)
-        }
-        return builder.addAction(0, context.getString(R.string.cancel), cancelIntent(context, spec.id)).build()
+            .setContentTitle(content.title)
+            .setContentText(content.text)
+        content.bar?.let { builder.setProgress(it.max, it.done, it.max == 0) }
+        content.cancels?.let { builder.addAction(0, context.getString(R.string.cancel), cancelIntent(context, it)) }
+        return builder.build()
     }
 
     /** Starts [FileOpsService] to cancel the operation [opId] ([OperationRunner.cancel]). */
@@ -107,5 +118,23 @@ object OpsNotifications {
         OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.EMPTY_BIN -> R.string.notif_deleting
         OpKind.COMPRESS -> R.string.notif_compressing
         OpKind.EXTRACT -> R.string.notif_extracting
+    }
+
+    /**
+     * What the notification shows: its [title] and [text], its progress [bar] (none without work), and the
+     * operation its cancel action cancels ([cancels]; none without work).
+     */
+    internal data class Content(
+        val title: String,
+        val text: String? = null,
+        val bar: Bar? = null,
+        val cancels: String? = null,
+    )
+
+    /** A progress bar of [max] steps, [done] of them done; one of no steps is indeterminate. */
+    internal data class Bar(val max: Int, val done: Int) {
+        companion object {
+            val INDETERMINATE = Bar(0, 0)
+        }
     }
 }

@@ -86,8 +86,9 @@ data class RunnerState(
 /**
  * What the runner tells: that it has work once it had none ([onBusy], from the call that brought the
  * work), that it has none left ([onIdle]), and each operation that ended ([onFinished]), always in that
- * order. They are called while the runner holds its lock, so they must be quick and must not wait for
- * another thread that uses the runner.
+ * order. They are called while the runner holds its lock, on the thread of the call that caused them
+ * (the main thread too, as for a cancel): they must not block, nor wait for another thread that uses
+ * the runner.
  */
 interface RunnerHost {
     fun onBusy()

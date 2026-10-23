@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -18,11 +19,14 @@ import io.github.sakkijarvenpolkka.explorer.fs.write
 import io.github.sakkijarvenpolkka.explorer.ops.FileOpsService
 import io.github.sakkijarvenpolkka.explorer.ops.InterruptedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
+import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -54,6 +58,31 @@ class ExplorerAppTest {
         }.finished.single { it.spec.id == "t1" }
         (finished.result as OpResult.Done).created.single()
     }
+
+    /**
+     * A copy [id] of a new `a.txt` onto an old one, submitted and run until it asks about that: the runner
+     * stays busy until the test cancels it.
+     */
+    private fun submitWaitingCopy(id: String) {
+        val dir = folder.root.toPath()
+        val a = write(dir, "a.txt", "new")
+        val dst = write(dir, "dst/a.txt", "old").parent
+        app.runner.submit(OperationSpec(id, OpKind.COPY, listOf(a.toString()), dst.toString()))
+        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+    }
+
+    /** A copy [id] that waits behind the one running. */
+    private fun submitQueuedCopy(id: String) {
+        val dir = folder.root.toPath()
+        app.runner.submit(OperationSpec(id, OpKind.COPY, listOf(dir.resolve("a.txt").toString()), dir.toString()))
+        shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    /** Cancels [ids], the first (the one running) last, so that none queued behind it runs. */
+    private fun cancel(vararg ids: String) = ids.reversed().forEach(app.runner::cancel)
+
+    /** What the system throws when the app may not start a foreground service now. */
+    private fun refusal() = ForegroundServiceStartNotAllowedException("startForegroundService() not allowed")
 
     /** The app as a new process starts it, over the files the one before left. */
     private fun startAgain(): ExplorerApp = ExplorerApp().apply {
@@ -123,6 +152,73 @@ class ExplorerAppTest {
 
         val started = shadowOf(app).nextStartedService
         assertEquals(FileOpsService::class.java.name, started?.component?.className)
+    }
+
+    @Test
+    fun refusedStartSetsNoticeEvenWithoutCollector() {
+        app.serviceStarter = ServiceStarter { _, _ -> throw refusal() }
+        val dir = folder.root.toPath()
+
+        // No shell listens: the operation runs in the process, and the notice waits for one.
+        copyInPlace(write(dir, "x.txt", "x"))
+
+        assertEquals(OpsNotice.ForegroundRefused, app.opsNotice.value)
+        app.clearOpsNotice()
+        assertNull(app.opsNotice.value)
+    }
+
+    @Test
+    fun nextSubmitRetriesServiceAfterRefusal() {
+        val started = ArrayList<Intent>()
+        app.serviceStarter = ServiceStarter { _, intent ->
+            started += intent
+            if (started.size == 1) throw refusal()
+        }
+        submitWaitingCopy("t1")
+        assertEquals(1, started.size)
+
+        // More work while the runner is busy without the service: it is asked for again.
+        submitQueuedCopy("t2")
+        assertEquals(2, started.size)
+        assertEquals(FileOpsService::class.java.name, started.last().component?.className)
+        // Once it runs, more work does not start it again.
+        submitQueuedCopy("t3")
+        assertEquals(2, started.size)
+        cancel("t1", "t2", "t3")
+    }
+
+    @Test
+    fun oneSubmitStartsTheServiceOnce() {
+        val started = ArrayList<Intent>()
+        app.serviceStarter = ServiceStarter { _, intent ->
+            started += intent
+            throw refusal()
+        }
+        copyInPlace(write(folder.root.toPath(), "x.txt", "x"))
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(1, started.size)
+
+        // Refused, then without work: the next operation asks for the service once, as any first one does.
+        submitWaitingCopy("t2")
+        shadowOf(Looper.getMainLooper()).idle()
+
+        assertEquals(2, started.size)
+        cancel("t2")
+    }
+
+    @Test
+    fun nextSubmitRetriesServiceAfterTimeout() {
+        val started = ArrayList<Intent>()
+        app.serviceStarter = ServiceStarter { _, intent -> started += intent }
+        submitWaitingCopy("t1")
+        assertEquals(1, started.size)
+
+        // The day's time for data sync services ran out: the service stopped, the work goes on in the process.
+        app.onForegroundTimedOut()
+        submitQueuedCopy("t2")
+
+        assertEquals(2, started.size)
+        cancel("t1", "t2")
     }
 
     @Test

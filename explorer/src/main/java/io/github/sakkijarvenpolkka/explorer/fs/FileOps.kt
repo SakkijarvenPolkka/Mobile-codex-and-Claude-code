@@ -49,6 +49,9 @@ class FileOps(
 ) {
     private val writer = WriteProtocol(fs, journal)
 
+    /** The runs that delete or use the Recycle Bin; a bin item is taken with all it holds. */
+    private val binRuns = BinRuns(fs, volumes, labels, time, writer) { stepsFrom(topOf(it), everything = true) }
+
     /**
      * Runs [spec], as its kind says:
      * - [COPY][OpKind.COPY] and [MOVE][OpKind.MOVE] put its sources into its target folder (see below);
@@ -122,10 +125,10 @@ class FileOps(
         onCommitted: (Int) -> Unit = {},
     ): OpResult = when (spec.kind) {
         OpKind.COPY, OpKind.MOVE -> transfer(spec, resolver, onProgress, onCommitted)
-        OpKind.DELETE_PERMANENT -> deletePermanently(spec, onProgress, onCommitted)
-        OpKind.DELETE_TO_BIN -> withBin { deleteToBin(it, spec, onProgress, onCommitted) }
-        OpKind.RESTORE -> withBin { restore(it, spec, resolver, onProgress, onCommitted) }
-        OpKind.EMPTY_BIN -> withBin { emptyBin(it, spec, onProgress, onCommitted) }
+        OpKind.DELETE_PERMANENT -> binRuns.deletePermanently(spec, onProgress, onCommitted)
+        OpKind.DELETE_TO_BIN -> withBin { binRuns.deleteToBin(it, spec, onProgress, onCommitted) }
+        OpKind.RESTORE -> withBin { binRuns.restore(it, spec, resolver, onProgress, onCommitted) }
+        OpKind.EMPTY_BIN -> withBin { binRuns.emptyBin(it, spec, onProgress, onCommitted) }
         OpKind.COMPRESS, OpKind.EXTRACT -> OpResult.Failed(FsError.Unsupported, 0, 0)
     }
 
@@ -228,179 +231,6 @@ class FileOps(
             fs, writer, labels, time, spec, plan, check.unstorable, removable, resolver, onProgress, onCommitted,
         )
         return transfer.run()
-    }
-
-    /** Each source into the Recycle Bin of its volume, as [run] describes it. */
-    private suspend fun deleteToBin(
-        bin: RecycleBin,
-        spec: OperationSpec,
-        onProgress: (OpProgress) -> Unit,
-        onCommitted: (Int) -> Unit,
-    ): OpResult {
-        val created = ArrayList<Path>()
-        val failed = ArrayList<ItemFailure>()
-        // Walked once, for the progress, and the records reuse the sizes.
-        val sizes = spec.sources.map { sizeInBin(Paths.get(it)) }
-        val progress = Progress(time, onProgress, spec.sources.size, sizes.sumOf { it ?: 0L })
-        progress.report(force = true)
-        for ((index, raw) in spec.sources.withIndex()) {
-            currentCoroutineContext().ensureActive()
-            val path = Paths.get(raw)
-            progress.currentName = path.fileName?.toString()
-            try {
-                created.add(bin.moveToBin(path, sizes[index]).payload)
-            } catch (e: FsException) {
-                failed += ItemFailure(raw, e.error)
-            }
-            progress.doneItems++
-            progress.doneBytes += sizes[index] ?: 0L
-            progress.report()
-            onCommitted(index + 1)
-        }
-        progress.report(force = true)
-        return OpResult.Done(created, failed)
-    }
-
-    /** The size [path] is recorded with in the Recycle Bin ([binnedSize]); null when it cannot be read. */
-    private suspend fun sizeInBin(path: Path): Long? = try {
-        binnedSize(fs, Listing.entry(fs, path, NO_MIME))
-    } catch (e: IOException) {
-        null
-    }
-
-    /** Each source and everything under it deleted for good, as [run] describes it. */
-    private suspend fun deletePermanently(
-        spec: OperationSpec,
-        onProgress: (OpProgress) -> Unit,
-        onCommitted: (Int) -> Unit,
-    ): OpResult {
-        val failed = ArrayList<ItemFailure>()
-        val trees = spec.sources.map { raw ->
-            try {
-                doomedTree(fs, Paths.get(raw)).also { tree ->
-                    tree.unreadable.mapTo(failed) { (path, error) -> ItemFailure(path.toString(), error) }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                failed += ItemFailure(raw, e.toFsError())
-                null
-            }
-        }
-        val entries = trees.flatMap { it?.entries.orEmpty() }
-        val progress = Progress(time, onProgress, entries.size, entries.sumOf { it.size })
-        progress.report(force = true)
-        for ((index, tree) in trees.withIndex()) {
-            if (tree != null) {
-                val onFailed = { path: Path, error: FsError -> failed += ItemFailure(path.toString(), error) }
-                val fatal = deleteTree(fs, tree, onFailed) {
-                    progress.currentName = it.name
-                    progress.doneItems++
-                    progress.doneBytes += it.size
-                    progress.report()
-                }
-                if (fatal != null) return OpResult.Failed(fatal, progress.doneItems, progress.totalItems)
-            }
-            onCommitted(index + 1)
-        }
-        progress.report(force = true)
-        return OpResult.Done(emptyList(), failed)
-    }
-
-    /** The bin items [OpOptions.binItemIds] names moved back where they came from, as [run] describes it. */
-    private suspend fun restore(
-        bin: RecycleBin,
-        spec: OperationSpec,
-        resolver: ConflictResolver,
-        onProgress: (OpProgress) -> Unit,
-        onCommitted: (Int) -> Unit,
-    ): OpResult {
-        val ids = spec.options.binItemIds
-        require(ids.size == spec.sources.size) { "a restore needs the bin item id of each source" }
-        val roots = spec.sources.mapNotNull { volumes.volumeOf(Paths.get(it))?.root }.distinct()
-        val inBin = bin.list(roots).associateBy { it.id }
-        val gone = ArrayList<ItemFailure>()
-        val items = ArrayList<BinItem>()
-        // The index in ids of each of items.
-        val positions = ArrayList<Int>()
-        for ((index, id) in ids.withIndex()) {
-            val item = inBin[id]
-            if (item == null) {
-                gone += ItemFailure(spec.sources[index], FsError.NotFound)
-            } else {
-                items += item
-                positions += index
-            }
-        }
-        var totalItems = 0
-        var totalBytes = 0L
-        val sources = items.map { item ->
-            val steps = stepsFrom(topOf(item.payload), everything = true)
-            for (step in steps) {
-                if (step !is Item) continue
-                totalItems++
-                totalBytes += step.entry.size
-            }
-            Source(steps, copied = false, into = bin.restoreTarget(item).parent, createInto = true)
-        }
-        // Each item done is forgotten by the bin, unless some of it stays there; the ids before the next
-        // item to restore are all done, those not in the bin included.
-        val committed = { done: Int ->
-            bin.finishRestore(items[done - 1])
-            onCommitted(if (done < items.size) positions[done] else ids.size)
-        }
-        // A restore is a move within the item's volume, which flushes what it copies anyway.
-        val plan = Plan(sources, totalItems, totalBytes)
-        val transfer = Transfer(
-            fs, writer, labels, time, spec, plan, emptyList(), removable = false, resolver, onProgress, committed,
-        )
-        val result = transfer.run()
-        if (items.isEmpty() && ids.isNotEmpty()) onCommitted(ids.size)
-        return if (result is OpResult.Done) result.copy(failed = gone + result.failed) else result
-    }
-
-    /** Every item in the Recycle Bins of the sources' volumes deleted for good, as [run] describes it. */
-    private suspend fun emptyBin(
-        bin: RecycleBin,
-        spec: OperationSpec,
-        onProgress: (OpProgress) -> Unit,
-        onCommitted: (Int) -> Unit,
-    ): OpResult {
-        val failed = ArrayList<ItemFailure>()
-        val emptied = HashSet<Path>()
-        // The items of each source's bin, with their sizes; a bin two sources are on is emptied once.
-        val bins = spec.sources.map { raw ->
-            val root = volumes.volumeOf(Paths.get(raw))?.root
-            when {
-                root == null -> {
-                    failed += ItemFailure(raw, FsError.BinUnavailable)
-                    emptyList()
-                }
-                !emptied.add(root) -> emptyList()
-                else -> bin.list(listOf(root)).map { it to bin.sizeOf(it) }
-            }
-        }
-        val totalBytes = bins.sumOf { items -> items.sumOf { (_, size) -> size } }
-        val progress = Progress(time, onProgress, bins.sumOf { it.size }, totalBytes)
-        progress.report(force = true)
-        for ((index, items) in bins.withIndex()) {
-            for ((item, size) in items) {
-                currentCoroutineContext().ensureActive()
-                progress.currentName = item.name
-                try {
-                    bin.purge(item)
-                } catch (e: FsException) {
-                    if (e.error.isFatal) return OpResult.Failed(e.error, progress.doneItems, progress.totalItems)
-                    failed += ItemFailure(item.payload.toString(), e.error)
-                }
-                progress.doneItems++
-                progress.doneBytes += size
-                progress.report()
-            }
-            onCommitted(index + 1)
-        }
-        progress.report(force = true)
-        return OpResult.Done(emptyList(), failed)
     }
 
     /**

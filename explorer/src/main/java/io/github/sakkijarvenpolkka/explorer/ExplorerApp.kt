@@ -21,8 +21,10 @@ import io.github.sakkijarvenpolkka.explorer.ops.FileOpsService
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
-import io.github.sakkijarvenpolkka.explorer.ops.OpsEvent
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerHost
+import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
+import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import io.github.sakkijarvenpolkka.explorer.ops.scanTargets
 import io.github.sakkijarvenpolkka.explorer.platform.AndroidMediaScan
 import io.github.sakkijarvenpolkka.explorer.platform.MediaScan
@@ -31,10 +33,9 @@ import io.github.sakkijarvenpolkka.explorer.platform.VolumeRegistry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.SharedFlow
-import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Path
@@ -77,13 +78,26 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         AndroidMediaScan(this, volumes) { root -> volumes.volumes.value.any { it.root == root && it.fuseBacked } }
     }
 
-    private val mutableOpsEvents = MutableSharedFlow<OpsEvent>(
-        extraBufferCapacity = 8,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+    /** How the foreground service is started; a test puts its own. */
+    internal var serviceStarter = ServiceStarter(ContextCompat::startForegroundService)
 
-    /** What the file operations tell the shell from outside any activity. Not replayed. */
-    val opsEvents: SharedFlow<OpsEvent> = mutableOpsEvents.asSharedFlow()
+    private val mutableOpsNotice = MutableStateFlow<OpsNotice?>(null)
+
+    /**
+     * What the file operations tell the user from outside any activity, kept until the shell has shown it
+     * and the user dismissed it ([clearOpsNotice]): a shell that comes later still shows it.
+     */
+    val opsNotice: StateFlow<OpsNotice?> = mutableOpsNotice.asStateFlow()
+
+    /** Guards [workWithoutService]. */
+    private val serviceLock = Any()
+
+    /**
+     * The operations (by id) there were when the service last left them to the process (refused, or out
+     * of time), while those go on without it; null while it runs them, or while there are none. One
+     * submitted since starts it again ([restartServiceForNewWork]).
+     */
+    private var workWithoutService: Set<String>? = null
 
     /** Where each volume was last mounted, by uuid: one that ejects has no root any more. Main thread only. */
     private val lastRoots = HashMap<String, Path>()
@@ -92,31 +106,71 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         super.onCreate()
         volumes.start()
         stopOperationsOnEject()
+        restartServiceForNewWork()
         // What a crash left behind is cleaned up, and the operations it interrupted are offered again.
         runner.loadInterrupted()
     }
 
+    /** Work came: it goes on in the foreground service ([startService]). */
+    override fun onBusy() = synchronized(serviceLock) { startService() }
+
+    /** No work left: the service stops itself once it sees that, and no work goes on without it. */
+    override fun onIdle() = synchronized(serviceLock) { workWithoutService = null }
+
+    override fun onFinished(op: FinishedOp) = mediaScan.scan(scanTargets(op, volumes))
+
+    /** The user is told to keep the app open: the operations go on in the process only. */
+    override fun onForegroundRefused() {
+        mutableOpsNotice.value = OpsNotice.ForegroundRefused
+        leftWithoutService()
+    }
+
+    override fun onForegroundTimedOut() = leftWithoutService()
+
+    /** Forgets the notice of the file operations, once the user has dismissed it. */
+    fun clearOpsNotice() {
+        mutableOpsNotice.value = null
+    }
+
     /**
-     * Work came: it goes on in the foreground service, so that it does with the app in the background.
-     * Refused that, it goes on in the process all the same, and the user is told to keep the app open.
+     * Starts the foreground service, so that the work goes on with the app in the background. Refused
+     * that, it goes on in the process all the same ([onForegroundRefused]). Called with [serviceLock] held.
      */
-    override fun onBusy() {
+    private fun startService() {
         try {
-            ContextCompat.startForegroundService(this, Intent(this, FileOpsService::class.java))
+            serviceStarter.start(this, Intent(this, FileOpsService::class.java))
+            workWithoutService = null
         } catch (e: IllegalStateException) {
             // ForegroundServiceStartNotAllowedException: the app is not in the foreground.
             onForegroundRefused()
         }
     }
 
-    /** Nothing: the service stops itself once it sees that the runner has no work left. */
-    override fun onIdle() = Unit
-
-    override fun onFinished(op: FinishedOp) = mediaScan.scan(scanTargets(op, volumes))
-
-    override fun onForegroundRefused() {
-        mutableOpsEvents.tryEmit(OpsEvent.ForegroundRefused)
+    /** The work there is now goes on without the service: the next operation submitted starts it again. */
+    private fun leftWithoutService() = synchronized(serviceLock) {
+        workWithoutService = workOf(runner.state.value).takeIf { it.isNotEmpty() }
     }
+
+    /**
+     * Starts the service again whenever an operation is submitted while the runner is busy without it,
+     * which [onBusy] does not hear of: the user just did something, so the app is in the foreground now.
+     * The state is read again under [serviceLock], where [onBusy] and [onIdle] change what it is compared
+     * with, so that one submit starts the service once.
+     */
+    private fun restartServiceForNewWork() {
+        appScope.launch(Dispatchers.Main.immediate) {
+            runner.state.collect {
+                synchronized(serviceLock) {
+                    val before = workWithoutService ?: return@collect
+                    if (workOf(runner.state.value).any { it !in before }) startService()
+                }
+            }
+        }
+    }
+
+    /** The ids of the operations [state] has queued or running. */
+    private fun workOf(state: RunnerState): Set<String> =
+        (state.queue.map { it.id } + listOfNotNull(state.running?.spec?.id)).toSet()
 
     /**
      * Stops the operations on a volume that goes as soon as it does ([OperationRunner.cancelTouching]):
