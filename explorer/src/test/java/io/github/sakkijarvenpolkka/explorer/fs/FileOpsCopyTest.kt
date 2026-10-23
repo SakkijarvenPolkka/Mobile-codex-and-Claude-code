@@ -142,9 +142,9 @@ class FileOpsCopyTest {
     }
 
     @Test
-    fun otherKindsAreNotCopiesOrMoves() {
+    fun zipKindsAreNotSupportedYet() {
         val a = write(src, "a.txt")
-        for (kind in OpKind.entries - setOf(OpKind.COPY, OpKind.MOVE)) {
+        for (kind in listOf(OpKind.COMPRESS, OpKind.EXTRACT)) {
             val result = ops().runToEnd(spec(kind, listOf(a), dst))
             assertEquals("$kind", OpResult.Failed(FsError.Unsupported, 0, 0), result)
         }

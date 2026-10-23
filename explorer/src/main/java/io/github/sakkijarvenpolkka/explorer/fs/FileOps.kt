@@ -1,5 +1,6 @@
 /*
- * Files — copying and moving with their conflicts, renaming, and creating new items (spec §4.5).
+ * Files — copying and moving with their conflicts, renaming, creating new items (spec §4.5), and deleting,
+ * to the Recycle Bin or for good, restoring from it and emptying it (§4.6).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -29,10 +30,11 @@ private const val RENAME_TEMP_PREFIX = ".~ren-"
 data class Precheck(val unstorable: List<ItemFailure>, val copyBytes: Long, val availableBytes: Long)
 
 /**
- * Copies and moves (spec §4.5), writing through the [WriteProtocol] with [journal], and renames and
- * creates items. [volumes] says which volume a path is on, [labels] name new items and copies, [time]
- * paces the progress reports, [clock] is the wall clock, and [ids] makes the temporary names of renames.
- * Nothing here switches threads: the caller runs it where blocking calls belong.
+ * Copies and moves (spec §4.5), writing through the [WriteProtocol] with [journal], renames and creates
+ * items, and deletes them, to the Recycle Bin [bin] or for good (§4.6). [volumes] says which volume a
+ * path is on, [labels] name new items and copies, [time] paces the progress reports, [clock] is the
+ * wall clock, and [ids] makes the temporary names of renames. Nothing here switches threads: the caller
+ * runs it where blocking calls belong.
  */
 class FileOps(
     private val fs: FsBackend,
@@ -42,15 +44,42 @@ class FileOps(
     private val time: TimeSource = TimeSource.Monotonic,
     private val clock: () -> Long = System::currentTimeMillis,
     private val ids: () -> String,
+    private val bin: RecycleBin? = null,
 ) {
     private val writer = WriteProtocol(fs, journal)
 
     /**
-     * Copies or moves [spec]'s sources into its target folder; other kinds are [FsError.Unsupported].
+     * Runs [spec], as its kind says:
+     * - [COPY][OpKind.COPY] and [MOVE][OpKind.MOVE] put its sources into its target folder (see below);
+     * - [DELETE_TO_BIN][OpKind.DELETE_TO_BIN] moves each source into the Recycle Bin of its volume
+     *   ([RecycleBin.moveToBin]), without asking. One that cannot go there stays where it is, listed in
+     *   [OpResult.Done.failed] as [FsError.BinUnavailable] (or [FsError.NotFound]): it is never deleted
+     *   instead, that is for the caller to ask. [OpResult.Done.created] holds where each one is in the bin;
+     * - [DELETE_PERMANENT][OpKind.DELETE_PERMANENT] deletes each source and everything under it for good,
+     *   from one [walk] (no name left out), one item at a time and each before the folder it is in. A link
+     *   is deleted, never what it points to. What cannot be read or deleted is listed in
+     *   [OpResult.Done.failed], and the folders it is in are kept, untried;
+     * - [RESTORE][OpKind.RESTORE] moves the bin items [OpOptions.binItemIds] names back where they came
+     *   from ([RecycleBin.restoreTarget]), making that folder again if it is gone, as a move does (a name
+     *   taken there is a conflict for [resolver]). The items are looked for in the bins of the volumes the
+     *   sources are on: the sources are the items' [BinItem.payload]s, one for each id in the same order
+     *   (else this throws [IllegalArgumentException]). An item no longer in the bin fails as
+     *   [FsError.NotFound], under its source; one that is not wholly moved out (skipped, or partly merged)
+     *   stays in the bin, with its record;
+     * - [EMPTY_BIN][OpKind.EMPTY_BIN] deletes every item in the Recycle Bins of the volumes its sources
+     *   are on (the bin folders, [RecycleBin.binDir]) for good ([RecycleBin.purge]);
+     * - the ZIP kinds are [FsError.Unsupported], after 0 of 0 items.
      *
-     * Nothing is written, and the result is [OpResult.Failed] after 0 of 0 items, if the target is not a
-     * folder, or if it is one of the source folders or inside one (by file key, up from the target's real
-     * path, so an alias through a link is caught: [FsError.CrossesIntoSelf]): both are checked on the
+     * The kinds that use the Recycle Bin are [FsError.BinUnavailable], after 0 of 0 items, without [bin].
+     * A failure that ends everything ([isFatal]: no space, I/O error, read-only, volume gone) stops at once
+     * with [OpResult.Failed] after the items done so far. Cancelling throws [CancellationException]; anything
+     * else [resolver], [onProgress] or [onCommitted] throws ends the run with it. [onProgress] gets the
+     * totals first, then at most one report each 100 ms, then a final one; [onCommitted] gets the number
+     * of top-level sources done so far (of a restore: of its ids, in their order), after each.
+     *
+     * A copy or a move writes nothing, and is [OpResult.Failed] after 0 of 0 items, if the target is not
+     * a folder, or if it is one of the source folders or inside one (by file key, up from the target's
+     * real path, so an alias through a link is caught: [FsError.CrossesIntoSelf]): both are checked on the
      * sources themselves, before anything under them is walked. Then the sources are walked once ([walk]:
      * links not followed, the app's internal names left out), which gives the totals; if the volume can
      * tell it has no room for [Precheck.copyBytes] and 64 MiB more, the result is [FsError.NoSpace] after
@@ -72,42 +101,31 @@ class FileOps(
      *   gets its time when its content is done. A file larger than the target's file system holds, when
      *   that was not known before, fails as [FsError.TooLargeForVolume], with its part deleted.
      *
-     * A failure the file system reports that ends everything ([isFatal]: no space, I/O error, read-only,
-     * volume gone) stops at once with [OpResult.Failed] after the items done so far, leaving the sources
-     * where they are. Any other such failure is listed in [OpResult.Done.failed] and the rest goes on; a
-     * move whose copy is in place but whose source (a file, or a folder whose content all went) could not
-     * be deleted is marked [ItemFailure.copiedButSourceKept]. A source folder a move had to leave behind,
-     * because something in it was skipped or failed, stays, and the items left in such folders are
-     * counted in [OpResult.Done.leftInSource]. [OpResult.Done.created] holds where each top-level source
-     * now is (a folder merged into included). Cancelling throws [CancellationException], with the file
-     * being written deleted; anything else [resolver], [onProgress] or [onCommitted] throws ends the run
-     * with it.
-     *
-     * [onProgress] gets the totals first, then at most one report each 100 ms, then a final one;
-     * [onCommitted] gets the number of top-level sources done so far, after each.
+     * A fatal failure leaves the sources where they are, and the file being written is deleted when the
+     * run stops or is cancelled. Any other failure the file system reports is listed in
+     * [OpResult.Done.failed] and the rest goes on; a move whose copy is in place but whose source (a file,
+     * or a folder whose content all went) could not be deleted is marked [ItemFailure.copiedButSourceKept].
+     * A source folder a move had to leave behind, because something in it was skipped or failed, stays,
+     * and the items left in such folders are counted in [OpResult.Done.leftInSource].
+     * [OpResult.Done.created] holds where each top-level source now is (a folder merged into included).
      */
     suspend fun run(
         spec: OperationSpec,
         resolver: ConflictResolver,
         onProgress: (OpProgress) -> Unit,
         onCommitted: (Int) -> Unit = {},
-    ): OpResult {
-        if (spec.kind != OpKind.COPY && spec.kind != OpKind.MOVE) return OpResult.Failed(FsError.Unsupported, 0, 0)
-        val target = targetOf(spec)
-        val tops = topsOf(spec)
-        refusal(target, tops)?.let { return OpResult.Failed(it, 0, 0) }
-        val plan = plan(spec, target, tops)
-        val check = precheckOf(plan)
-        val known = check.availableBytes > 0
-        if (known && check.copyBytes > 0 && check.copyBytes > check.availableBytes - SPACE_MARGIN) {
-            return OpResult.Failed(FsError.NoSpace, 0, plan.totalItems)
-        }
-        val removable = volumes.volumeOf(target)?.removable == true
-        val transfer = Transfer(
-            fs, writer, labels, time, spec, plan, check.unstorable, removable, resolver, onProgress, onCommitted,
-        )
-        return transfer.run()
+    ): OpResult = when (spec.kind) {
+        OpKind.COPY, OpKind.MOVE -> transfer(spec, resolver, onProgress, onCommitted)
+        OpKind.DELETE_PERMANENT -> deletePermanently(spec, onProgress, onCommitted)
+        OpKind.DELETE_TO_BIN -> withBin { deleteToBin(it, spec, onProgress, onCommitted) }
+        OpKind.RESTORE -> withBin { restore(it, spec, resolver, onProgress, onCommitted) }
+        OpKind.EMPTY_BIN -> withBin { emptyBin(it, spec, onProgress, onCommitted) }
+        OpKind.COMPRESS, OpKind.EXTRACT -> OpResult.Failed(FsError.Unsupported, 0, 0)
     }
+
+    /** What [block] makes of the Recycle Bin, or [FsError.BinUnavailable] after 0 of 0 items without one. */
+    private inline fun withBin(block: (RecycleBin) -> OpResult): OpResult =
+        bin?.let(block) ?: OpResult.Failed(FsError.BinUnavailable, 0, 0)
 
     /**
      * What [run] would find before writing anything for a copy or a move: what the target cannot store,
@@ -115,7 +133,7 @@ class FileOps(
      */
     suspend fun precheck(spec: OperationSpec): Precheck {
         val target = targetOf(spec)
-        return precheckOf(plan(spec, target, topsOf(spec)))
+        return precheckOf(target, plan(spec, target, topsOf(spec)))
     }
 
     /**
@@ -159,6 +177,192 @@ class FileOps(
         }.first
     }
 
+    /** A copy or a move, as [run] describes it. */
+    private suspend fun transfer(
+        spec: OperationSpec,
+        resolver: ConflictResolver,
+        onProgress: (OpProgress) -> Unit,
+        onCommitted: (Int) -> Unit,
+    ): OpResult {
+        val target = targetOf(spec)
+        val tops = topsOf(spec)
+        refusal(target, tops)?.let { return OpResult.Failed(it, 0, 0) }
+        val plan = plan(spec, target, tops)
+        val check = precheckOf(target, plan)
+        val known = check.availableBytes > 0
+        if (known && check.copyBytes > 0 && check.copyBytes > check.availableBytes - SPACE_MARGIN) {
+            return OpResult.Failed(FsError.NoSpace, 0, plan.totalItems)
+        }
+        val removable = volumes.volumeOf(target)?.removable == true
+        val transfer = Transfer(
+            fs, writer, labels, time, spec, plan, check.unstorable, removable, resolver, onProgress, onCommitted,
+        )
+        return transfer.run()
+    }
+
+    /** Each source into the Recycle Bin of its volume, as [run] describes it. */
+    private suspend fun deleteToBin(
+        bin: RecycleBin,
+        spec: OperationSpec,
+        onProgress: (OpProgress) -> Unit,
+        onCommitted: (Int) -> Unit,
+    ): OpResult {
+        val created = ArrayList<Path>()
+        val failed = ArrayList<ItemFailure>()
+        val progress = Progress(time, onProgress, spec.sources.size, totalBytes = 0)
+        progress.report(force = true)
+        for ((index, raw) in spec.sources.withIndex()) {
+            currentCoroutineContext().ensureActive()
+            val path = Paths.get(raw)
+            progress.currentName = path.fileName?.toString()
+            try {
+                created.add(bin.moveToBin(path).payload)
+            } catch (e: FsException) {
+                failed += ItemFailure(raw, e.error)
+            }
+            progress.doneItems++
+            progress.report()
+            onCommitted(index + 1)
+        }
+        progress.report(force = true)
+        return OpResult.Done(created, failed)
+    }
+
+    /** Each source and everything under it deleted for good, as [run] describes it. */
+    private suspend fun deletePermanently(
+        spec: OperationSpec,
+        onProgress: (OpProgress) -> Unit,
+        onCommitted: (Int) -> Unit,
+    ): OpResult {
+        val failed = ArrayList<ItemFailure>()
+        val trees = spec.sources.map { raw ->
+            try {
+                doomedTree(fs, Paths.get(raw)).also { tree ->
+                    tree.unreadable.mapTo(failed) { (path, error) -> ItemFailure(path.toString(), error) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                failed += ItemFailure(raw, e.toFsError())
+                null
+            }
+        }
+        val entries = trees.flatMap { it?.entries.orEmpty() }
+        val progress = Progress(time, onProgress, entries.size, entries.sumOf { it.size })
+        progress.report(force = true)
+        for ((index, tree) in trees.withIndex()) {
+            if (tree != null) {
+                val onFailed = { path: Path, error: FsError -> failed += ItemFailure(path.toString(), error) }
+                val fatal = deleteTree(fs, tree, onFailed) {
+                    progress.currentName = it.name
+                    progress.doneItems++
+                    progress.doneBytes += it.size
+                    progress.report()
+                }
+                if (fatal != null) return OpResult.Failed(fatal, progress.doneItems, progress.totalItems)
+            }
+            onCommitted(index + 1)
+        }
+        progress.report(force = true)
+        return OpResult.Done(emptyList(), failed)
+    }
+
+    /** The bin items [OpOptions.binItemIds] names moved back where they came from, as [run] describes it. */
+    private suspend fun restore(
+        bin: RecycleBin,
+        spec: OperationSpec,
+        resolver: ConflictResolver,
+        onProgress: (OpProgress) -> Unit,
+        onCommitted: (Int) -> Unit,
+    ): OpResult {
+        val ids = spec.options.binItemIds
+        require(ids.size == spec.sources.size) { "a restore needs the bin item id of each source" }
+        val roots = spec.sources.mapNotNull { volumes.volumeOf(Paths.get(it))?.root }.distinct()
+        val inBin = bin.list(roots).associateBy { it.id }
+        val gone = ArrayList<ItemFailure>()
+        val items = ArrayList<BinItem>()
+        // The index in ids of each of items.
+        val positions = ArrayList<Int>()
+        for ((index, id) in ids.withIndex()) {
+            val item = inBin[id]
+            if (item == null) {
+                gone += ItemFailure(spec.sources[index], FsError.NotFound)
+            } else {
+                items += item
+                positions += index
+            }
+        }
+        var totalItems = 0
+        var totalBytes = 0L
+        val sources = items.map { item ->
+            val steps = stepsFrom(topOf(item.payload))
+            for (step in steps) {
+                if (step !is Item) continue
+                totalItems++
+                totalBytes += step.entry.size
+            }
+            Source(steps, copied = false, into = bin.restoreTarget(item).parent, createInto = true)
+        }
+        // Each item done is forgotten by the bin, unless some of it stays there; the ids before the next
+        // item to restore are all done, those not in the bin included.
+        val committed = { done: Int ->
+            bin.finishRestore(items[done - 1])
+            onCommitted(if (done < items.size) positions[done] else ids.size)
+        }
+        // A restore is a move within the item's volume, which flushes what it copies anyway.
+        val plan = Plan(sources, totalItems, totalBytes)
+        val transfer = Transfer(
+            fs, writer, labels, time, spec, plan, emptyList(), removable = false, resolver, onProgress, committed,
+        )
+        val result = transfer.run()
+        if (items.isEmpty() && ids.isNotEmpty()) onCommitted(ids.size)
+        return if (result is OpResult.Done) result.copy(failed = gone + result.failed) else result
+    }
+
+    /** Every item in the Recycle Bins of the sources' volumes deleted for good, as [run] describes it. */
+    private suspend fun emptyBin(
+        bin: RecycleBin,
+        spec: OperationSpec,
+        onProgress: (OpProgress) -> Unit,
+        onCommitted: (Int) -> Unit,
+    ): OpResult {
+        val failed = ArrayList<ItemFailure>()
+        val emptied = HashSet<Path>()
+        // The items of each source's bin, with their sizes; a bin two sources are on is emptied once.
+        val bins = spec.sources.map { raw ->
+            val root = volumes.volumeOf(Paths.get(raw))?.root
+            when {
+                root == null -> {
+                    failed += ItemFailure(raw, FsError.BinUnavailable)
+                    emptyList()
+                }
+                !emptied.add(root) -> emptyList()
+                else -> bin.list(listOf(root)).map { it to bin.sizeOf(it) }
+            }
+        }
+        val totalBytes = bins.sumOf { items -> items.sumOf { (_, size) -> size } }
+        val progress = Progress(time, onProgress, bins.sumOf { it.size }, totalBytes)
+        progress.report(force = true)
+        for ((index, items) in bins.withIndex()) {
+            for ((item, size) in items) {
+                currentCoroutineContext().ensureActive()
+                progress.currentName = item.name
+                try {
+                    bin.purge(item)
+                } catch (e: FsException) {
+                    if (e.error.isFatal) return OpResult.Failed(e.error, progress.doneItems, progress.totalItems)
+                    failed += ItemFailure(item.payload.toString(), e.error)
+                }
+                progress.doneItems++
+                progress.doneBytes += size
+                progress.report()
+            }
+            onCommitted(index + 1)
+        }
+        progress.report(force = true)
+        return OpResult.Done(emptyList(), failed)
+    }
+
     /** `a.txt` → `.~ren-<id>` → `A.txt`; if the second step fails, the first is undone. */
     private fun renameInTwoSteps(from: Path, to: Path) {
         val temp = from.resolveSibling(RENAME_TEMP_PREFIX + ids())
@@ -190,16 +394,16 @@ class FileOps(
         return Paths.get(requireNotNull(spec.target) { "${spec.kind} needs a target" })
     }
 
-    /** Each of [spec]'s sources itself (links not followed), not what is under it: its [Item], or [Unreadable]. */
-    private fun topsOf(spec: OperationSpec): List<Step> = spec.sources.map { raw ->
-        val path = Paths.get(raw)
-        try {
-            Item(Listing.entry(fs, path, NO_MIME), depth = 0)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Unreadable(path, e.toFsError(), depth = 0)
-        }
+    /** Each of [spec]'s sources itself (see [topOf]). */
+    private fun topsOf(spec: OperationSpec): List<Step> = spec.sources.map { topOf(Paths.get(it)) }
+
+    /** The source [path] itself (links not followed), not what is under it: its [Item], or [Unreadable]. */
+    private fun topOf(path: Path): Step = try {
+        Item(Listing.entry(fs, path, NO_MIME), depth = 0)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Unreadable(path, e.toFsError(), depth = 0)
     }
 
     /**
@@ -231,9 +435,9 @@ class FileOps(
                 items++
                 bytes += step.entry.size
             }
-            Source(steps, copied = spec.kind == OpKind.COPY || onOtherVolume(top.path, targetVolume))
+            Source(steps, copied = spec.kind == OpKind.COPY || onOtherVolume(top.path, targetVolume), into = target)
         }
-        return Plan(target, sources, items, bytes)
+        return Plan(sources, items, bytes)
     }
 
     /** The source [top] and everything under it, in walk order, with what could not be read where it was. */
@@ -265,8 +469,8 @@ class FileOps(
         return volume != null && targetVolume != null && volume.root != targetVolume.root
     }
 
-    private fun precheckOf(plan: Plan): Precheck {
-        val traits = volumes.volumeOf(plan.target)?.traits
+    private fun precheckOf(target: Path, plan: Plan): Precheck {
+        val traits = volumes.volumeOf(target)?.traits
         val unstorable = ArrayList<ItemFailure>()
         var copyBytes = 0L
         for (source in plan.sources) {
@@ -286,7 +490,7 @@ class FileOps(
             }
         }
         val available = try {
-            fs.availableBytes(plan.target)
+            fs.availableBytes(target)
         } catch (e: IOException) {
             0L
         }

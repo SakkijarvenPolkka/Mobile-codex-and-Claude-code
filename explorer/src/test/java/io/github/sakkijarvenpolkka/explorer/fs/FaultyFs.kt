@@ -31,6 +31,7 @@ class SimulatedCrash : Error()
  * - [deny]: a folder or file this app may not read.
  * - [wrapRead]: what [openRead] returns for a path, wrapped (a file that grows while it is read, ...).
  * - [fakeSize]: a size [attributes] reports for a file in place of its own.
+ * - [refuse]: a change that fails (a read-only volume, a denied rename, ...).
  * - [crashAtStep]: a [SimulatedCrash] at the k-th change.
  *
  * Every change — [createNew], each write to a channel it made, [force] (or a flush of that channel),
@@ -63,8 +64,11 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     private val denied = ArrayList<Path>()
     private val readWrappers = ArrayList<Pair<String, (InputStream) -> InputStream>>()
     private val fakeSizes = HashMap<Path, Long>()
+    private val refusals = ArrayList<Refusal>()
 
     private class Failure(val pathEndsWith: String, val afterBytes: Long, val reason: String)
+
+    private class Refusal(val op: Op, val pathEndsWith: String, val reason: String)
 
     /** Makes [atomicMove] from anywhere under [a] to anywhere under [b], or back, fail with EXDEV. */
     fun exdevBetween(a: Path, b: Path) {
@@ -95,6 +99,15 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     /** Makes [attributes] of [path] report [size] bytes; the file itself is unchanged. */
     fun fakeSize(path: Path, size: Long) {
         fakeSizes[path] = size
+    }
+
+    /**
+     * Makes each [op] on a path ending in [pathEndsWith] (for a move, the path moved) throw
+     * `FileSystemException(reason)` (a reason such as `Read-only file system`) instead of running. It
+     * is still a step.
+     */
+    fun refuse(op: Op, pathEndsWith: String, reason: String) {
+        refusals += Refusal(op, pathEndsWith, reason)
     }
 
     override fun list(dir: Path): List<Path> {
@@ -200,6 +213,8 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     private fun step(op: Op, path: Path, to: Path? = null) {
         recorded += Call(op, path, to)
         if (recorded.size == crashAtStep) throw SimulatedCrash()
+        val refusal = refusals.firstOrNull { it.op == op && path.toString().endsWith(it.pathEndsWith) } ?: return
+        throw FileSystemException(path.toString(), to?.toString(), refusal.reason)
     }
 
     private fun checkAccess(path: Path, statOnly: Boolean = false) {

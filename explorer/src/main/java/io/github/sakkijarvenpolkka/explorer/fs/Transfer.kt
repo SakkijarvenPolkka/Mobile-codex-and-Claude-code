@@ -1,6 +1,6 @@
 /*
- * Files — one run of a copy or a move as [FileOps.run] plans it: each item placed in walk order, with
- * its conflicts, and what a move leaves in its source (spec §4.5).
+ * Files — one run of a copy, a move or a restore as [FileOps.run] plans it: each item placed in walk
+ * order, with its conflicts, and what a move leaves in its source (spec §4.5, §4.6).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -33,54 +33,55 @@ internal fun FsBackend.sameFile(a: Path, b: Path): Boolean = try {
 
 /**
  * One run of a copy or a move through its [plan], writing through [writer] on [fs]: what [FileOps.run]
- * does once its checks have passed. [unstorable] are the items not to write, [removable] says whether
- * the target is on removable media; [labels], [time], [resolver], [onProgress] and [onCommitted] are
- * those of [FileOps] and of the run.
+ * does once its checks have passed. A restore runs as a move, out of the Recycle Bin. [unstorable] are
+ * the items not to write, [removable] says whether the target is on removable media; [labels], [time],
+ * [resolver], [onProgress] and [onCommitted] are those of [FileOps] and of the run.
  */
 internal class Transfer(
     private val fs: FsBackend,
     private val writer: WriteProtocol,
     private val labels: NameLabels,
-    private val time: TimeSource,
+    time: TimeSource,
     private val spec: OperationSpec,
     private val plan: Plan,
     unstorable: List<ItemFailure>,
     private val removable: Boolean,
     private val resolver: ConflictResolver,
-    private val onProgress: (OpProgress) -> Unit,
+    onProgress: (OpProgress) -> Unit,
     private val onCommitted: (Int) -> Unit,
 ) {
-    private val move = spec.kind == OpKind.MOVE
+    private val move = spec.kind == OpKind.MOVE || spec.kind == OpKind.RESTORE
     private val unstorable = unstorable.associate { it.path to it.error }
+    private val progress = Progress(time, onProgress, plan.totalItems, plan.totalBytes)
 
     /** The answers given "to all", by kind. */
     private val answers = HashMap<ConflictKind, ConflictAction>()
     private val created = ArrayList<Path>()
     private val failed = ArrayList<ItemFailure>()
 
-    /** The folders the current item is in, innermost last; the first is the target itself. */
+    /** The folders the current item is in, innermost last; the first is the source's [Source.into]. */
     private val frames = ArrayDeque<Frame>()
     private var leftInSource = 0
-    private var doneItems = 0
-    private var doneBytes = 0L
-    private var currentName: String? = null
-    private var reported: TimeMark? = null
+
+    /** Whether the current source's [Source.into] is to be made, if missing, before its item goes in. */
+    private var createInto = false
 
     suspend fun run(): OpResult {
-        report(force = true)
+        progress.report(force = true)
         for ((index, source) in plan.sources.withIndex()) {
             frames.clear()
-            frames.addLast(Frame(depth = -1, source = null, target = plan.target, mode = Mode.EXISTING))
+            frames.addLast(Frame(depth = -1, source = null, target = source.into, mode = Mode.EXISTING))
+            createInto = source.createInto
             for (step in source.steps) {
                 currentCoroutineContext().ensureActive()
                 while (frames.last().depth >= step.depth) close(frames.removeLast())
                 val fatal = take(step, frames.last())
-                if (fatal != null) return OpResult.Failed(fatal, doneItems, plan.totalItems)
+                if (fatal != null) return OpResult.Failed(fatal, progress.doneItems, plan.totalItems)
             }
             while (frames.size > 1) close(frames.removeLast())
             onCommitted(index + 1)
         }
-        report(force = true)
+        progress.report(force = true)
         return OpResult.Done(created.toList(), failed.toList(), leftInSource)
     }
 
@@ -93,10 +94,11 @@ internal class Transfer(
             return null
         }
         val entry = (step as Item).entry
-        currentName = entry.name
-        val startBytes = doneBytes
+        progress.currentName = entry.name
+        val startBytes = progress.doneBytes
         var frame: Frame? = null
         val placed = if (into == null) null else try {
+            if (step.depth == 0 && createInto) createFolders(into)
             val refused = unstorable[entry.path.toString()]
             when {
                 refused != null -> fail(entry.path, refused, parent)
@@ -113,10 +115,22 @@ internal class Transfer(
         }
         if (entry.kind == EntryKind.DIR) frames.addLast(frame ?: passed(step.depth))
         if (step.depth == 0 && placed != null) created.add(placed)
-        doneItems++
-        doneBytes = startBytes + entry.size
-        report()
+        progress.doneItems++
+        progress.doneBytes = startBytes + entry.size
+        progress.report()
         return null
+    }
+
+    /** Creates [dir] if it is missing, and each missing folder above it, from the top down. */
+    private fun createFolders(dir: Path) {
+        val missing = generateSequence(dir) { it.parent }.takeWhile { !fs.exists(it) }.toList()
+        for (folder in missing.asReversed()) {
+            try {
+                fs.createDirectory(folder)
+            } catch (e: FileAlreadyExistsException) {
+                // Made in the meantime.
+            }
+        }
     }
 
     /** Puts the file [entry] into [dir]; returns where it now is, or null if it is not there. */
@@ -165,15 +179,15 @@ internal class Transfer(
         parent: Frame,
     ): Path {
         if (renameFirst && renamed(entry.path, dst)) return dst
-        val startBytes = doneBytes
+        val startBytes = progress.doneBytes
         var read = 0L
         fs.openRead(entry.path).use { input ->
             val sync = move || replace || removable
             writer.write(dst, spec.id, sync, replace, entry.modified, input, entry.size) { bytes ->
                 read += bytes
                 // The size planned, not what a growing file turned out to have.
-                doneBytes = startBytes + minOf(read, entry.size)
-                report()
+                progress.doneBytes = startBytes + minOf(read, entry.size)
+                progress.report()
             }
         }
         if (move) deleteSource(entry.path, parent)
@@ -299,21 +313,41 @@ internal class Transfer(
     }
 
     private fun passed(depth: Int, placed: Path? = null) = Frame(depth, null, null, Mode.PASSED, placed = placed)
+}
+
+/**
+ * How far a run is, out of [totalItems] and [totalBytes], and the name it is working on; [report] passes
+ * it to [onProgress] at most once each 100 ms by [time], unless it is forced (the first and last reports).
+ */
+internal class Progress(
+    private val time: TimeSource,
+    private val onProgress: (OpProgress) -> Unit,
+    val totalItems: Int,
+    val totalBytes: Long,
+) {
+    var doneItems = 0
+    var doneBytes = 0L
+    var currentName: String? = null
+    private var reported: TimeMark? = null
 
     /** Reports progress, unless the last report was less than 100 ms ago and this one is not [force]d. */
-    private fun report(force: Boolean = false) {
+    fun report(force: Boolean = false) {
         val last = reported
         if (!force && last != null && last.elapsedNow() < PROGRESS_INTERVAL) return
         reported = time.markNow()
-        onProgress(OpProgress(plan.totalBytes, doneBytes, plan.totalItems, doneItems, currentName))
+        onProgress(OpProgress(totalBytes, doneBytes, totalItems, doneItems, currentName))
     }
 }
 
-/** A copy or a move as walked before it starts: its [target], its [sources] and their totals. */
-internal class Plan(val target: Path, val sources: List<Source>, val totalItems: Int, val totalBytes: Long)
+/** A copy, a move or a restore as walked before it starts: its [sources] and their totals. */
+internal class Plan(val sources: List<Source>, val totalItems: Int, val totalBytes: Long)
 
-/** A top-level source: it and everything under it, in walk order, and whether it is [copied] (vs renamed). */
-internal class Source(val steps: List<Step>, val copied: Boolean)
+/**
+ * A top-level source: it and everything under it, in walk order, the folder it goes [into], and whether
+ * it is [copied] (vs renamed). With [createInto], that folder, and any missing above it, is made first
+ * if it is not there (a restore to where an item was deleted from).
+ */
+internal class Source(val steps: List<Step>, val copied: Boolean, val into: Path, val createInto: Boolean = false)
 
 /** One step of a [Source]: an item, or something that could not be read; [depth] 0 is the source itself. */
 internal sealed interface Step {

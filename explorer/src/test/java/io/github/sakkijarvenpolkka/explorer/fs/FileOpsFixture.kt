@@ -16,6 +16,9 @@ val KO_LABELS = NameLabels(
 /** The id of the operations the tests run. */
 const val OP_ID = "op1"
 
+/** When the tests delete things to the Recycle Bin. */
+const val DELETED_AT = 1_700_000_000_000L
+
 /** A journal in memory: the temporary files still recorded. */
 class MemoryJournal : TempJournal {
     val recorded = LinkedHashSet<Path>()
@@ -49,6 +52,21 @@ class Answering(private val answer: (Conflict) -> Resolution) : ConflictResolver
 
 fun spec(kind: OpKind, sources: List<Path>, target: Path) =
     OperationSpec(OP_ID, kind, sources.map { it.toString() }, target.toString())
+
+/** Restoring [items] from the Recycle Bin. */
+fun restore(vararg items: BinItem) = OperationSpec(
+    OP_ID,
+    OpKind.RESTORE,
+    items.map { it.payload.toString() },
+    options = OpOptions(binItemIds = items.map { it.id }),
+)
+
+/** The Recycle Bin folder of the volume at [root]. */
+fun binOf(root: Path): Path = root.resolve(HiddenNames.RECYCLE_BIN)
+
+/** What [tree] finds under [root], the Recycle Bin left out. */
+fun outsideBin(root: Path): Map<String, String> =
+    tree(root).filterKeys { !it.startsWith(HiddenNames.RECYCLE_BIN + "/") }
 
 /** Runs [spec] to its end. */
 fun FileOps.runToEnd(

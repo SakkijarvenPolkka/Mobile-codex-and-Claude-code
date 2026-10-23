@@ -11,6 +11,7 @@ import org.junit.rules.TemporaryFolder
 import java.io.SequenceInputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -81,6 +82,24 @@ class FaultyFsTest {
         assertEquals(5_000_000_000L, fs.attributes(b).size())
         assertEquals(3L, fs.attributes(a).size())
         assertTrue(fs.attributes(b).isRegularFile)
+    }
+
+    @Test
+    fun refusedChangeFailsWithItsReason() {
+        val a = Files.write(dir.resolve("a.txt"), "a".toByteArray())
+        val fs = FaultyFs().apply { refuse(FaultyFs.Op.CREATE_DIRECTORY, "/ro", "Read-only file system") }
+
+        val refused = assertThrows(FileSystemException::class.java) { fs.createDirectory(dir.resolve("ro")) }
+        assertEquals("Read-only file system", refused.reason)
+        assertEquals(FsError.ReadOnly, refused.toFsError())
+        // Still a step, and nothing was made.
+        assertEquals(listOf(FaultyFs.Call(FaultyFs.Op.CREATE_DIRECTORY, dir.resolve("ro"))), fs.calls)
+        assertFalse(Files.exists(dir.resolve("ro")))
+
+        // Other changes, and the same change elsewhere, run.
+        fs.createDirectory(dir.resolve("rw"))
+        fs.atomicMove(a, dir.resolve("ro.txt"))
+        assertEquals(listOf("ro.txt", "rw"), names(dir))
     }
 
     @Test
