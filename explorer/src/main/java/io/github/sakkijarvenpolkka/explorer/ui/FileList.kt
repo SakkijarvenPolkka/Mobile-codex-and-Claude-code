@@ -94,10 +94,12 @@ internal val FolderTint = Color(0xFFFFC83D)
 
 /**
  * Each tab's list and grid positions for the location it shows. A tab keeps its position while
- * it stays at that location; a new location starts where its history entry was scrolled to.
+ * it stays at that location; a list built for a location starts where [start] puts the tab's
+ * history entry: where the view model last saw it scrolled there (so that recreating the
+ * activity keeps it), else where the entry was left.
  */
 @Stable
-class ListPositions {
+class ListPositions(private val start: (TabId, HistoryEntry) -> HistoryEntry) {
     private class Spot(val location: Location, val list: LazyListState, val grid: LazyGridState)
 
     private val spots = HashMap<TabId, Spot>()
@@ -108,18 +110,16 @@ class ListPositions {
 
     private fun spot(tab: TabId, entry: HistoryEntry): Spot {
         spots[tab]?.takeIf { it.location == entry.location }?.let { return it }
+        val from = start(tab, entry)
         val spot = Spot(
             entry.location,
-            LazyListState(entry.scrollIndex, entry.scrollOffset),
-            LazyGridState(entry.scrollIndex, entry.scrollOffset),
+            LazyListState(from.scrollIndex, from.scrollOffset),
+            LazyGridState(from.scrollIndex, from.scrollOffset),
         )
         spots[tab] = spot
         return spot
     }
 }
-
-@Composable
-fun rememberListPositions(): ListPositions = remember { ListPositions() }
 
 /** The sort after tapping the column [key]: the other direction of the same column, else [key] ascending. */
 fun nextSort(current: SortSpec, key: SortKey): SortSpec =

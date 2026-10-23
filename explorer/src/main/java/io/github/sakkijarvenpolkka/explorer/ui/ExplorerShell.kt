@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -99,7 +100,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     val expanded = widthClass == WidthClass.EXPANDED
     BackHandler(enabled = ui.backTarget != null, onBack = vm::systemBack)
     LaunchedEffect(expanded) { if (expanded) vm.setDrawerOpen(false) }
-    val positions = rememberListPositions()
+    val positions = remember(vm) { ListPositions(vm::scrollOf) }
     Box(Modifier.fillMaxSize().background(FluentTheme.colors.background).testTag(Tags.SHELL)) {
         val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
         Column(Modifier.fillMaxSize().then(sides)) {

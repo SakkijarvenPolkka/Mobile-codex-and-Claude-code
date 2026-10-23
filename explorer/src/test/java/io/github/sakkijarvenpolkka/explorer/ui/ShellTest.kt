@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
@@ -29,12 +30,14 @@ import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -110,23 +113,28 @@ class ShellTest {
         if (::vm.isInitialized) vm.viewModelScope.cancel()
     }
 
-    /** The shell on [root] as the primary volume and [extra] volumes, with [probe] inside the theme. */
+    /**
+     * The shell on [root] as the primary volume and [extra] volumes, with [probe] inside the theme;
+     * set through [restoration] when given, so that a test can recreate it.
+     */
     private fun show(
         widthClass: WidthClass = WidthClass.COMPACT,
         fs: FsBackend = NioFsBackend,
         extra: List<Volume> = emptyList(),
+        restoration: StateRestorationTester? = null,
         probe: @Composable () -> Unit = {},
     ) {
         volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
         val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined)
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
-        rule.setContent {
+        val content: @Composable () -> Unit = {
             val global by settings.global.collectAsState()
             ExplorerTheme(global) {
                 ExplorerShell(vm, widthClass)
                 probe()
             }
         }
+        if (restoration != null) restoration.setContent(content) else rule.setContent(content)
         rule.waitForIdle()
     }
 
@@ -497,5 +505,33 @@ class ShellTest {
         rule.onNodeWithTag(Tags.UNAVAILABLE).assertDoesNotExist()
         row("photo.jpg").assertExists()
         assertEquals(Location.Folder(dcim), location())
+    }
+
+    @Test
+    fun recreatedShellKeepsScrollPosition() {
+        repeat(100) { file("f${it.toString().padStart(3, '0')}.txt") }
+        val restoration = StateRestorationTester(rule)
+        show(restoration = restoration)
+        rule.onNodeWithTag(Tags.fileList(ViewMode.DETAILS)).performScrollToIndex(50)
+        rule.waitForIdle()
+        assertEquals("f050.txt", firstShownRow())
+
+        // As when the activity is recreated (rotation, resizing, a dark mode switch): remembered state is gone.
+        restoration.emulateSavedInstanceStateRestore()
+        rule.waitForIdle()
+        assertEquals("f050.txt", firstShownRow())
+    }
+
+    /** The name of the topmost row the details list shows, at least in part. */
+    private fun firstShownRow(): String {
+        val listTop = rule.onNodeWithTag(Tags.fileList(ViewMode.DETAILS)).fetchSemanticsNode().boundsInRoot.top
+        val isRow = SemanticsMatcher("is a row") {
+            it.config.getOrNull(SemanticsProperties.TestTag)?.startsWith(Tags.row("")) == true
+        }
+        return rule.onAllNodes(isRow).fetchSemanticsNodes()
+            .filter { it.boundsInRoot.bottom > listTop }
+            .minBy { it.boundsInRoot.top }
+            .config[SemanticsProperties.TestTag]
+            .removePrefix(Tags.row(""))
     }
 }

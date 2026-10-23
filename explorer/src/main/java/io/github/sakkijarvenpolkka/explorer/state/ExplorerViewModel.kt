@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -143,8 +144,11 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     /** What each tab's list was last read for. */
     private val loadedFor = HashMap<TabId, LoadKey>()
 
-    /** The active tab's list position, for the history entry it leaves. */
-    private var scrollSpot: ScrollSpot? = null
+    /**
+     * Where each tab's list was last scrolled to at the location it shows: for the history entry
+     * it leaves, and for a list built again there (the activity recreated).
+     */
+    private val scrollSpots = HashMap<TabId, ScrollSpot>()
 
     init {
         val restored = settings.loadSession(codec)
@@ -190,9 +194,11 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun forward() = reduce(TabAction.Forward)
 
-    /** Goes to the parent folder; nothing from a volume root or a folder on an unmounted volume. */
+    /** Goes to the parent folder; nothing from a volume root or a folder on no mounted volume. */
     fun up() {
-        upTargetNow()?.let(::navigate)
+        val tab = tabs.value.active
+        val roots = deps.volumes.volumes.value.mapNotNull { it.root }
+        upFrom(tab.current.location, tab.id in unavailableTabs.value, roots)?.let(::navigate)
     }
 
     /** Reads the active tab's folder again, keeping its rows on screen until the new ones arrive. */
@@ -277,8 +283,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
     }
 
-    /** Opens the menu of [folder]'s subfolders (nothing when it has none). */
+    /** Opens the menu of [folder]'s subfolders (nothing when it has none or is on no mounted volume). */
     fun showSubfolders(folder: Path) {
+        if (deps.lookup.volumeOf(folder) == null) return
         val options = ListOptions(showHidden = settings.global.value.showHidden)
         viewModelScope.launch {
             val children = try {
@@ -316,9 +323,19 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
     }
 
-    /** Where the list of [location] is scrolled to (first visible item and its offset), kept for Back. */
+    /** Where the active tab's list of [location] is scrolled to (first visible item and its offset). */
     fun onScrolled(location: Location, index: Int, offset: Int) {
-        scrollSpot = ScrollSpot(tabs.value.activeId, location, index, offset)
+        scrollSpots[tabs.value.activeId] = ScrollSpot(location, index, offset)
+    }
+
+    /**
+     * [entry] with where [tab]'s list was last scrolled to at its location, or [entry] as it is
+     * when the list has not been there since. A list built again for the same place (the activity
+     * recreated) starts there, and the entry a tab leaves keeps it for Back.
+     */
+    fun scrollOf(tab: TabId, entry: HistoryEntry): HistoryEntry {
+        val spot = scrollSpots[tab]?.takeIf { it.location == entry.location } ?: return entry
+        return entry.copy(scrollIndex = spot.index, scrollOffset = spot.offset)
     }
 
     private fun reduce(a: TabAction) {
@@ -332,6 +349,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             loadedFor.remove(closed)
         }
         unavailableTabs.update { gone -> gone.filterKeys { after.locationOf(it) == before.locationOf(it) } }
+        scrollSpots.keys.retainAll { after.locationOf(it) == before.locationOf(it) }
         shell.update { it.copy(overlay = null) }
         settings.saveSession(after, codec)
     }
@@ -354,24 +372,17 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         return listedRows().mapNotNull { row -> row.entry.takeIf { it.path in selected } }
     }
 
-    private fun leavingEntry(): HistoryEntry? {
-        val tab = tabs.value.active
-        val spot = scrollSpot?.takeIf { it.tab == tab.id && it.location == tab.current.location } ?: return null
-        return tab.current.copy(scrollIndex = spot.index, scrollOffset = spot.offset)
-    }
+    private fun leavingEntry(): HistoryEntry = tabs.value.active.let { scrollOf(it.id, it.current) }
 
-    /** Reads the active tab's folder when it is not read for its current options yet, or always with [refresh]. */
+    /**
+     * Reads the active tab's folder when it is not read for its current options yet, or always
+     * with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
+     */
     private fun ensureLoaded(refresh: Boolean = false) {
         val tab = tabs.value.active
         val folder = (tab.current.location as? Location.Folder)?.path ?: return
         if (tab.id in unavailableTabs.value) return
-        if (deps.lookup.volumeOf(folder) == null) {
-            val gone = unavailableAt(folder)
-            if (gone != null) {
-                unavailableTabs.update { it + (tab.id to gone) }
-                return
-            }
-        }
+        if (deps.lookup.volumeOf(folder) == null) return placeOffVolume(tab.id, folder)
         val global = settings.global.value
         val options = ListOptions(global.showHidden, viewFor(tab.current.location, global).sort)
         val key = LoadKey(folder, options)
@@ -503,36 +514,65 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val root = deps.volumes.volumes.value.firstOrNull { it.uuid == uuid }?.root ?: return
         val back = unavailableTabs.value.filterValues { it.uuid == uuid }
         if (back.isEmpty()) return
+        moveTabs(back.mapValues { (_, gone) -> Location.Folder(root.resolve(gone.rel)) })
+        unavailableTabs.update { it - back.keys }
+    }
+
+    /** Puts each tab of [places] at its new place instead of its current one, without a new history entry. */
+    private fun moveTabs(places: Map<TabId, Location>) {
         val before = tabs.value
         val after = before.copy(
             tabs = before.tabs.map { tab ->
-                val place = back[tab.id]?.let { Location.Folder(root.resolve(it.rel)) }
+                val place = places[tab.id]
                 if (place == null || place == tab.current.location) tab else tab.copy(current = HistoryEntry(place))
             },
         )
+        if (after == before) return
         tabs.value = after
-        unavailableTabs.update { it - back.keys }
-        if (after != before) settings.saveSession(after, codec)
+        settings.saveSession(after, codec)
+    }
+
+    /**
+     * The tab [tab] is at [folder], which is on no mounted volume (a place kept from before its
+     * volume went out or moved): shown as unavailable while the volume is out, moved to the same
+     * folder where the volume is mounted now, and shown as not found when it is on no volume at all.
+     */
+    private fun placeOffVolume(tab: TabId, folder: Path) {
+        when (val place = placeOf(folder)) {
+            is DecodedLocation.Unavailable -> unavailableTabs.update { it + (tab to place) }
+            is DecodedLocation.Ok -> moveTabs(mapOf(tab to place.location))
+            DecodedLocation.Invalid -> {
+                loadedFor.remove(tab)
+                loader.setSource(tab, flowOf(ListingState.Error(FsError.NotFound)))
+            }
+        }
     }
 
     private fun rememberRoots(volumes: List<Volume>) {
         for (volume in volumes) volume.root?.let { lastRoots[volume.uuid] = it }
     }
 
-    /** [path] on a volume that was mounted and is not now, or null. */
-    private fun unavailableAt(path: Path): DecodedLocation.Unavailable? {
-        val (uuid, root) = lastRoots.entries
-            .filter { path.startsWith(it.value) }
-            .maxByOrNull { it.value.nameCount }
-            ?.toPair() ?: return null
-        if (deps.volumes.volumes.value.any { it.uuid == uuid && it.root != null }) return null
-        return DecodedLocation.Unavailable(uuid, root.relativize(path).toString())
+    /**
+     * Which volume [path], on no mounted one, belongs to: one that was mounted at the root it is
+     * under and is not now, else the one whose usual mount point it is under (as [codec] places
+     * it: unavailable, or the same folder where the volume is mounted now). Invalid for neither.
+     */
+    private fun placeOf(path: Path): DecodedLocation {
+        val known = lastRoots.entries.filter { path.startsWith(it.value) }.maxByOrNull { it.value.nameCount }
+        if (known != null && deps.volumes.volumes.value.none { it.uuid == known.key && it.root != null }) {
+            return DecodedLocation.Unavailable(known.key, known.value.relativize(path).toString())
+        }
+        return codec.encode(Location.Folder(path))?.let(codec::decode) ?: DecodedLocation.Invalid
     }
 
-    private fun upTargetNow(): Location? {
-        val tab = tabs.value.active
-        if (tab.id in unavailableTabs.value) return null
-        return upTarget(tab.current.location, deps.volumes.volumes.value.mapNotNull { it.root }, homeEnabled = false)
+    /**
+     * Where Up goes from [location]: nowhere while it is [unavailable] or on no mounted volume, so
+     * that it never leaves a volume.
+     */
+    private fun upFrom(location: Location, unavailable: Boolean, roots: List<Path>): Location? = when {
+        unavailable -> null
+        location is Location.Folder && deps.lookup.volumeOf(location.path) == null -> null
+        else -> upTarget(location, roots, homeEnabled = false)
     }
 
     private fun startLocation(): Location {
@@ -594,7 +634,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             overlay = core.shell.overlay,
             drawerOpen = core.shell.drawerOpen,
             selected = selected,
-            up = if (unavailable != null) null else upTarget(location, roots, homeEnabled = false),
+            up = upFrom(location, unavailable != null, roots),
         )
     }
 
@@ -639,7 +679,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private data class LoadKey(val folder: Path, val options: ListOptions)
 
-    private class ScrollSpot(val tab: TabId, val location: Location, val index: Int, val offset: Int)
+    private class ScrollSpot(val location: Location, val index: Int, val offset: Int)
 
     private sealed interface Resolved {
         data class Folder(val path: Path) : Resolved

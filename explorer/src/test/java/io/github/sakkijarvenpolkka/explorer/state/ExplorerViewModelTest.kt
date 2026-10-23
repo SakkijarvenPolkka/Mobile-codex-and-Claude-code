@@ -11,6 +11,7 @@ import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewMode
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
@@ -264,5 +265,70 @@ class ExplorerViewModelTest {
         assertEquals(Location.Folder(usb.resolve("docs")), location())
         assertTrue(ui.tabs.active.back.isEmpty())
         assertEquals(listOf("a.txt"), names())
+    }
+
+    @Test
+    fun restoredTabOnUnmountedVolumeStaysUnavailableThroughCrumbAndBack() {
+        val usb = folder.newFolder("usb").toPath().toRealPath()
+        Files.createDirectories(usb.resolve("docs/old"))
+        val settings = SettingsStore(null)
+        val mounted = FakeVolumes(FakeVolumes.primary(root), FakeVolumes.removable("USB1", "USB drive", usb))
+        val saved = listOf("docs", "docs/old").fold(TabsReducer.initial(Location.Folder(usb))) { model, rel ->
+            TabsReducer.reduce(model, TabAction.Navigate(Location.Folder(usb.resolve(rel))))
+        }
+        settings.saveSession(saved, VolumeLocationCodec { mounted.volumes.value })
+
+        // Started while the drive is out; it was never mounted while this process ran.
+        val out = FakeVolumes.removable("USB1", "USB drive", null, VolumeState.UNMOUNTED)
+        start(settings, FakeVolumes(FakeVolumes.primary(root), out))
+        val guess = Paths.get("/storage/USB1")
+        assertEquals(DecodedLocation.Unavailable("USB1", "docs/old"), ui.unavailable)
+
+        // The drive's breadcrumb segment: still the unavailable drive, with no Up above it.
+        vm.navigate(Location.Folder(guess))
+        settle()
+        assertEquals(DecodedLocation.Unavailable("USB1", ""), ui.unavailable)
+        assertNull(ui.up)
+        vm.up()
+        settle()
+        assertEquals(Location.Folder(guess), location())
+        // Its chevron lists nothing: the drive is not read.
+        vm.showSubfolders(guess)
+        settle()
+        assertNull(ui.overlay)
+        assertNull(ui.message)
+
+        // Back to the place left, then to a restored entry: unavailable as well.
+        vm.back()
+        settle()
+        assertEquals(DecodedLocation.Unavailable("USB1", "docs/old"), ui.unavailable)
+        vm.back()
+        settle()
+        assertEquals(Location.Folder(guess.resolve("docs")), location())
+        assertEquals(DecodedLocation.Unavailable("USB1", "docs"), ui.unavailable)
+        assertNull(ui.up)
+
+        // Mounted elsewhere: Back to a restored entry goes to that folder where the drive is now.
+        volumes.update("USB1") { it.copy(root = usb, state = VolumeState.MOUNTED) }
+        volumes.events.tryEmit(VolumeEvent.Mounted("USB1"))
+        settle()
+        assertEquals(Location.Folder(usb.resolve("docs")), location())
+        vm.back()
+        settle()
+        assertEquals(Location.Folder(usb), location())
+        assertNull(ui.unavailable)
+        assertEquals(listOf("docs"), names())
+        assertNull(ui.up)
+    }
+
+    @Test
+    fun folderOnNoVolumeIsNotRead() {
+        val elsewhere = folder.newFolder("elsewhere").toPath().toRealPath()
+        Files.createFile(elsewhere.resolve("a.txt"))
+        start()
+        vm.navigate(Location.Folder(elsewhere))
+        settle()
+        assertEquals(ListingState.Error(FsError.NotFound), ui.listing)
+        assertNull(ui.up)
     }
 }
