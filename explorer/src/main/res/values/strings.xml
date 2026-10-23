@@ -2,4 +2,5 @@
 <!-- Files — English strings (same keys as values-ko). SPDX-License-Identifier: MIT -->
 <resources>
     <string name="app_name">Files</string>
+    <string name="close">Close</string>
 </resources>
