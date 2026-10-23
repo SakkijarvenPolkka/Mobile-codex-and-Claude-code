@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -57,7 +58,9 @@ class WriteProtocolTest {
         mtime: Long? = null,
         bytes: ByteArray = content,
         onBytes: (Long) -> Unit = {},
-    ): Long = runBlocking { write(target, OP, sync, replaceExisting, mtime, ByteArrayInputStream(bytes), onBytes) }
+    ): Long = runBlocking {
+        write(target, OP, sync, replaceExisting, mtime, ByteArrayInputStream(bytes), onBytes = onBytes)
+    }
 
     private fun names(at: Path = dir): List<String> = NioFsBackend.list(at).map { it.fileName.toString() }.sorted()
 
@@ -145,6 +148,70 @@ class WriteProtocolTest {
         assertEquals(FsError.NoSpace, e.error)
         assertEquals(listOf(temp.fileName.toString()), names())
         assertEquals(setOf(temp), journal.recorded)
+    }
+
+    @Test
+    fun cleanupFailureDoesNotHideTheWriteFailure() {
+        // A journal that cannot record the removal, as a full disk would refuse it.
+        val journal = object : TempJournal {
+            override fun add(temp: Path) = Unit
+
+            override fun remove(temp: Path) {
+                throw FileSystemException(temp.toString(), null, "No space left on device")
+            }
+        }
+        val faulty = FaultyFs().apply { failAt(".xpart", 10, "Input/output error") }
+
+        val e = assertThrows(FsException::class.java) {
+            protocol(faulty, journal).writeBlocking(dir.resolve("out.txt"))
+        }
+
+        // The write's own failure is what is reported; the cleanup's goes with it.
+        assertEquals(FsError.IoError, e.error)
+        assertEquals(1, e.suppressed.size)
+        assertEquals(emptyList<String>(), names())
+
+        // Nor does a cleanup failure turn a cancellation into an error.
+        val broken = object : FsBackend by NioFsBackend {
+            override fun delete(path: Path) = throw IllegalStateException("broken backend")
+        }
+        var thrown: Throwable? = null
+        runBlocking {
+            launch {
+                try {
+                    val source = ByteArrayInputStream(content)
+                    protocol(broken).write(dir.resolve("b.txt"), OP, false, false, null, source) { cancel() }
+                } catch (t: Throwable) {
+                    thrown = t
+                    throw t
+                }
+            }.join()
+        }
+        assertTrue(thrown is CancellationException)
+        assertTrue(thrown!!.suppressed.single() is IllegalStateException)
+    }
+
+    @Test
+    fun bufferIsSizedToTheExpectedSize() {
+        val bytes = ByteArray(20_000) { it.toByte() }
+        fun writesFor(expectedSize: Long?): Int {
+            val fs = FaultyFs()
+            val target = folder.newFolder().toPath().resolve("out.bin")
+            runBlocking {
+                val source = ByteArrayInputStream(bytes)
+                WriteProtocol(fs, NoJournal).write(target, OP, false, false, null, source, expectedSize) {}
+            }
+            assertArrayEquals(bytes, Files.readAllBytes(target))
+            return fs.calls.count { it.op == FaultyFs.Op.WRITE }
+        }
+
+        // Without a size, one 1 MiB buffer takes it all.
+        assertEquals(1, writesFor(null))
+        // A small file gets a small buffer (8 KiB at least), so 20,000 bytes take three.
+        assertEquals(3, writesFor(10))
+        assertEquals(3, writesFor(0))
+        // A large one is never given more than the buffer size.
+        assertEquals(1, writesFor(1L shl 40))
     }
 
     @Test

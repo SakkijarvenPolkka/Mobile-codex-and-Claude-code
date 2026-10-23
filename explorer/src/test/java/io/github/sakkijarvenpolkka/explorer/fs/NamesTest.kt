@@ -80,8 +80,12 @@ class NamesTest {
         for (code in bidi) {
             assertEquals("U+%04X".format(code), bad(NameProblem.BidiControl), check("a${code.toChar()}b"))
         }
+        // The line and paragraph separators end a line as a line break does.
+        for (code in listOf(0x2028, 0x2029)) {
+            assertEquals("U+%04X".format(code), bad(NameProblem.ControlChar), check("a${code.toChar()}b"))
+        }
         // The neighbours of those ranges are ordinary characters.
-        for (code in listOf(0x200D, 0x2010, 0x2029, 0x202F, 0x2065, 0x206A)) {
+        for (code in listOf(0x200D, 0x2010, 0x2027, 0x202F, 0x2065, 0x206A)) {
             assertEquals("U+%04X".format(code), NameCheck.Ok("a${code.toChar()}b"), check("a${code.toChar()}b"))
         }
     }
@@ -335,6 +339,18 @@ class NamesTest {
         }
         assertEquals(FsError.AlreadyExists, late.error)
         assertEquals(2, calls)
+    }
+
+    @Test
+    fun claimStartsWithinTheNumbers() {
+        val dir = folder.root.toPath()
+        for (startAt in listOf(0, -1, 10_000)) {
+            assertThrows(IllegalArgumentException::class.java) {
+                claimUniqueName(dir, "a", ".txt", UniqueStyle.KEEP_BOTH, en, startAt) { it }
+            }
+        }
+        val (last, _) = claimUniqueName(dir, "a", ".txt", UniqueStyle.KEEP_BOTH, en, 9999) { it }
+        assertEquals(dir.resolve("a (9999).txt"), last)
     }
 
     @Test

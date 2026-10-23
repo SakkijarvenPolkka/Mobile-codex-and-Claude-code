@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.SequenceInputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Files
@@ -43,6 +44,43 @@ class FaultyFsTest {
         fs.createNew(dir.resolve("docs/new.txt")).close()
         assertEquals(listOf("Note.txt", "new.txt"), names(dir.resolve("Docs")))
         assertFalse(fs.exists(dir.resolve("b.txt")))
+    }
+
+    @Test
+    fun channelCannotBypassTheStepCount() {
+        val target = dir.resolve("a.txt")
+        val fs = FaultyFs()
+
+        fs.createNew(target).use { channel ->
+            // Flushing through the channel itself is a step like FsBackend.force.
+            channel.force(true)
+            assertEquals(FaultyFs.Call(FaultyFs.Op.FORCE, target), fs.calls.last())
+            assertEquals(2, fs.steps)
+            // Cutting a file is a change no step stands for: refused.
+            assertThrows(UnsupportedOperationException::class.java) { channel.truncate(0) }
+        }
+
+        // A crash at that step happens before the flush.
+        val crashing = FaultyFs().apply { crashAtStep = 2 }
+        crashing.createNew(dir.resolve("b.txt")).use { channel ->
+            assertThrows(SimulatedCrash::class.java) { channel.force(false) }
+        }
+    }
+
+    @Test
+    fun wrapReadAndFakeSize() {
+        val a = Files.write(dir.resolve("a.txt"), "abc".toByteArray())
+        val b = Files.write(dir.resolve("b.txt"), "def".toByteArray())
+        val fs = FaultyFs().apply {
+            wrapRead("a.txt") { input -> SequenceInputStream(input, "!".byteInputStream()) }
+            fakeSize(b, 5_000_000_000L)
+        }
+
+        assertEquals("abc!", fs.openRead(a).use { String(it.readBytes()) })
+        assertEquals("def", fs.openRead(b).use { String(it.readBytes()) })
+        assertEquals(5_000_000_000L, fs.attributes(b).size())
+        assertEquals(3L, fs.attributes(a).size())
+        assertTrue(fs.attributes(b).isRegularFile)
     }
 
     @Test

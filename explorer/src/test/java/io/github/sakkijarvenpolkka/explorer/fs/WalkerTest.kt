@@ -123,6 +123,19 @@ class WalkerTest {
     }
 
     @Test
+    fun mimeFailureEndsTheWalk() {
+        file("a.txt")
+        file("b.txt")
+
+        // Only the backend's failures skip an item; the caller's own mime lookup failing is a bug to see.
+        assertThrows(IllegalStateException::class.java) {
+            runBlocking {
+                walk(NioFsBackend, root, mime = { error("no mime for $it") }) { true }
+            }
+        }
+    }
+
+    @Test
     fun cancellable() {
         file("a.txt")
         file("b.txt")

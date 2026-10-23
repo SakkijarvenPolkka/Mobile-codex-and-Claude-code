@@ -45,6 +45,9 @@ fun tempNameFor(name: String, opId: String): String {
     return "." + name.takeUtf8(MAX_NAME_BYTES - 1 - utf8Length(suffix)) + suffix
 }
 
+/** The smallest copy buffer for a file expected to be small, unless the buffer size itself is smaller. */
+private const val MIN_BUFFER = 8 shl 10
+
 /**
  * Writes files so that, whenever the process dies, a final name holds either what it held before or
  * the complete new file, never a cut one; all that can be left behind is a temporary file recorded in
@@ -64,8 +67,9 @@ class WriteProtocol(
      * Writes [source], read to its end and not closed, to [target], and returns the bytes written:
      * 1. records the temporary file [tempNameFor] next to [target] in the journal, then creates it
      *    (CREATE_NEW);
-     * 2. copies [source] into it, [bufferSize] bytes at a time, checking for cancellation before each
-     *    buffer and passing each buffer's size to [onBytes];
+     * 2. copies [source] into it, [bufferSize] bytes at a time (or fewer for a smaller [expectedSize],
+     *    8 KiB at least), checking for cancellation before each buffer and passing each buffer's size to
+     *    [onBytes];
      * 3. if [sync], flushes it to the device ([FsBackend.force]), then closes it;
      * 4. checks that it holds exactly the bytes read from [source] (so a source that grew while it was
      *    read is copied as read);
@@ -80,7 +84,8 @@ class WriteProtocol(
      * [FsException] with its [toFsError], except a taken [target], which stays a
      * [FileAlreadyExistsException]. What stays on disk stays in the journal, for a later sweep: a
      * temporary file that cannot be deleted, or a file that already had its name (left by a crash).
-     * An [Error] is not caught, so it passes without any cleanup.
+     * A failure of that cleanup never replaces the write's own failure or cancellation, which is
+     * rethrown with it suppressed. An [Error] is not caught, so it passes without any cleanup.
      */
     suspend fun write(
         target: Path,
@@ -89,6 +94,7 @@ class WriteProtocol(
         replaceExisting: Boolean,
         mtime: Long?,
         source: InputStream,
+        expectedSize: Long? = null,
         onBytes: (Long) -> Unit,
     ): Long {
         val name = requireNotNull(target.fileName) { "$target has no name" }.toString()
@@ -98,7 +104,7 @@ class WriteProtocol(
         val written = try {
             val read = fs.createNew(temp).use { channel ->
                 created = true
-                copy(source, channel, onBytes).also { if (sync) fs.force(channel) }
+                copy(source, channel, bufferFor(expectedSize), onBytes).also { if (sync) fs.force(channel) }
             }
             if (fs.attributes(temp).size() != read) throw FsException(FsError.IoError)
             if (mtime != null) setModified(temp, mtime)
@@ -106,18 +112,29 @@ class WriteProtocol(
             fs.atomicMove(temp, target)
             read
         } catch (e: Exception) {
-            // CancellationException included: the cleanup runs, then the cancellation goes on.
-            withContext(NonCancellable) { discard(temp, created, e) }
             // Only the target can be taken once the temporary file exists; before, it was that name.
-            throw if (e is FileAlreadyExistsException && created) e else e.asWriteFailure()
+            val failure = if (e is FileAlreadyExistsException && created) e else e.asWriteFailure()
+            // CancellationException included: the cleanup runs, then the cancellation goes on.
+            withContext(NonCancellable) { discardAfter(failure, temp, created, e) }
+            throw failure
         }
         journal.remove(temp)
         return written
     }
 
-    /** Copies [source] to its end into [channel]; returns the bytes read, all of which were written. */
-    private suspend fun copy(source: InputStream, channel: FileChannel, onBytes: (Long) -> Unit): Long {
-        val buffer = ByteArray(bufferSize)
+    /** A buffer of [bufferSize] bytes, or fewer for a file [expectedSize] says is smaller. */
+    private fun bufferFor(expectedSize: Long?): ByteArray {
+        if (expectedSize == null) return ByteArray(bufferSize)
+        return ByteArray(minOf(bufferSize.toLong(), maxOf(expectedSize, MIN_BUFFER.toLong())).toInt())
+    }
+
+    /** Copies [source] to its end into [channel] through [buffer]; returns the bytes read, all written. */
+    private suspend fun copy(
+        source: InputStream,
+        channel: FileChannel,
+        buffer: ByteArray,
+        onBytes: (Long) -> Unit,
+    ): Long {
         var total = 0L
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -135,6 +152,20 @@ class WriteProtocol(
             fs.setModified(temp, mtime)
         } catch (e: IOException) {
             // The file is still written; only its time is lost (some volumes refuse some times).
+        }
+    }
+
+    /**
+     * [discard] after the write [failed]: whatever goes wrong in it is added to [failure], what the write
+     * reports, which it never replaces.
+     */
+    private fun discardAfter(failure: Exception, temp: Path, created: Boolean, failed: Exception) {
+        try {
+            discard(temp, created, failed)
+        } catch (e: Exception) {
+            // A CancellationException too: nothing here can be cancelled (it runs NonCancellable), and the
+            // caller rethrows the write's own failure, a cancellation included.
+            failure.addSuppressed(e)
         }
     }
 

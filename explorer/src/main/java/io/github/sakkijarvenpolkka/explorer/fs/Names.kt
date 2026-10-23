@@ -7,6 +7,8 @@
 package io.github.sakkijarvenpolkka.explorer.fs
 
 import io.github.sakkijarvenpolkka.explorer.util.extensionStart
+import io.github.sakkijarvenpolkka.explorer.util.isBidiControl
+import io.github.sakkijarvenpolkka.explorer.util.isLineSeparator
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
 
@@ -14,7 +16,8 @@ import java.nio.file.Path
 internal const val MAX_NAME_BYTES = 255
 
 /** The last number [claimUniqueName] tries (`name (9999)`). */
-private const val MAX_UNIQUE_NUMBER = 9999
+@PublishedApi
+internal const val MAX_UNIQUE_NUMBER = 9999
 
 /** The verdict of [NameValidator.validate]. */
 sealed interface NameCheck {
@@ -34,8 +37,9 @@ object NameValidator {
      * Checks [raw] for a volume with [traits]. Spaces around the name are trimmed first (only
      * U+0020: a tab or line break there is a control character and is refused). Every volume
      * refuses an empty name, `/`, `.` and `..`, C0 and C1 control characters (NUL included), the
-     * bidirectional controls that reorder text, and more than 255 UTF-8 bytes. FAT volumes
-     * ([VolumeTraits.fatNames]) also refuse `\ : * ? " < > |` and a trailing dot.
+     * line and paragraph separators, the bidirectional controls that reorder text, and more than
+     * 255 UTF-8 bytes. FAT volumes ([VolumeTraits.fatNames]) also refuse `\ : * ? " < > |` and a
+     * trailing dot.
      */
     fun validate(raw: String, traits: VolumeTraits): NameCheck {
         val name = raw.trim(' ')
@@ -47,8 +51,8 @@ object NameValidator {
         if (name.isEmpty()) return NameProblem.Empty
         if (name == "." || name == "..") return NameProblem.DotOrDotDot
         if ('/' in name) return NameProblem.Slash
-        if (name.any(::isControl)) return NameProblem.ControlChar
-        if (name.any(::isBidiControl)) return NameProblem.BidiControl
+        if (name.any { isControl(it) || isLineSeparator(it.code) }) return NameProblem.ControlChar
+        if (name.any { isBidiControl(it.code) }) return NameProblem.BidiControl
         // FAT's own limit, 255 UTF-16 units, is never reached first: a char is as many bytes as units, or more.
         if (utf8Length(name) > MAX_NAME_BYTES) return NameProblem.TooLong
         if (traits.fatNames) {
@@ -61,13 +65,6 @@ object NameValidator {
 
     /** C0 (U+0000–U+001F), DEL and C1 (U+0080–U+009F) controls. */
     private fun isControl(c: Char): Boolean = c.code <= 0x1F || c.code in 0x7F..0x9F
-
-    /** The set `DisplayName` neutralizes: direction marks, embeddings, overrides and isolates. */
-    private fun isBidiControl(c: Char): Boolean = when (c.code) {
-        0x200E, 0x200F, 0x061C -> true
-        in 0x202A..0x202E, in 0x2066..0x2069 -> true
-        else -> false
-    }
 }
 
 /**
@@ -116,12 +113,13 @@ fun candidateName(stem: String, ext: String, style: UniqueStyle, n: Int, labels:
  * folder at the candidate path (`CREATE_NEW`, `createDirectory`) and throws
  * [FileAlreadyExistsException] if the name is taken, in which case the next number is tried.
  * Claiming the name is what makes it unique, so two writers cannot pick the same one. Numbers
- * run from [startAt] (1 is the plain name) to 9999, after which this throws
- * `FsException(FsError.AlreadyExists)`. Any other failure of [claim] passes through.
+ * run from [startAt] (1 to 9999; 1 is the plain name) up to 9999, after which this throws
+ * `FsException(FsError.AlreadyExists)`. Any other failure of [claim] passes through. [claim] is
+ * inlined, so it may suspend.
  *
  * @return the claimed path and what [claim] returned for it
  */
-fun <T> claimUniqueName(
+inline fun <T> claimUniqueName(
     dir: Path,
     stem: String,
     ext: String,
@@ -130,6 +128,7 @@ fun <T> claimUniqueName(
     startAt: Int,
     claim: (Path) -> T,
 ): Pair<Path, T> {
+    require(startAt in 1..MAX_UNIQUE_NUMBER) { "startAt must be in 1..$MAX_UNIQUE_NUMBER, was $startAt" }
     for (n in startAt..MAX_UNIQUE_NUMBER) {
         val path = dir.resolve(candidateName(stem, ext, style, n, labels))
         try {

@@ -9,6 +9,7 @@ import io.github.sakkijarvenpolkka.explorer.util.extensionOf
 import kotlinx.serialization.Serializable
 import java.io.IOException
 import java.nio.file.Path
+import java.nio.file.attribute.BasicFileAttributes
 
 enum class SortKey { NAME, MODIFIED, TYPE, SIZE }
 
@@ -22,8 +23,10 @@ data class ListOptions(val showHidden: Boolean = false, val sort: SortSpec = Sor
 object Listing {
 
     /** The entry for [path], from one attributes read; links are not followed. */
-    fun entry(fs: FsBackend, path: Path, mime: (String) -> String?): FileEntry {
-        val attributes = fs.attributes(path)
+    fun entry(fs: FsBackend, path: Path, mime: (String) -> String?): FileEntry = entry(path, fs.attributes(path), mime)
+
+    /** The entry for [path] from its [attributes], as [FsBackend.attributes] read them. */
+    fun entry(path: Path, attributes: BasicFileAttributes, mime: (String) -> String?): FileEntry {
         val name = path.fileName?.toString() ?: path.toString()
         val kind = when {
             attributes.isSymbolicLink -> EntryKind.SYMLINK

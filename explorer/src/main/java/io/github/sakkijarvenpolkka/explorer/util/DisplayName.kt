@@ -6,6 +6,19 @@
 package io.github.sakkijarvenpolkka.explorer.util
 
 /**
+ * Whether [codePoint] reorders the text around it: the direction marks U+200E, U+200F and U+061C, and the
+ * embedding, override and isolate controls U+202A–U+202E and U+2066–U+2069.
+ */
+fun isBidiControl(codePoint: Int): Boolean = when (codePoint) {
+    0x200E, 0x200F, 0x061C -> true
+    in 0x202A..0x202E, in 0x2066..0x2069 -> true
+    else -> false
+}
+
+/** Whether [codePoint] ends a line without being a C0/C1 control: U+2028 and U+2029. */
+fun isLineSeparator(codePoint: Int): Boolean = codePoint == 0x2028 || codePoint == 0x2029
+
+/**
  * Every screen shows names through [of]. A name is only for display: operations use the
  * original `Path`, never a path rebuilt from a shown string.
  */
@@ -34,13 +47,12 @@ object DisplayName {
         return shown.toString()
     }
 
-    private fun visible(c: Char): Char = when (c.code) {
-        in 0x00..0x1F -> (CONTROL_PICTURES + c.code).toChar()
-        0x7F -> DELETE_PICTURE
-        0x85 -> NEWLINE_PICTURE
-        in 0x80..0x9F -> PLACEHOLDER
-        0x061C, 0x200E, 0x200F, 0x2028, 0x2029 -> PLACEHOLDER
-        in 0x202A..0x202E, in 0x2066..0x2069 -> PLACEHOLDER
+    private fun visible(c: Char): Char = when {
+        c.code <= 0x1F -> (CONTROL_PICTURES + c.code).toChar()
+        c.code == 0x7F -> DELETE_PICTURE
+        c.code == 0x85 -> NEWLINE_PICTURE
+        c.code in 0x80..0x9F -> PLACEHOLDER
+        isBidiControl(c.code) || isLineSeparator(c.code) -> PLACEHOLDER
         else -> c
     }
 

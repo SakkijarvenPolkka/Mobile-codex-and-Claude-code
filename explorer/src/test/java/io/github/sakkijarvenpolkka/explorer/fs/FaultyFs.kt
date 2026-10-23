@@ -29,10 +29,13 @@ class SimulatedCrash : Error()
  * - [exdevBetween]: [atomicMove] between two roots fails as across volumes.
  * - [failAt]: a write channel fails once it has written a number of bytes (ENOSPC, EIO, ...).
  * - [deny]: a folder or file this app may not read.
+ * - [wrapRead]: what [openRead] returns for a path, wrapped (a file that grows while it is read, ...).
+ * - [fakeSize]: a size [attributes] reports for a file in place of its own.
  * - [crashAtStep]: a [SimulatedCrash] at the k-th change.
  *
- * Every change — [createNew], each write to a channel it made, [force], [atomicMove], [delete],
- * [createDirectory], [setModified] — is a step, and is recorded in [calls] before it runs.
+ * Every change — [createNew], each write to a channel it made, [force] (or a flush of that channel),
+ * [atomicMove], [delete], [createDirectory], [setModified] — is a step, and is recorded in [calls]
+ * before it runs.
  */
 class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
 
@@ -58,6 +61,8 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     private val exdev = ArrayList<Pair<Path, Path>>()
     private val failures = ArrayList<Failure>()
     private val denied = ArrayList<Path>()
+    private val readWrappers = ArrayList<Pair<String, (InputStream) -> InputStream>>()
+    private val fakeSizes = HashMap<Path, Long>()
 
     private class Failure(val pathEndsWith: String, val afterBytes: Long, val reason: String)
 
@@ -82,6 +87,16 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
         denied.add(path)
     }
 
+    /** Makes [openRead] of a path ending in [pathEndsWith] return [wrapper] around the file's own stream. */
+    fun wrapRead(pathEndsWith: String, wrapper: (InputStream) -> InputStream) {
+        readWrappers += pathEndsWith to wrapper
+    }
+
+    /** Makes [attributes] of [path] report [size] bytes; the file itself is unchanged. */
+    fun fakeSize(path: Path, size: Long) {
+        fakeSizes[path] = size
+    }
+
     override fun list(dir: Path): List<Path> {
         val real = resolve(dir)
         checkAccess(real)
@@ -91,7 +106,11 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     override fun attributes(path: Path): BasicFileAttributes {
         val real = resolve(path)
         checkAccess(real, statOnly = true)
-        return delegate.attributes(real)
+        val attributes = delegate.attributes(real)
+        val size = fakeSizes[path] ?: return attributes
+        return object : BasicFileAttributes by attributes {
+            override fun size(): Long = size
+        }
     }
 
     override fun exists(path: Path): Boolean {
@@ -117,7 +136,9 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
     override fun openRead(path: Path): InputStream {
         val real = resolve(path)
         checkAccess(real)
-        return delegate.openRead(real)
+        val stream = delegate.openRead(real)
+        val wrapper = readWrappers.firstOrNull { path.toString().endsWith(it.first) }?.second ?: return stream
+        return wrapper(stream)
     }
 
     override fun createNew(path: Path): FileChannel {
@@ -203,7 +224,7 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
         null
     }
 
-    /** A write channel that counts its writes as steps and fails as [failure] says. */
+    /** A write channel that counts its writes and flushes as steps and fails as [failure] says. */
     private inner class FaultyChannel(val inner: FileChannel, val path: Path, private val failure: Failure?) :
         FileChannel() {
 
@@ -246,9 +267,15 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
 
         override fun size(): Long = inner.size()
 
-        override fun truncate(size: Long): FileChannel = apply { inner.truncate(size) }
+        // A change no step stands for: nothing writes this way.
+        override fun truncate(size: Long): FileChannel =
+            throw UnsupportedOperationException("FaultyFs files are not truncated")
 
-        override fun force(metaData: Boolean) = inner.force(metaData)
+        // A flush through the channel is the same step as FsBackend.force.
+        override fun force(metaData: Boolean) {
+            step(Op.FORCE, path)
+            inner.force(metaData)
+        }
 
         override fun transferTo(position: Long, count: Long, target: WritableByteChannel): Long =
             inner.transferTo(position, count, target)

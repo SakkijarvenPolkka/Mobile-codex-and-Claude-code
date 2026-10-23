@@ -26,7 +26,7 @@ data class WalkItem(val entry: FileEntry, val relative: Path, val depth: Int)
  * into. A folder is descended into when [visit] returns true for it. A folder that cannot be listed, or
  * an item whose attributes cannot be read, is reported to [onSkipped] (any exception of the backend,
  * as [toFsError]) and the walk goes on. The walk checks for cancellation before every item; a failure of
- * [visit] itself ends it.
+ * the caller's own [mime], [include] or [visit] ends it.
  *
  * The walk is iterative (a stack of folders, no recursion) and reads each folder once, through [fs].
  */
@@ -51,7 +51,8 @@ suspend fun walk(
             continue
         }
         val child = level.children[level.next++]
-        val entry = orSkip(child, onSkipped) { Listing.entry(fs, child, mime) } ?: continue
+        val attributes = orSkip(child, onSkipped) { fs.attributes(child) } ?: continue
+        val entry = Listing.entry(child, attributes, mime)
         if (!include(entry)) continue
         val item = WalkItem(entry, level.relative.resolve(entry.name), level.depth + 1)
         if (!visit(item) || entry.kind != EntryKind.DIR) continue
