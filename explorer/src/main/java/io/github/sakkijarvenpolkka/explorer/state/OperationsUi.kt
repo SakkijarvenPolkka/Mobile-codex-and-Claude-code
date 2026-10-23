@@ -98,6 +98,9 @@ internal class OperationsUi(
     @Volatile
     private var listed: Map<Path, BinItem> = emptyMap()
 
+    /** What emptying the Recycle Bin asked about ([emptyBin]): the folders of those items in the bin. */
+    private var emptying: List<Path> = emptyList()
+
     /**
      * Follows the runner, the app's notice ([ExplorerDeps.opsNotice]) and the shell's [messages] while
      * the view model lives: each operation that ends is taken from the runner ([onFinished]), and the
@@ -244,10 +247,14 @@ internal class OperationsUi(
         submit(OperationSpec(newId(), OpKind.RESTORE, items.map { it.payload.toString() }, options = ids))
     }
 
-    /** Asks whether to delete everything in the Recycle Bin (as last listed) for good. */
+    /**
+     * Asks whether to delete everything in the Recycle Bin, as last listed, for good. Yes deletes those
+     * items only: what reaches the bin in the meantime (from an operation queued or running) was not asked
+     * about, and stays.
+     */
     fun emptyBin() {
-        val count = listed.size
-        if (count > 0) ask(ConfirmRequest.EmptyBin(count))
+        emptying = listed.values.mapNotNull(::binPathOf)
+        if (emptying.isNotEmpty()) ask(ConfirmRequest.EmptyBin(emptying.size))
     }
 
     /** The answer to [State.confirm]: yes does what it asked about; no leaves things as they are. */
@@ -259,10 +266,7 @@ internal class OperationsUi(
             is ConfirmRequest.PermanentDelete -> confirmPermanent(request.paths)
             is ConfirmRequest.BinUnavailable -> confirmPermanent(request.paths)
             is ConfirmRequest.ExtensionChange -> commitRename(request.entry, request.newName, extensionConfirmed = true)
-            is ConfirmRequest.EmptyBin -> {
-                val bins = listed.values.map { it.volumeRoot }.distinct().mapNotNull { deps.bin?.binDir(it) }
-                if (bins.isNotEmpty()) submit(OperationSpec(newId(), OpKind.EMPTY_BIN, bins.map { it.toString() }))
-            }
+            is ConfirmRequest.EmptyBin -> confirmPermanent(emptying)
             is ConfirmRequest.SkipUnstorable -> if (request.spec.sources.isNotEmpty()) submit(request.spec)
         }
     }
@@ -378,11 +382,12 @@ internal class OperationsUi(
     }
 
     /**
-     * How [op] ended, as messages about no place: a refused one (nothing done) by its error only, one
-     * that stopped with how far it got and why, a move that left items in its sources with how many. Its
-     * failures are listed ([State.failures]), but those of a delete to the Recycle Bin: the items that
-     * could not go there are asked about ([ConfirmRequest.BinUnavailable]), unless another question is
-     * open (they stay where they are), and those already gone need no word.
+     * How [op] ended, as messages about no place: one that did all it was asked with how many items, a
+     * refused one (nothing done) by its error only, one that stopped with how far it got and why, a move
+     * that left items in its sources with how many; a cancelled one, not at all. Its failures are listed
+     * ([State.failures]), but those of a delete to the Recycle Bin: the items that could not go there are
+     * asked about ([ConfirmRequest.BinUnavailable]), unless another question is open (they stay where they
+     * are), and those already gone need no word.
      */
     private fun tell(op: FinishedOp) {
         val kind = op.spec.kind
@@ -399,6 +404,10 @@ internal class OperationsUi(
                 }
             }
             is OpResult.Done -> {
+                if (result.failed.isEmpty() && result.leftInSource == 0) {
+                    val done = UiText.res(R.string.op_done, op.spec.sources.size)
+                    shell.showUnbound(UiMessage(done, InfoSeverity.SUCCESS))
+                }
                 if (result.leftInSource > 0) {
                     val left = UiText.res(R.string.left_in_source, result.leftInSource)
                     shell.showUnbound(UiMessage(left, InfoSeverity.WARNING))

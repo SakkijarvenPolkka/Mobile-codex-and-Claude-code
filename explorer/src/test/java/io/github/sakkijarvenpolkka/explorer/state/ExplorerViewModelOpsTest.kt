@@ -146,7 +146,7 @@ class ExplorerViewModelOpsTest {
         // What the operation made is the new selection; a copy stays on the clipboard.
         assertEquals(listOf(root.resolve("a - Copy.txt")), ui.selected.map { it.path })
         assertEquals(Clipboard(listOf(root.resolve("a.txt")), ClipMode.COPY), ui.clipboard)
-        assertNull(ui.message)
+        assertEquals(done(1), ui.message)
     }
 
     @Test
@@ -190,7 +190,8 @@ class ExplorerViewModelOpsTest {
         drain()
 
         assertEquals(listOf("b.txt"), names())
-        assertNull(ui.message)
+        // No error: the one item still there was moved.
+        assertEquals(done(1), ui.message)
         assertNull(ui.failedOp)
         assertNull(ui.clipboard)
     }
@@ -207,7 +208,7 @@ class ExplorerViewModelOpsTest {
 
         assertEquals(listOf("b.txt"), names())
         assertEquals(listOf("a.txt"), bin.list(listOf(root)).map { it.name })
-        assertNull(ui.message)
+        assertEquals(done(1), ui.message)
     }
 
     @Test
@@ -351,7 +352,8 @@ class ExplorerViewModelOpsTest {
         // Only what it had not done: the second source.
         assertTrue(Files.exists(dst.resolve("b.txt")))
         assertFalse(Files.exists(dst.resolve("a.txt")))
-        assertNull(ui.message)
+        // Its bar went with it; what is told now is how the retry ended.
+        assertEquals(done(1), ui.message)
         assertEquals(emptyList<Any>(), vm.runner.value.interrupted)
     }
 
@@ -431,9 +433,71 @@ class ExplorerViewModelOpsTest {
         val failed = checkNotNull(ui.failedOp) { "No failures listed" }
         val result = failed.result as OpResult.Done
         assertEquals(listOf(FsError.Unsupported), result.failed.map { it.error })
+        // Listed, not told as done.
+        assertNull(ui.message)
         vm.dismissFailures(failed)
         drain()
         assertNull(ui.failedOp)
+    }
+
+    @Test
+    fun operationWithoutFailuresEndsWithSuccessBar() {
+        file("a.txt")
+        val dst = dir("dst")
+        file("dst/a.txt", "old")
+        start()
+        select("a.txt")
+        vm.copy()
+        goTo(dst)
+        vm.paste()
+        drain()
+
+        // Cancelled (here while it waits for an answer): nothing to tell.
+        vm.cancelOperation(checkNotNull(vm.runner.value.pending) { "No conflict waits" }.opId)
+        drain()
+        assertNull(vm.runner.value.running)
+        assertNull(ui.message)
+
+        vm.paste()
+        drain()
+        checkNotNull(vm.runner.value.pending) { "No conflict waits" }.answer(Resolution(ConflictAction.KEEP_BOTH))
+        drain()
+        assertEquals(listOf("a (2).txt", "a.txt"), names())
+        assertEquals(done(1), ui.message)
+        // About no place: it stays wherever the tab goes.
+        vm.back()
+        drain()
+        assertEquals(done(1), ui.message)
+    }
+
+    @Test
+    fun emptyBinDeletesOnlyWhatItAskedAbout() {
+        file("a.txt")
+        val b = file("b.txt")
+        val c = file("c.txt")
+        start()
+        select("a.txt")
+        vm.delete(permanent = false)
+        drain()
+        vm.navigate(Location.RecycleBin)
+        drain()
+        assertEquals(listOf("a.txt"), names())
+        vm.emptyBin()
+        assertEquals(ConfirmRequest.EmptyBin(1), ui.confirm)
+
+        // Before the answer, b.txt reaches the bin (whose tab shows it), and c.txt is on its way there,
+        // queued ahead of what Yes runs.
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(b.toString())))
+        drain()
+        assertEquals(listOf("a.txt", "b.txt"), names())
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(c.toString())))
+        vm.answerConfirm(yes = true)
+        drain()
+
+        // Only the item asked about is gone for good.
+        assertNull(ui.confirm)
+        assertEquals(listOf("b.txt", "c.txt"), bin.list(listOf(root)).map { it.name }.sorted())
+        assertEquals(listOf("b.txt", "c.txt"), names())
     }
 
     /** A copy of [sources] into [target] that a crash stopped after [committed] of them, as its journal shows. */
@@ -443,6 +507,9 @@ class ExplorerViewModelOpsTest {
         crashed.begin(spec)
         crashed.committed(spec.id, committed)
     }
+
+    /** The bar that tells an operation on [count] items ended with no failures. */
+    private fun done(count: Int) = UiMessage(UiText.res(R.string.op_done, count), InfoSeverity.SUCCESS)
 
     private companion object {
         val LABELS = NameLabels(newFolder = "New folder", newTextDocument = "New Text Document", copySuffix = " - Copy")

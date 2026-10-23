@@ -146,6 +146,7 @@
     <string name="progress_title_extract">Extracting %1$d items</string>
     <string name="progress_background">Run in background</string>
     <string name="progress_remaining">Items remaining: %1$d (%2$s)</string>
+    <string name="op_done">%d items were processed</string>
     <string name="op_done_failed">%d items couldn\'t be processed</string>
     <string name="retry_failed">Retry failed items</string>
     <string name="op_interrupted">An operation was interrupted: %1$d of %2$d done</string>

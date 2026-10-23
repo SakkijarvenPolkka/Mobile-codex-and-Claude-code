@@ -78,7 +78,7 @@ sealed interface ConfirmRequest {
     /** Rename [entry] to [newName], which changes its extension. */
     data class ExtensionChange(val entry: FileEntry, val newName: String) : ConfirmRequest
 
-    /** Delete all [count] items of the Recycle Bin for good. */
+    /** Delete all [count] items of the Recycle Bin (as listed when asked) for good. */
     data class EmptyBin(val count: Int) : ConfirmRequest
 
     /** [count] items cannot be stored on the destination drive: skip them, running [spec] (the rest)? */

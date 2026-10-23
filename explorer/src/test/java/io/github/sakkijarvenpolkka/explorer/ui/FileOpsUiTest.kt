@@ -48,6 +48,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.state.Command
+import io.github.sakkijarvenpolkka.explorer.state.ConfirmRequest
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
@@ -310,10 +311,31 @@ class FileOpsUiTest {
         waitFor { names() == listOf("b.txt") }
         rule.onNodeWithTag(Tags.command(Command.EMPTY_BIN)).performClick()
         rule.onNodeWithText(str(R.string.empty_bin_body, 1)).assertExists()
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 1)).assertExists()
         button(str(R.string.yes)).performClick()
         waitFor { names().isEmpty() }
         assertFalse(Files.exists(root.resolve("b.txt")))
         assertTrue(Files.exists(root.resolve("a.txt")))
+    }
+
+    @Test
+    fun deletingForGoodSaysHowManyAndThatItCannotBeUndone() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        val request = mutableStateOf<ConfirmRequest>(ConfirmRequest.PermanentDelete(listOf(a, b), 2))
+        showAlone { ConfirmDialog(request.value, onAnswer = {}) }
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 2)).assertExists()
+
+        // The Recycle Bin could not take them: asked, with the same warning.
+        request.value = ConfirmRequest.BinUnavailable(listOf(a, b))
+        rule.waitForIdle()
+        rule.onNodeWithText(str(R.string.bin_unavailable)).assertExists()
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 2)).assertExists()
+
+        request.value = ConfirmRequest.EmptyBin(3)
+        rule.waitForIdle()
+        rule.onNodeWithText(str(R.string.empty_bin_body, 3)).assertExists()
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 3)).assertExists()
     }
 
     private fun selection(range: TextRange) = SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, range)
