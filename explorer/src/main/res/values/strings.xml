@@ -136,7 +136,7 @@
     <string name="conflict_skip">Skip this item</string>
     <string name="conflict_keep_both">Keep both</string>
     <string name="conflict_merge">Merge the folders</string>
-    <string name="conflict_apply_all">Do this for the next %d conflicts</string>
+    <string name="conflict_apply_all">Do this for all remaining conflicts</string>
 
     <!-- File operations: progress and results -->
     <string name="progress_title_copy">Copying %1$d items</string>
@@ -152,6 +152,7 @@
     <string name="op_interrupted">An operation was interrupted: %1$d of %2$d done</string>
     <string name="retry">Retry</string>
     <string name="left_in_source">%d items were left in the source</string>
+    <string name="failure_source_kept">Copied, but the original couldn\'t be removed</string>
     <string name="op_fatal">Stopped %3$s: %1$d of %2$d done</string>
     <string name="op_name_copy">copying</string>
     <string name="op_name_move">moving</string>
@@ -172,6 +173,7 @@
     <string name="err_unsupported_item">Unsupported item (link or special file)</string>
     <string name="err_busy">An operation in progress is using this item</string>
     <string name="err_already_exists">An item with this name already exists</string>
+    <string name="hint_empty_bin">Emptying the Recycle Bin frees %s</string>
 
     <!-- Names, renaming -->
     <string name="name_fat_chars">A file name can\'t contain any of the following characters: \\ / : * ? \" &lt; &gt; |</string>
@@ -184,8 +186,9 @@
     <!-- Deleting and the Recycle Bin -->
     <string name="delete_permanent_title">Delete permanently</string>
     <string name="delete_permanent_body">Permanently delete %d items? This can\'t be undone.</string>
-    <string name="bin_unavailable">These items can\'t be moved to the Recycle Bin — delete them permanently?</string>
+    <string name="bin_unavailable">%d items can\'t be moved to the Recycle Bin — delete them permanently?</string>
     <string name="empty_bin_body">Permanently delete all %d items in the Recycle Bin?</string>
+    <string name="cannot_undo">This can\'t be undone.</string>
     <string name="bin_original">Original location</string>
     <string name="bin_deleted">Date deleted</string>
     <string name="bin_unknown">Original location unknown</string>

@@ -27,6 +27,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.NameCheck
 import io.github.sakkijarvenpolkka.explorer.fs.NameProblem
 import io.github.sakkijarvenpolkka.explorer.fs.NameValidator
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
+import io.github.sakkijarvenpolkka.explorer.state.RenameError
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ContentDialog
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTextBox
 import io.github.sakkijarvenpolkka.explorer.util.UiText
@@ -38,9 +39,17 @@ import io.github.sakkijarvenpolkka.explorer.util.text
  * name, and of a name without an extension, such as one starting with a dot). What is wrong with the
  * name, by the rules of its volume ([traits], [NameValidator]), shows while typing, and OK is enabled
  * only without it; OK and Done call [onCommit] with the name as typed, Cancel and Back [onDismiss].
+ * Why renaming to a name failed ([failure]) shows while that name is in the box; the dialog stays open
+ * with what was typed until the rename is done.
  */
 @Composable
-fun RenameDialog(entry: FileEntry, traits: VolumeTraits, onCommit: (String) -> Unit, onDismiss: () -> Unit) {
+fun RenameDialog(
+    entry: FileEntry,
+    traits: VolumeTraits,
+    onCommit: (String) -> Unit,
+    onDismiss: () -> Unit,
+    failure: RenameError? = null,
+) {
     var value by remember(entry) { mutableStateOf(TextFieldValue(entry.name, preselection(entry))) }
     val problem = (NameValidator.validate(value.text, traits) as? NameCheck.Bad)?.problem
     val commit = { if (problem == null) onCommit(value.text) }
@@ -57,7 +66,8 @@ fun RenameDialog(entry: FileEntry, traits: VolumeTraits, onCommit: (String) -> U
             onValueChange = { value = it },
             modifier = Modifier.fillMaxWidth().focusRequester(focus).testTag(Tags.RENAME_FIELD),
             onSubmit = commit,
-            error = problem?.let { nameProblemText(it, traits).text() },
+            error = problem?.let { nameProblemText(it, traits).text() }
+                ?: failure?.takeIf { it.name == value.text }?.error?.text(),
         )
         LaunchedEffect(entry) { focus.requestFocus() }
     }

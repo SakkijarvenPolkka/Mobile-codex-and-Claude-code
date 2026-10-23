@@ -71,7 +71,8 @@ private val FOLDER_WRITES = setOf(NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS,
 
 /**
  * The commands available in [c]. Options is always available. Home offers Refresh, and Open
- * for a selection. The Recycle Bin offers Restore, Delete permanently and Empty Recycle Bin.
+ * for a selection. The Recycle Bin offers Restore, Delete permanently (also as Delete, which deletes
+ * for good there: the Delete key) and Empty Recycle Bin.
  * Folders and search results offer the file commands; only folders take new and pasted items.
  */
 fun commandsFor(c: CommandContext): Set<Command> {
@@ -96,7 +97,7 @@ private fun binCommands(c: CommandContext): Set<Command> = buildSet {
     add(OPTIONS)
     if (c.hasEntries) addAll(listOf(SELECT_ALL, INVERT))
     if (!c.binEmpty) add(EMPTY_BIN)
-    if (c.selection.isNotEmpty()) addAll(listOf(RESTORE, DELETE_PERMANENT, SELECT_NONE))
+    if (c.selection.isNotEmpty()) addAll(listOf(RESTORE, DELETE, DELETE_PERMANENT, SELECT_NONE))
 }
 
 private fun folderCommands(c: CommandContext): Set<Command> = buildSet {

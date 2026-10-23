@@ -92,9 +92,9 @@ fun ProgressChip(op: RunningOp, onClick: () -> Unit) {
 }
 
 /**
- * The items [op] could not do, each by its name and why, the first [MAX_LISTED] of them. "Retry failed
- * items" calls [onRetry], when there are any to retry (one copied whose source could not be deleted is
- * not copied again); Close and Back call [onDismiss].
+ * The items [op] could not do, each by its name and why, the first [MAX_LISTED] of them; one copied whose
+ * source could not be deleted says so. "Retry failed items" calls [onRetry], when there are any to retry
+ * (such a one is not copied again); Close and Back call [onDismiss].
  */
 @Composable
 fun FailuresDialog(op: FinishedOp, onRetry: () -> Unit, onDismiss: () -> Unit) {
@@ -110,6 +110,7 @@ fun FailuresDialog(op: FinishedOp, onRetry: () -> Unit, onDismiss: () -> Unit) {
             for (failure in failed.take(MAX_LISTED)) {
                 Column {
                     Name(DisplayName.of(Paths.get(failure.path).fileName?.toString() ?: failure.path))
+                    if (failure.copiedButSourceKept) Secondary(stringResource(R.string.failure_source_kept))
                     Secondary(errorText(failure.error).text())
                 }
             }

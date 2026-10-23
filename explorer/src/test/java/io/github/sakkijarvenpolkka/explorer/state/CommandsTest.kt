@@ -144,15 +144,16 @@ class CommandsTest {
     fun recycleBinOffersRestoreAndPermanentDeleteOnly() {
         val selection = listOf(file("a.txt"), folder("b"))
         val selected = commands(LocationKind.BIN, selection, clipboard, binEmpty = false)
-        assertHas(selected, RESTORE, DELETE_PERMANENT, EMPTY_BIN, SELECT_ALL, SELECT_NONE, INVERT, REFRESH)
+        // Delete (the Delete key) is offered too: in the bin, it deletes for good.
+        assertHas(selected, RESTORE, DELETE, DELETE_PERMANENT, EMPTY_BIN, SELECT_ALL, SELECT_NONE, INVERT, REFRESH)
         assertLacks(
-            selected, NEW_FOLDER, NEW_TEXT, PASTE, CUT, COPY, DELETE, RENAME, OPEN, OPEN_WITH, SHARE, COMPRESS,
+            selected, NEW_FOLDER, NEW_TEXT, PASTE, CUT, COPY, RENAME, OPEN, OPEN_WITH, SHARE, COMPRESS,
             EXTRACT, PIN, UNPIN, PROPERTIES,
         )
 
         val none = commands(LocationKind.BIN, binEmpty = false)
         assertHas(none, EMPTY_BIN)
-        assertLacks(none, RESTORE, DELETE_PERMANENT, SELECT_NONE)
+        assertLacks(none, RESTORE, DELETE, DELETE_PERMANENT, SELECT_NONE)
 
         assertLacks(commands(LocationKind.BIN, binEmpty = true, hasEntries = false), EMPTY_BIN, SELECT_ALL)
     }

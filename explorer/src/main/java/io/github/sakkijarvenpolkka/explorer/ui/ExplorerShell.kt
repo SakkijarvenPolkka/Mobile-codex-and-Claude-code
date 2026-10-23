@@ -65,6 +65,7 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.ListingState
 import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.state.Overlay
+import io.github.sakkijarvenpolkka.explorer.state.UiMessage
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
@@ -169,7 +170,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                     NavContent(ui.volumes, ui.location, vm::navigate, Modifier.width(NAV_WIDTH).fillMaxHeight())
                 }
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Banners(ui, onDismiss = vm::dismissMessage)
+                    Banners(ui, onDismiss = vm::dismissMessage, onDismissNotice = vm::dismissOpsNotice)
                     Contents(ui, widthClass, positions, vm, Modifier.weight(1f))
                 }
             }
@@ -199,7 +200,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
 /**
  * The dialogs of the file operations, the later over the earlier: the conflict the running one waits
  * on, else its progress (unless it runs in the background); the failures of one that ended; the
- * rename dialog; and a question to answer, over the rename dialog it may come from.
+ * rename dialog (with why the name typed failed); and a question to answer, over the rename dialog it
+ * may come from.
  */
 @Composable
 private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: ExplorerViewModel) {
@@ -216,7 +218,8 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
     ui.failedOp?.let { op -> FailuresDialog(op, onRetry = { vm.retryFailed(op) }) { vm.dismissFailures(op) } }
     ui.renaming?.let { entry ->
         val traits = volumeAt(ui.volumes, entry.path)?.traits ?: VolumeTraits()
-        RenameDialog(entry, traits, onCommit = { vm.commitRename(entry, it) }, onDismiss = vm::cancelRename)
+        val commit = { name: String -> vm.commitRename(entry, name) }
+        RenameDialog(entry, traits, onCommit = commit, onDismiss = vm::cancelRename, failure = ui.renameError)
     }
     ui.confirm?.let { ConfirmDialog(it, onAnswer = vm::answerConfirm) }
 }
@@ -251,21 +254,28 @@ private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiS
 
 private val NAV_WIDTH = 240.dp
 
-/** The message of the view model, then the restricted-folder warning. */
+/**
+ * The app's notice of the file operations ([ExplorerUiState.opsNotice], closed with [onDismissNotice]),
+ * the message of the view model (closed with [onDismiss]), then the restricted-folder warning.
+ */
 @Composable
-private fun Banners(ui: ExplorerUiState, onDismiss: () -> Unit) {
-    val message = ui.message
-    if (message != null) {
-        Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.MESSAGE)) {
-            val action = message.action?.let { (label, run) -> label.text() to run }
-            val text = listOfNotNull(message.text.text(), message.detail?.text()).joinToString("\n")
-            InfoBar(message.severity, text, action, onClose = onDismiss)
-        }
-    }
+private fun Banners(ui: ExplorerUiState, onDismiss: () -> Unit, onDismissNotice: () -> Unit) {
+    ui.opsNotice?.let { MessageBar(it, onDismissNotice) }
+    ui.message?.let { MessageBar(it, onDismiss, Modifier.testTag(Tags.MESSAGE)) }
     if (ui.restricted) {
         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.RESTRICTED_BANNER)) {
             InfoBar(InfoSeverity.WARNING, stringResource(R.string.restricted_banner))
         }
+    }
+}
+
+/** [message] in an info bar, its detail and hint each on a line of their own; × calls [onClose]. */
+@Composable
+private fun MessageBar(message: UiMessage, onClose: () -> Unit, modifier: Modifier = Modifier) {
+    Box(modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
+        val action = message.action?.let { (label, run) -> label.text() to run }
+        val text = listOfNotNull(message.text, message.detail, message.hint).map { it.text() }.joinToString("\n")
+        InfoBar(message.severity, text, action, onClose = onClose)
     }
 }
 

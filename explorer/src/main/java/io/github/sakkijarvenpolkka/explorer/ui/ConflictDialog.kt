@@ -39,8 +39,8 @@ import io.github.sakkijarvenpolkka.explorer.util.DisplayName
  * Asks about [conflict]: "Merge folders" for two folders, else "Replace or Skip Files", with a button
  * for each of the [allowed] answers ([io.github.sakkijarvenpolkka.explorer.fs.allowedActions]), which
  * calls [onAnswer]. While [remaining] items of the operation are still to come, a check box gives the
- * answer to the conflicts of the same kind among them too. Cancel and Back call [onCancel], which
- * stops the operation.
+ * answer to the conflicts of the same kind among them too (how many of them clash is not known, so it
+ * says no number). Cancel and Back call [onCancel], which stops the operation.
  */
 @Composable
 fun ConflictDialog(
@@ -78,7 +78,7 @@ fun ConflictDialog(
                 ) {
                     CheckMark(toAll)
                     BasicText(
-                        stringResource(R.string.conflict_apply_all, remaining),
+                        stringResource(R.string.conflict_apply_all),
                         style = FluentTheme.type.body.copy(color = FluentTheme.colors.text),
                     )
                 }

@@ -9,11 +9,13 @@ import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.ConflictAction
 import io.github.sakkijarvenpolkka.explorer.fs.ConflictKind
+import io.github.sakkijarvenpolkka.explorer.fs.FaultyFs
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
+import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
@@ -22,11 +24,13 @@ import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.Resolution
 import io.github.sakkijarvenpolkka.explorer.ops.CapturedLog
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
+import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineScope
@@ -49,8 +53,10 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.time.Duration
 import java.util.UUID
 
 /** The file operations as the shell asks for them, with a real [FileOps], Recycle Bin and runner on a temporary volume. */
@@ -89,12 +95,13 @@ class ExplorerViewModelOpsTest {
 
     /**
      * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
-     * [fs], and the app's [notice] of the operations.
+     * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there.
      */
     private fun start(
         extra: List<Volume> = emptyList(),
         fs: FsBackend = NioFsBackend,
         notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
+        beforeViewModel: () -> Unit = {},
     ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
         val journal = OperationJournal(journalDir, fs)
@@ -106,6 +113,7 @@ class ExplorerViewModelOpsTest {
             fileOps = fileOps, bin = bin, runner = runner,
             opsNotice = notice, clearOpsNotice = { notice.value = null },
         )
+        beforeViewModel()
         vm = ExplorerViewModel(app, deps)
         drain()
     }
@@ -118,6 +126,12 @@ class ExplorerViewModelOpsTest {
             io.scheduler.advanceUntilIdle()
             shadowOf(Looper.getMainLooper()).idle()
         }
+    }
+
+    /** Lets [millis] go by on the main thread's clock, running what comes due, then drains. */
+    private fun idleFor(millis: Long) {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(millis))
+        drain()
     }
 
     private fun dir(rel: String): Path = Files.createDirectories(root.resolve(rel))
@@ -524,9 +538,10 @@ class ExplorerViewModelOpsTest {
                 if (path.startsWith(full)) 1L else NioFsBackend.availableBytes(path)
         })
 
-        // The copy that stops, then, queued behind it, one that does all it is asked.
+        // The copy that stops, then, queued behind it, one that does all it is asked (for good: the bin
+        // stays empty, so emptying it would free nothing).
         runner.submit(OperationSpec(newId(), OpKind.COPY, listOf(a.toString()), full.toString()))
-        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(b.toString())))
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_PERMANENT, listOf(b.toString())))
         drain()
         assertFalse(Files.exists(b))
         // The stop is told, and stays told: nothing else reports it.
@@ -547,21 +562,327 @@ class ExplorerViewModelOpsTest {
     }
 
     @Test
-    fun successKeepsTheKeepAppOpenNotice() {
-        val a = file("a.txt")
+    fun keepAppOpenSurvivesOtherMessages() {
+        val a = file("a.txt", "new")
+        val b = file("b.txt")
+        val dst = dir("dst")
+        file("dst/a.txt", "old")
         val notice = MutableStateFlow<OpsNotice?>(null)
         start(notice = notice)
         val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
         notice.value = OpsNotice.ForegroundRefused
         drain()
-        assertEquals(keepOpen, ui.message)
+        assertEquals(keepOpen, ui.opsNotice)
+        assertNull(ui.message)
 
+        // A delete that does all it is asked, then a copy that waits on a conflict: work goes on.
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(b.toString())))
+        runner.submit(OperationSpec(newId(), OpKind.COPY, listOf(a.toString()), dst.toString()))
+        drain()
+        val pending = checkNotNull(vm.runner.value.pending) { "No conflict waits" }
+        // The success shows in its own slot: the notice stays, and the app keeps it.
+        assertEquals(done(1), ui.message)
+        assertEquals(keepOpen, ui.opsNotice)
+        vm.typedPath("/proc")
+        drain()
+        assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
+        assertEquals(keepOpen, ui.opsNotice)
+        vm.dismissMessage()
+        drain()
+        assertNull(ui.message)
+        assertEquals(keepOpen, ui.opsNotice)
+        assertEquals(OpsNotice.ForegroundRefused, notice.value)
+
+        // The work ends: nothing goes on without the service any more, and the notice goes with it.
+        pending.answer(Resolution(ConflictAction.KEEP_BOTH))
+        drain()
+        assertEquals(done(1), ui.message)
+        assertNull(ui.opsNotice)
+        assertNull(notice.value)
+    }
+
+    @Test
+    fun keepAppOpenGoesWithWorkThatEndedUnseen() {
+        val a = file("a.txt")
+        val notice = MutableStateFlow<OpsNotice?>(OpsNotice.ForegroundRefused)
+        // The work the notice is about ends before the view model sees the runner busy.
+        start(notice = notice) {
+            runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a.toString())))
+            io.scheduler.advanceUntilIdle()
+        }
+
+        assertFalse(Files.exists(a))
+        assertEquals(done(1), ui.message)
+        assertNull(ui.opsNotice)
+        assertNull(notice.value)
+    }
+
+    @Test
+    fun successBarDismissesItself() {
+        file("a.txt")
+        file("b.txt")
+        val d = dir("d")
+        start()
+        select("a.txt")
+        vm.delete(permanent = false)
+        drain()
+        assertEquals(done(1), ui.message)
+
+        // Short: it goes by itself after 4 s.
+        idleFor(3_999)
+        assertEquals(done(1), ui.message)
+        idleFor(1)
+        assertNull(ui.message)
+
+        // An error that takes its place stays until it is closed, past the time the success had.
+        select("b.txt")
+        vm.delete(permanent = false)
+        drain()
+        assertEquals(done(1), ui.message)
+        select("d")
+        vm.copy()
+        goTo(d)
+        vm.paste()
+        drain()
+        val refused = UiMessage(UiText.res(R.string.err_into_self), InfoSeverity.ERROR)
+        assertEquals(refused, ui.message)
+        idleFor(4_000)
+        assertEquals(refused, ui.message)
+        idleFor(60_000)
+        assertEquals(refused, ui.message)
+    }
+
+    @Test
+    fun deleteToBinAccessDeniedIsListed() {
+        val (a, b, c) = listOf("a.txt", "b.txt", "c.txt").map { root.resolve(it).toString() }
+        val spec = OperationSpec("op", OpKind.DELETE_TO_BIN, listOf(a, b, c))
+        val denied = ItemFailure(a, FsError.AccessDenied)
+        val failed = listOf(denied, ItemFailure(b, FsError.BinUnavailable), ItemFailure(c, FsError.NotFound))
+
+        val told = tellingOf(FinishedOp(spec, OpResult.Done(emptyList(), failed)))
+
+        // What the bin could not take is asked about, what is gone needs no word, the rest is listed.
+        assertEquals(ConfirmRequest.BinUnavailable(listOf(root.resolve("b.txt"))), told.question)
+        assertEquals(FinishedOp(spec, OpResult.Done(emptyList(), listOf(denied))), told.listed)
+        assertNull(told.message)
+    }
+
+    @Test
+    fun refusedDeleteToBinAsksPermanent() {
+        val paths = listOf(root.resolve("a.txt"), root.resolve("b.txt"))
+        val spec = OperationSpec("op", OpKind.DELETE_TO_BIN, paths.map { it.toString() })
+
+        val told = tellingOf(FinishedOp(spec, OpResult.Failed(FsError.BinUnavailable, 0, 0)))
+
+        // No Recycle Bin at all: every item is asked about, and nothing else is told.
+        assertEquals(Telling(question = ConfirmRequest.BinUnavailable(paths)), told)
+    }
+
+    @Test
+    fun binUnavailableQueuedBehindOtherQuestion() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        Files.write(root.resolve(HiddenNames.RECYCLE_BIN), ByteArray(0))
+        start()
+        select("b.txt")
+        vm.delete(permanent = true)
+        val first = ConfirmRequest.PermanentDelete(listOf(b), 1)
+        assertEquals(first, ui.confirm)
+
+        // The bin cannot take a.txt while that is asked: the open question stays, and this one waits.
         runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a.toString())))
         drain()
+        assertEquals(first, ui.confirm)
+        vm.answerConfirm(yes = false)
+        assertEquals(ConfirmRequest.BinUnavailable(listOf(a)), ui.confirm)
+        vm.answerConfirm(yes = true)
+        drain()
+        assertNull(ui.confirm)
         assertFalse(Files.exists(a))
-        // Still asked to keep the app open, and the app still knows why.
-        assertEquals(keepOpen, ui.message)
-        assertEquals(OpsNotice.ForegroundRefused, notice.value)
+        assertTrue(Files.exists(b))
+    }
+
+    @Test
+    fun skipUnstorableCountsTopLevelSourcesOnly() {
+        val sd = folder.newFolder("sd").toPath().toRealPath()
+        file("a:b.txt")
+        dir("d")
+        file("d/x:y.txt")
+        file("c.txt")
+        start(extra = listOf(FakeVolumes.removable("1A2B-3C4D", "SD card", sd)))
+        select("a:b.txt", "c.txt", "d")
+        vm.copy()
+        goTo(sd)
+        vm.paste()
+        drain()
+
+        // Only a:b.txt is left out; d/x:y.txt goes with d, fails and is listed.
+        val confirm = ui.confirm as ConfirmRequest.SkipUnstorable
+        assertEquals(1, confirm.count)
+        vm.answerConfirm(yes = true)
+        drain()
+        assertEquals(setOf("c.txt", "d"), names().toSet())
+        val failed = checkNotNull(ui.failedOp) { "No failures listed" }.result as OpResult.Done
+        assertEquals(listOf(root.resolve("d/x:y.txt").toString()), failed.failed.map { it.path })
+    }
+
+    @Test
+    fun pasteCheckFailureKeepsClipboard() {
+        val a = file("a.txt")
+        val dst = dir("dst")
+        var failChecks = false
+        start(fs = object : FsBackend by NioFsBackend {
+            override fun exists(path: Path): Boolean {
+                if (failChecks) throw AccessDeniedException(path.toString())
+                return NioFsBackend.exists(path)
+            }
+        })
+        select("a.txt")
+        vm.cut()
+        goTo(dst)
+        failChecks = true
+        vm.paste()
+        drain()
+        failChecks = false
+
+        // Told why, and nothing changed: the clipboard is as it was, for another try.
+        assertEquals(UiMessage(errorText(FsError.AccessDenied), InfoSeverity.ERROR), ui.message)
+        assertEquals(Clipboard(listOf(a), ClipMode.CUT), ui.clipboard)
+        assertTrue(Files.exists(a))
+        assertEquals(emptyList<String>(), names())
+    }
+
+    @Test
+    fun unchangedNameWithLeadingSpaceIsKept() {
+        file(" a.txt")
+        file("b.txt")
+        start()
+        vm.startRename(entry(" a.txt"))
+        vm.commitRename(checkNotNull(ui.renaming), " a.txt")
+        drain()
+        // OK on the name as it is renames nothing (trimmed, it would lose its space).
+        assertNull(ui.renaming)
+        assertEquals(setOf(" a.txt", "b.txt"), names().toSet())
+
+        // Nor does a name that trims to the one it has.
+        vm.startRename(entry("b.txt"))
+        vm.commitRename(checkNotNull(ui.renaming), " b.txt  ")
+        drain()
+        assertNull(ui.renaming)
+        assertEquals(setOf(" a.txt", "b.txt"), names().toSet())
+    }
+
+    @Test
+    fun retriedMoveUpdatesCutClipboard() {
+        val a = file("a.txt")
+        file("b.txt")
+        val dst = dir("dst")
+        var refuseA = true
+        start(fs = object : FsBackend by NioFsBackend {
+            override fun atomicMove(from: Path, to: Path) {
+                if (refuseA && from == a) {
+                    refuseA = false
+                    throw AccessDeniedException(from.toString())
+                }
+                NioFsBackend.atomicMove(from, to)
+            }
+        })
+        select("a.txt", "b.txt")
+        vm.cut()
+        goTo(dst)
+        vm.paste()
+        drain()
+        val failed = checkNotNull(ui.failedOp) { "No failures listed" }
+        assertEquals(Clipboard(listOf(a), ClipMode.CUT), ui.clipboard)
+
+        // Moved on the second try: it leaves the clipboard, as the first move's items did.
+        vm.retryFailed(failed)
+        drain()
+        assertFalse(Files.exists(a))
+        assertEquals(listOf("a.txt", "b.txt"), names())
+        assertNull(ui.clipboard)
+    }
+
+    @Test
+    fun noSpaceStopTellsWhatEmptyingTheBinFrees() {
+        val a = file("a.txt")
+        val b = file("b.txt", "12345")
+        val full = dir("full")
+        start(fs = object : FsBackend by NioFsBackend {
+            override fun availableBytes(path: Path): Long =
+                if (path.startsWith(full)) 1L else NioFsBackend.availableBytes(path)
+        })
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(b.toString())))
+        drain()
+
+        // Refused before it starts (0 of 1 done), with the bin of the drive holding 5 bytes.
+        runner.submit(OperationSpec(newId(), OpKind.COPY, listOf(a.toString()), full.toString()))
+        drain()
+        val stopped = UiMessage(
+            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            detail = UiText.res(R.string.err_no_space),
+            hint = UiText.res(R.string.hint_empty_bin, UiText.size(5)),
+        )
+        assertEquals(stopped, ui.message)
+    }
+
+    @Test
+    fun stopTellsHowFarItGotAndWhy() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        val dst = dir("dst")
+        start(fs = FaultyFs().apply { failAt(".b.txt.op1.xpart", 0, "Input/output error") })
+        runner.submit(OperationSpec("op1", OpKind.COPY, listOf(a.toString(), b.toString()), dst.toString()))
+        drain()
+
+        val stopped = UiMessage(
+            UiText.res(R.string.op_fatal, 1, 2, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            detail = UiText.res(R.string.err_io),
+        )
+        assertEquals(stopped, ui.message)
+        assertNull(ui.failedOp)
+    }
+
+    @Test
+    fun moveThatLeavesItemsSaysHowMany() {
+        dir("d")
+        file("d/x.txt", "new")
+        val dst = dir("dst")
+        dir("dst/d")
+        file("dst/d/x.txt", "old")
+        start()
+        select("d")
+        vm.cut()
+        goTo(dst)
+        vm.paste()
+        drain()
+        checkNotNull(vm.runner.value.pending) { "No conflict waits" }.answer(Resolution(ConflictAction.MERGE))
+        drain()
+        checkNotNull(vm.runner.value.pending) { "No conflict waits" }.answer(Resolution(ConflictAction.SKIP))
+        drain()
+
+        // x.txt was skipped: it stays in d, which stays too.
+        assertEquals(UiMessage(UiText.res(R.string.left_in_source, 1), InfoSeverity.WARNING), ui.message)
+        assertTrue(Files.exists(root.resolve("d/x.txt")))
+        assertNull(ui.failedOp)
+    }
+
+    @Test
+    fun deleteInRecycleBinAsksPermanent() {
+        file("a.txt")
+        start()
+        select("a.txt")
+        vm.delete(permanent = false)
+        drain()
+        vm.navigate(Location.RecycleBin)
+        drain()
+        select("a.txt")
+
+        // The Delete key: in the bin, deleting is for good, so it is asked.
+        assertTrue(Command.DELETE in ui.commands)
+        vm.command(Command.DELETE)
+        val item = bin.list(listOf(root)).single()
+        assertEquals(ConfirmRequest.PermanentDelete(listOf(bin.binDir(root).resolve(item.id)), 1), ui.confirm)
     }
 
     /** A copy of [sources] into [target] that a crash stopped after [committed] of them, as its journal shows. */

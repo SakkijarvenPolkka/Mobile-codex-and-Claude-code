@@ -57,6 +57,9 @@ import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.Paths
 
+/** Where Android mounts a USB drive for itself, outside `/storage`. */
+private val MEDIA_RW: Path = Paths.get("/mnt/media_rw")
+
 /**
  * The single entry point of the shell. It keeps no Compose state: the tabs go through
  * [TabsReducer], each tab's listing through its own [ListingLoader] (created here, so the
@@ -162,7 +165,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
             EntryKind.FILE -> handOver.open(entry)
             // A pipe, socket or device: no app reads it as a file.
-            EntryKind.OTHER -> showError(here(), UiText.res(R.string.open_unsupported))
+            EntryKind.OTHER -> host.showError(here(), UiText.res(R.string.open_unsupported))
         }
     }
 
@@ -229,6 +232,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         ops.onDismissed(shell.value.message)
         shell.update { it.copy(message = null, messageAt = null) }
     }
+
+    fun dismissOpsNotice() = ops.dismissNotice()
 
     // The file operations, as OperationsUi describes them.
 
@@ -320,7 +325,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showError(at, errorText(e.toFsError()))
+                host.showError(at, errorText(e.toFsError()))
                 return@launch
             }
             if (children.isNotEmpty()) shell.update { it.copy(overlay = Overlay.Subfolders(folder, children)) }
@@ -486,8 +491,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     navigate(Location.Folder(target.path.parent))
                     reduce(TabAction.Select(target.path))
                 }
-                Resolved.Outside -> showError(at, UiText.res(R.string.outside_storage))
-                is Resolved.Failed -> showError(at, errorText(target.error))
+                Resolved.Outside -> host.showError(at, UiText.res(R.string.outside_storage))
+                is Resolved.Failed -> host.showError(at, errorText(target.error))
             }
         }
     }
@@ -505,8 +510,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     }
 
     private fun here(): Location = tabs.value.active.current.location
-
-    private fun showError(at: Location, text: UiText) = showAt(at, UiMessage(text, InfoSeverity.ERROR))
 
     /**
      * Shows [message] about [at], where the active tab was when the user asked for what it
@@ -528,7 +531,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showError(at, errorText(e.toFsError()))
+                host.showError(at, errorText(e.toFsError()))
                 return@launch
             }
             if (here() == at) shell.update { it.copy(overlay = Overlay.Properties(listOf(entry))) }
@@ -597,6 +600,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             isRestrictedAppDataPath(volume.root, folder, obbAllowed = core.shell.obbAllowed)
         val roots = env.volumes.mapNotNull { it.root }
         val inBin = location == Location.RecycleBin
+        val back =
+            backTarget(core.shell.overlay != null, tab.selection.active, core.shell.drawerOpen, tab.back.isNotEmpty())
         val commands = if (unavailable != null) {
             setOf(Command.REFRESH, Command.OPTIONS)
         } else {
@@ -623,12 +628,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             volumes = env.volumes,
             clipboard = env.clipboard,
             commands = commands,
-            backTarget = backTarget(
-                overlayOpen = core.shell.overlay != null,
-                selectionActive = tab.selection.active,
-                drawerOpen = core.shell.drawerOpen,
-                canGoBack = tab.back.isNotEmpty(),
-            ),
+            backTarget = back,
             unavailable = unavailable,
             restricted = restricted,
             message = core.shell.message,
@@ -641,6 +641,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             confirm = opsState.confirm,
             progressInBackground = opsState.inBackground,
             failedOp = opsState.failures.firstOrNull(),
+            renameError = opsState.renameError,
+            opsNotice = opsState.notice,
         )
     }
 
@@ -731,9 +733,5 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         data class File(val path: Path) : Resolved
         data object Outside : Resolved
         data class Failed(val error: FsError) : Resolved
-    }
-
-    private companion object {
-        val MEDIA_RW: Path = Paths.get("/mnt/media_rw")
     }
 }

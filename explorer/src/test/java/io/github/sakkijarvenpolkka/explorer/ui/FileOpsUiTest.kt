@@ -3,6 +3,7 @@ package io.github.sakkijarvenpolkka.explorer.ui
 
 import android.app.Application
 import android.content.Context
+import android.content.res.Configuration
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -12,14 +13,17 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -36,16 +40,23 @@ import io.github.sakkijarvenpolkka.explorer.fs.ConflictKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.Resolution
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.fs.allowedActions
 import io.github.sakkijarvenpolkka.explorer.ops.CapturedLog
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ConfirmRequest
@@ -55,10 +66,12 @@ import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
+import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -73,6 +86,7 @@ import org.robolectric.annotation.Config
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -118,8 +132,8 @@ class FileOpsUiTest {
         rule.waitForIdle()
     }
 
-    /** The shell on [root], whose operations run on [fs] on their own threads. */
-    private fun showShell(fs: FsBackend = NioFsBackend) {
+    /** The shell on [root], whose operations run on [fs] on their own threads, with the app's [notice] of them. */
+    private fun showShell(fs: FsBackend = NioFsBackend, notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null)) {
         val volumes = FakeVolumes(FakeVolumes.primary(root))
         val journal = OperationJournal(folder.newFolder("ops"), NioFsBackend)
         val bin = RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId)
@@ -128,6 +142,7 @@ class FileOpsUiTest {
         val deps = ExplorerDeps(
             NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined,
             fileOps = fileOps, bin = bin, runner = runner,
+            opsNotice = notice, clearOpsNotice = { notice.value = null },
         )
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         rule.setContent {
@@ -193,7 +208,8 @@ class FileOpsUiTest {
             ConflictDialog(Conflict(kind, a, a), allowedActions(kind), 3, onAnswer = { answers += it }, onCancel = {})
         }
         button(str(R.string.conflict_skip)).performClick()
-        rule.onNodeWithTag(Tags.APPLY_TO_ALL).assert(hasText(str(R.string.conflict_apply_all, 3))).performClick()
+        // No count: how many of the items to come clash is not known.
+        rule.onNodeWithTag(Tags.APPLY_TO_ALL).assert(hasText(str(R.string.conflict_apply_all))).performClick()
         button(str(R.string.conflict_keep_both)).performClick()
 
         assertEquals(
@@ -311,7 +327,7 @@ class FileOpsUiTest {
         waitFor { names() == listOf("b.txt") }
         rule.onNodeWithTag(Tags.command(Command.EMPTY_BIN)).performClick()
         rule.onNodeWithText(str(R.string.empty_bin_body, 1)).assertExists()
-        rule.onNodeWithText(str(R.string.delete_permanent_body, 1)).assertExists()
+        rule.onNodeWithText(str(R.string.cannot_undo)).assertExists()
         button(str(R.string.yes)).performClick()
         waitFor { names().isEmpty() }
         assertFalse(Files.exists(root.resolve("b.txt")))
@@ -326,16 +342,104 @@ class FileOpsUiTest {
         showAlone { ConfirmDialog(request.value, onAnswer = {}) }
         rule.onNodeWithText(str(R.string.delete_permanent_body, 2)).assertExists()
 
-        // The Recycle Bin could not take them: asked, with the same warning.
+        // The Recycle Bin could not take them: asked how many, once, and that it cannot be undone.
         request.value = ConfirmRequest.BinUnavailable(listOf(a, b))
         rule.waitForIdle()
-        rule.onNodeWithText(str(R.string.bin_unavailable)).assertExists()
-        rule.onNodeWithText(str(R.string.delete_permanent_body, 2)).assertExists()
+        rule.onNodeWithText(str(R.string.bin_unavailable, 2)).assertExists()
+        rule.onNodeWithText(str(R.string.cannot_undo)).assertExists()
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 2)).assertDoesNotExist()
+    }
 
-        request.value = ConfirmRequest.EmptyBin(3)
-        rule.waitForIdle()
+    @Test
+    fun emptyBinDialogDoesNotRepeat() {
+        showAlone { ConfirmDialog(ConfirmRequest.EmptyBin(3), onAnswer = {}) }
         rule.onNodeWithText(str(R.string.empty_bin_body, 3)).assertExists()
-        rule.onNodeWithText(str(R.string.delete_permanent_body, 3)).assertExists()
+        rule.onNodeWithText(str(R.string.cannot_undo)).assertExists()
+        // Not asked twice.
+        rule.onNodeWithText(str(R.string.delete_permanent_body, 3)).assertDoesNotExist()
+    }
+
+    @Test
+    fun renameFailureKeepsDialogAndText() {
+        file("a.txt")
+        file("b.txt")
+        showShell()
+        row("a.txt").performTouchInput { longClick() }
+        rule.onNodeWithTag(Tags.command(Command.RENAME)).performClick()
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("b.txt")
+        button(str(R.string.ok)).performClick()
+        waitFor { vm.ui.value.renameError != null }
+
+        // Still open, with the name as typed and why it failed under it.
+        rule.onNodeWithTag(Tags.RENAME_FIELD).assert(hasText("b.txt"))
+        rule.onNodeWithText(str(R.string.err_already_exists)).assertExists()
+        assertTrue(Files.exists(root.resolve("a.txt")))
+
+        // The error is about that name: another one clears it, and is used.
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("c.txt")
+        rule.onNodeWithText(str(R.string.err_already_exists)).assertDoesNotExist()
+        button(str(R.string.ok)).performClick()
+        waitFor { names() == listOf("b.txt", "c.txt") }
+        rule.onNodeWithTag(Tags.RENAME_FIELD).assertDoesNotExist()
+    }
+
+    @Test
+    fun failuresListTellsWhatWasCopiedButKept() {
+        val a = root.resolve("a.txt").toString()
+        val b = root.resolve("b.txt").toString()
+        val spec = OperationSpec("op", OpKind.MOVE, listOf(a, b), root.resolve("dst").toString())
+        val failed = listOf(
+            ItemFailure(a, FsError.AccessDenied, copiedButSourceKept = true),
+            ItemFailure(b, FsError.AccessDenied),
+        )
+        showAlone { FailuresDialog(FinishedOp(spec, OpResult.Done(emptyList(), failed)), onRetry = {}, onDismiss = {}) }
+
+        // Each says why; the one copied whose original stays says so too.
+        rule.onAllNodesWithText(str(R.string.error_access_denied)).assertCountEquals(2)
+        rule.onAllNodesWithText(str(R.string.failure_source_kept)).assertCountEquals(1)
+    }
+
+    @Test
+    fun opsNoticeHasItsOwnBar() {
+        showShell(notice = MutableStateFlow(OpsNotice.ForegroundRefused))
+        vm.typedPath("/proc")
+        rule.waitForIdle()
+        rule.onNodeWithText(str(R.string.fgs_refused)).assertExists()
+        rule.onNodeWithText(str(R.string.outside_storage)).assertExists()
+
+        // The notice is above the message, so its close button comes first.
+        val closeButtons = rule.onAllNodes(hasContentDescription(str(R.string.close)) and hasClickAction())
+        closeButtons[0].performClick()
+        rule.onNodeWithText(str(R.string.fgs_refused)).assertDoesNotExist()
+        rule.onNodeWithText(str(R.string.outside_storage)).assertExists()
+    }
+
+    @Test
+    fun noSpaceBarSaysWhatEmptyingTheBinFrees() {
+        file("a.txt")
+        file("b.txt", "12345")
+        val full = Files.createDirectory(root.resolve("full"))
+        showShell(object : FsBackend by NioFsBackend {
+            override fun availableBytes(path: Path): Long =
+                if (path.startsWith(full)) 1L else NioFsBackend.availableBytes(path)
+        })
+        row("b.txt").performTouchInput { longClick() }
+        rule.onNodeWithTag(Tags.CMD_DELETE).performClick()
+        waitFor { names() == listOf("full", "a.txt") }
+        row("a.txt").performTouchInput { longClick() }
+        rule.onNodeWithTag(Tags.command(Command.COPY)).performClick()
+        vm.navigate(Location.Folder(full))
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).performClick()
+        waitFor { vm.ui.value.message?.hint != null }
+
+        // How far it got, why it stopped, and what would help, each on a line of its own.
+        val stopped = str(R.string.op_fatal, 0, 1, str(R.string.op_name_copy))
+        val lines = listOf(stopped, str(R.string.err_no_space), str(R.string.hint_empty_bin, "5 bytes"))
+        inside(Tags.MESSAGE, lines.joinToString("\n")).assertExists()
+        // The size is said in the language of the app.
+        val korean = context.createConfigurationContext(Configuration().apply { setLocale(Locale.KOREAN) })
+        assertEquals("5바이트", UiText.size(5).resolve(korean.resources))
     }
 
     private fun selection(range: TextRange) = SemanticsMatcher.expectValue(SemanticsProperties.TextSelectionRange, range)

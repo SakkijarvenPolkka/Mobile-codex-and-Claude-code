@@ -461,14 +461,16 @@ class ExplorerViewModelTest {
         settle()
 
         val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
-        assertEquals(keepOpen, ui.message)
+        // In a bar of its own: the message slot stays free.
+        assertEquals(keepOpen, ui.opsNotice)
+        assertNull(ui.message)
         // About no place: it stays until it is dismissed.
         vm.navigate(Location.Folder(root.resolve("a")))
         settle()
-        assertEquals(keepOpen, ui.message)
-        vm.dismissMessage()
+        assertEquals(keepOpen, ui.opsNotice)
+        vm.dismissOpsNotice()
         settle()
-        assertNull(ui.message)
+        assertNull(ui.opsNotice)
     }
 
     @Test
@@ -478,33 +480,38 @@ class ExplorerViewModelTest {
         var cleared = 0
         start(opsNotice = notice, clearOpsNotice = { cleared++ })
 
-        assertEquals(UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING), ui.message)
-        vm.dismissMessage()
+        assertEquals(UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING), ui.opsNotice)
+        vm.dismissOpsNotice()
         settle()
 
-        assertNull(ui.message)
+        assertNull(ui.opsNotice)
         // The app forgets it, or the next view model would show it again.
         assertEquals(1, cleared)
     }
 
     @Test
-    fun opsNoticeReplacedIsForgottenSoTheNextRefusalShows() {
+    fun opsNoticeOutlivesOtherMessagesAndDismissedIsForgotten() {
         val notice = MutableStateFlow<OpsNotice?>(null)
         start(opsNotice = notice, clearOpsNotice = { notice.value = null })
         val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
         notice.value = OpsNotice.ForegroundRefused
         settle()
-        assertEquals(keepOpen, ui.message)
+        assertEquals(keepOpen, ui.opsNotice)
 
-        // Another message takes its place: the app forgets the notice ...
+        // Another message shows in its own slot: the notice stays, and the app keeps it ...
         vm.typedPath("/proc")
         settle()
         assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
-        assertNull(notice.value)
+        assertEquals(keepOpen, ui.opsNotice)
+        assertEquals(OpsNotice.ForegroundRefused, notice.value)
 
-        // ... so that the next refusal is told again.
+        // ... until it is dismissed, so that the next refusal is told again.
+        vm.dismissOpsNotice()
+        settle()
+        assertNull(notice.value)
+        assertNull(ui.opsNotice)
         notice.value = OpsNotice.ForegroundRefused
         settle()
-        assertEquals(keepOpen, ui.message)
+        assertEquals(keepOpen, ui.opsNotice)
     }
 }

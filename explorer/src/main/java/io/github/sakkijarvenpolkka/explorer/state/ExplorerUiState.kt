@@ -56,16 +56,20 @@ data class ExplorerDeps(
 
 /**
  * A message shown in an info bar: [text], [severity], an optional [action], as its label and
- * what it does, and an optional [detail] on a line of its own (such as why an operation stopped).
- * One about the active tab's location goes when the tab leaves it; any other stays until it is
- * dismissed or replaced.
+ * what it does, an optional [detail] on a line of its own (such as why an operation stopped), and
+ * an optional [hint] on the next (what the user could do about it). One about the active tab's
+ * location goes when the tab leaves it; any other stays until it is dismissed or replaced.
  */
 data class UiMessage(
     val text: UiText,
     val severity: InfoSeverity,
     val action: Pair<UiText, () -> Unit>? = null,
     val detail: UiText? = null,
+    val hint: UiText? = null,
 )
+
+/** Why renaming an item to [name], as typed, failed: [error]. */
+data class RenameError(val name: String, val error: UiText)
 
 /** A question about a file operation, answered yes or no ([ExplorerViewModel.answerConfirm]). */
 sealed interface ConfirmRequest {
@@ -109,9 +113,11 @@ sealed interface Overlay {
  * apps, `Android/obb`. [selected] are the selected items in listing order; [up] is where Up
  * goes, null when it is disabled. [launch] is an intent for the shell to start from the
  * activity, so that the app it opens comes back here, and to report with
- * [ExplorerViewModel.launched]. [renaming] is the item the rename dialog is open for; [confirm]
- * a question to answer; [progressInBackground] whether the progress of the operations shows as a
- * chip of the status bar instead of a dialog; [failedOp] an operation whose failures to list.
+ * [ExplorerViewModel.launched]. [renaming] is the item the rename dialog is open for, and
+ * [renameError] why renaming it to the name typed failed; [confirm] a question to answer;
+ * [progressInBackground] whether the progress of the operations shows as a chip of the status bar
+ * instead of a dialog; [failedOp] an operation whose failures to list. [opsNotice] is what the file
+ * operations tell from outside any activity (keep the app open), in a bar of its own above [message].
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -134,6 +140,8 @@ data class ExplorerUiState(
     val confirm: ConfirmRequest? = null,
     val progressInBackground: Boolean = false,
     val failedOp: FinishedOp? = null,
+    val renameError: RenameError? = null,
+    val opsNotice: UiMessage? = null,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location

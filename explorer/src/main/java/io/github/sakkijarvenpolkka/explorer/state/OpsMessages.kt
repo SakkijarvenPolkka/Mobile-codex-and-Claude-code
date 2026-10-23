@@ -1,0 +1,91 @@
+/*
+ * Files — what the shell tells of a file operation that ended: a message, a question, or the failures
+ * to list.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+package io.github.sakkijarvenpolkka.explorer.state
+
+import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
+import io.github.sakkijarvenpolkka.explorer.ui.errorText
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
+import io.github.sakkijarvenpolkka.explorer.util.UiText
+import java.nio.file.Paths
+
+/**
+ * What to tell of an operation that ended ([tellingOf]): a [message] about no place (one of
+ * [InfoSeverity.SUCCESS] only over nothing that matters more), a [question] to ask once no other is
+ * open, and the operation whose failures to list ([listed]), with only those.
+ */
+internal data class Telling(
+    val message: UiMessage? = null,
+    val question: ConfirmRequest? = null,
+    val listed: FinishedOp? = null,
+)
+
+/**
+ * What to tell of [op], where emptying the Recycle Bin of its target's volume would free [freeable]
+ * bytes:
+ * - one that did all it was asked, how many items it did (a success);
+ * - a refused one (nothing done), its error only;
+ * - one that stopped, how far it got and why;
+ * - one out of space, also what emptying the bin would free, when that is anything;
+ * - a move that left items in its sources, how many;
+ * - a cancelled one, nothing.
+ *
+ * Its failures are listed, but for a delete to the Recycle Bin: the items the bin could not take (all of
+ * them, when there was no bin to use) are asked about ([ConfirmRequest.BinUnavailable]), those already
+ * gone need no word, and any other failure is listed.
+ */
+internal fun tellingOf(op: FinishedOp, freeable: Long = 0): Telling {
+    val spec = op.spec
+    return when (val result = op.result) {
+        OpResult.Cancelled -> Telling()
+        is OpResult.Failed -> {
+            val hint = UiText.res(R.string.hint_empty_bin, UiText.size(freeable))
+                .takeIf { result.error == FsError.NoSpace && freeable > 0 }
+            when {
+                spec.kind == OpKind.DELETE_TO_BIN && result.error == FsError.BinUnavailable ->
+                    Telling(question = ConfirmRequest.BinUnavailable(spec.sources.map { Paths.get(it) }))
+                result.done == 0 && result.total == 0 ->
+                    Telling(UiMessage(errorText(result.error), InfoSeverity.ERROR, hint = hint))
+                else -> {
+                    val name = UiText.res(nameOf(spec.kind))
+                    val stopped = UiText.res(R.string.op_fatal, result.done, result.total, name)
+                    Telling(UiMessage(stopped, InfoSeverity.ERROR, detail = errorText(result.error), hint = hint))
+                }
+            }
+        }
+        is OpResult.Done -> tellingOfDone(op, result)
+    }
+}
+
+/** What to tell of [op], which did what it could ([result]): see [tellingOf]. */
+private fun tellingOfDone(op: FinishedOp, result: OpResult.Done): Telling {
+    val message = when {
+        result.leftInSource > 0 ->
+            UiMessage(UiText.res(R.string.left_in_source, result.leftInSource), InfoSeverity.WARNING)
+        result.failed.isEmpty() -> UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), InfoSeverity.SUCCESS)
+        else -> null
+    }
+    if (op.spec.kind != OpKind.DELETE_TO_BIN) return Telling(message, listed = op.takeIf { result.failed.isNotEmpty() })
+    val (refused, others) = result.failed.partition { it.error == FsError.BinUnavailable }
+    val listed = others.filterNot { it.error == FsError.NotFound }
+    val question = if (refused.isEmpty()) null else ConfirmRequest.BinUnavailable(refused.map { Paths.get(it.path) })
+    return Telling(message, question, op.copy(result = result.copy(failed = listed)).takeIf { listed.isNotEmpty() })
+}
+
+/** What an operation of [kind] is called in "Stopped …". */
+private fun nameOf(kind: OpKind): Int = when (kind) {
+    OpKind.COPY -> R.string.op_name_copy
+    OpKind.MOVE -> R.string.op_name_move
+    OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT -> R.string.op_name_delete
+    OpKind.RESTORE -> R.string.op_name_restore
+    OpKind.EMPTY_BIN -> R.string.op_name_empty_bin
+    OpKind.COMPRESS -> R.string.op_name_compress
+    OpKind.EXTRACT -> R.string.op_name_extract
+}

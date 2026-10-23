@@ -15,12 +15,15 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
+import io.github.sakkijarvenpolkka.explorer.fs.NameCheck
 import io.github.sakkijarvenpolkka.explorer.fs.NameComparator
+import io.github.sakkijarvenpolkka.explorer.fs.NameValidator
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpOptions
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
+import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.fs.splitName
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
@@ -33,6 +36,7 @@ import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -49,6 +53,7 @@ import java.io.IOException
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
 
 /** The kinds whose sources are no longer where they were once done: their folders change. */
 private val TAKES_SOURCES = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE)
@@ -68,15 +73,18 @@ internal class OperationsUi(
     private val shell: ShellHost,
 ) {
     /**
-     * What the shell shows of the operations: the item the rename dialog is open for ([renaming]), the
-     * question to answer ([confirm]), whether the progress shows as a chip ([inBackground]), and the
-     * operations whose failures to list, the first one first ([failures]).
+     * What the shell shows of the operations: the item the rename dialog is open for ([renaming]) and why
+     * the name typed there could not be given to it ([renameError]), the question to answer ([confirm]),
+     * whether the progress shows as a chip ([inBackground]), the operations whose failures to list, the
+     * first one first ([failures]), and the app's notice of them ([notice]).
      */
     data class State(
         val renaming: FileEntry? = null,
+        val renameError: RenameError? = null,
         val confirm: ConfirmRequest? = null,
         val inBackground: Boolean = false,
         val failures: List<FinishedOp> = emptyList(),
+        val notice: UiMessage? = null,
     )
 
     private val mutableState = MutableStateFlow(State())
@@ -85,11 +93,14 @@ internal class OperationsUi(
     /** The runner's state; without a runner, one where nothing ever runs. */
     val runner: StateFlow<RunnerState> = deps.runner?.state ?: MutableStateFlow(RunnerState())
 
-    /** The sources of each move of the clipboard, by its id: those it moved leave the clipboard. */
-    private val cuts = HashMap<String, List<Path>>()
-
     /** The ids of the finished operations already taken from the runner. */
     private val handled = HashSet<String>()
+
+    /** Whether the runner had work when last seen ([onRunner]). */
+    private var hadWork = false
+
+    /** The questions to ask once the one open ([State.confirm]) is answered, the first first. */
+    private val waiting = ArrayDeque<ConfirmRequest>()
 
     /** The interrupted operation whose bar is shown, with that bar. */
     private var interruptedBar: Pair<InterruptedOp, UiMessage>? = null
@@ -104,31 +115,35 @@ internal class OperationsUi(
     /**
      * Follows the runner, the app's notice ([ExplorerDeps.opsNotice]) and the shell's [messages] while
      * the view model lives: each operation that ends is taken from the runner ([onFinished]), and the
-     * progress shows as a dialog again once nothing runs; the notice shows until its message leaves the
-     * screen, dismissed or replaced, when the app forgets it (so that the next one shows); an operation a
-     * crash interrupted is offered again while no other message is shown ([offerInterrupted]).
+     * progress shows as a dialog again once nothing runs ([onRunner]); the notice shows in its own slot
+     * ([State.notice]) while the app has it, whatever other messages come and go, until it is dismissed
+     * ([dismissNotice]) or the work it is about ends; an operation a crash interrupted is offered again
+     * while no other message is shown ([offerInterrupted]).
      */
     suspend fun follow(messages: Flow<UiMessage?>) = coroutineScope {
         launch { runner.collect(::onRunner) }
         launch {
             deps.opsNotice.collect { notice ->
-                when (notice) {
-                    OpsNotice.ForegroundRefused -> shell.showUnbound(KEEP_APP_OPEN)
-                    null -> Unit
+                val shown = when (notice) {
+                    OpsNotice.ForegroundRefused -> KEEP_APP_OPEN
+                    null -> null
                 }
-            }
-        }
-        launch {
-            var shown: UiMessage? = null
-            messages.collect { message ->
-                if (shown == KEEP_APP_OPEN && message != KEEP_APP_OPEN) deps.clearOpsNotice()
-                shown = message
+                mutableState.update { it.copy(notice = shown) }
             }
         }
         launch {
             val interrupted = runner.map { it.interrupted }.distinctUntilChanged()
             combine(interrupted, messages) { _, message -> message }.collect(::offerInterrupted)
         }
+    }
+
+    /**
+     * Closes the app's notice ([State.notice]), which the app then forgets, so that the next one shows; also
+     * when the slot has not taken it up yet.
+     */
+    fun dismissNotice() {
+        mutableState.update { it.copy(notice = null) }
+        deps.clearOpsNotice()
     }
 
     /** [message] was closed: the bar of an interrupted operation forgets it, if it is still listed. */
@@ -147,26 +162,34 @@ internal class OperationsUi(
 
     /**
      * Pastes the clipboard into the active tab's folder: the items still there, in clipboard order, are
-     * copied or moved; those gone are left out (and out of a cut clipboard). Onto removable media, what it
-     * cannot store ([FileOps.precheck]) is asked about first ([ConfirmRequest.SkipUnstorable]).
+     * copied or moved; those gone are left out (and out of a cut clipboard). When that cannot be told, a
+     * message says why and the clipboard stays as it is. Onto removable media, the items it cannot store
+     * ([FileOps.precheck]) are asked about first ([ConfirmRequest.SkipUnstorable]).
      */
     fun paste() {
         val clip = clipboard.state.value ?: return
         val fileOps = deps.fileOps ?: return
-        val target = (shell.here() as? Location.Folder)?.path ?: return
+        val at = shell.here()
+        val target = (at as? Location.Folder)?.path ?: return
         scope.launch {
-            val there = existing(clip.paths)
+            val there = try {
+                present(clip.paths)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@launch shell.showError(at, errorText(e.toFsError()))
+            }
             if (clip.mode == ClipMode.CUT) clipboard.afterPaste(clip.paths.filterNot { it in there }.toSet())
             if (there.isEmpty()) return@launch
             val kind = if (clip.mode == ClipMode.CUT) OpKind.MOVE else OpKind.COPY
             val spec = OperationSpec(newId(), kind, there.map { it.toString() }, target.toString())
             val removable = deps.lookup.volumeOf(target)?.removable == true
-            val unstorable = if (removable) unstorableIn(fileOps, spec) else emptyList()
-            if (unstorable.isEmpty()) return@launch submit(spec)
-            val skipped = unstorable.map { it.path }.toSet()
-            // What is inside the folders that go fails by itself, and is listed.
+            val unstorable = if (removable) unstorableIn(fileOps, spec).map { it.path }.toSet() else emptySet()
+            // Only what is pasted can be left out: what is inside the folders that go fails by itself, and is listed.
+            val skipped = spec.sources.filter { it in unstorable }.toSet()
+            if (skipped.isEmpty()) return@launch submit(spec)
             val rest = spec.copy(sources = spec.sources.filterNot { it in skipped })
-            ask(ConfirmRequest.SkipUnstorable(unstorable.size, rest))
+            ask(ConfirmRequest.SkipUnstorable(skipped.size, rest))
         }
     }
 
@@ -184,51 +207,57 @@ internal class OperationsUi(
         }
     }
 
-    /** Deletes [paths] for good, the user having confirmed it. */
+    /** Deletes [paths] for good, the user having confirmed it: the question open is closed. */
     fun confirmPermanent(paths: List<Path>) {
-        mutableState.update { it.copy(confirm = null) }
-        if (paths.isNotEmpty()) submit(OperationSpec(newId(), OpKind.DELETE_PERMANENT, paths.map { it.toString() }))
+        closeQuestion()
+        deletePermanently(paths)
     }
 
     /** Opens the rename dialog for [entry], unless the operation running uses it ([isBusy]). */
     fun startRename(entry: FileEntry) {
         if (isBusy(entry.path)) return shell.showError(shell.here(), errorText(FsError.Busy))
-        mutableState.update { it.copy(renaming = entry) }
+        mutableState.update { it.copy(renaming = entry, renameError = null) }
     }
 
     /**
-     * Renames [entry] to [newName] at once ([FileOps.rename]) and selects it under its new name; the name it
-     * has only closes the dialog. Changing a file's extension is asked about first
-     * ([ConfirmRequest.ExtensionChange]) unless [extensionConfirmed]. An item the operation running uses is
-     * not renamed, nor one the rename fails for: a message tells why.
+     * Renames [entry] to [newName] at once ([FileOps.rename]), closes the dialog and selects it under its
+     * new name. The name it has, as typed or once trimmed ([NameValidator]), only closes the dialog.
+     * Changing a file's extension is asked about first ([ConfirmRequest.ExtensionChange]) unless
+     * [extensionConfirmed]. An item the operation running uses is not renamed, nor one the rename fails
+     * for: the dialog stays open, and says why ([State.renameError]; a message, when it is not open).
      */
     fun commitRename(entry: FileEntry, newName: String, extensionConfirmed: Boolean = false) {
         val fileOps = deps.fileOps ?: return
         val at = shell.here()
-        val name = newName.trim(' ')
-        if (name == entry.name) return cancelRename()
+        val name = checkedName(entry, newName)
+        if (newName == entry.name || name == entry.name) return cancelRename()
         if (!extensionConfirmed && entry.kind == EntryKind.FILE && extensionChanges(entry.name, name)) {
             return ask(ConfirmRequest.ExtensionChange(entry, newName))
         }
-        mutableState.update { it.copy(renaming = null, confirm = null) }
-        if (isBusy(entry.path)) return shell.showError(at, errorText(FsError.Busy))
+        if (isBusy(entry.path)) return renameFailed(entry, newName, at, FsError.Busy)
+        mutableState.update { it.copy(renameError = null) }
         scope.launch {
             val renamed = try {
                 withContext(deps.io) { fileOps.rename(entry.path, newName) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                shell.showError(at, errorText(e.toFsError()))
-                return@launch
+                return@launch renameFailed(entry, newName, at, e.toFsError())
+            }
+            // Its dialog closes, unless it was closed meanwhile (and opened for another item).
+            mutableState.update {
+                if (it.renaming?.path == entry.path) it.copy(renaming = null, renameError = null) else it
             }
             shell.refreshShowing { it == at }
             shell.selectAt(at, listOf(renamed))
         }
     }
 
-    /** Closes the rename dialog, and the question about its extension. */
-    fun cancelRename() = mutableState.update {
-        it.copy(renaming = null, confirm = it.confirm.takeUnless { c -> c is ConfirmRequest.ExtensionChange })
+    /** Closes the rename dialog, and the question about its extension (asked or to ask). */
+    fun cancelRename() {
+        waiting.removeAll { it is ConfirmRequest.ExtensionChange }
+        mutableState.update { it.copy(renaming = null, renameError = null) }
+        if (state.value.confirm is ConfirmRequest.ExtensionChange) closeQuestion()
     }
 
     /** Makes a new folder in the active tab's folder ([FileOps.createFolder]), to be named at once. */
@@ -257,16 +286,19 @@ internal class OperationsUi(
         if (emptying.isNotEmpty()) ask(ConfirmRequest.EmptyBin(emptying.size))
     }
 
-    /** The answer to [State.confirm]: yes does what it asked about; no leaves things as they are. */
+    /**
+     * The answer to [State.confirm]: yes does what it asked about; no leaves things as they are. The next
+     * question waiting is asked then.
+     */
     fun answerConfirm(yes: Boolean) {
         val request = state.value.confirm ?: return
-        mutableState.update { it.copy(confirm = null) }
+        closeQuestion()
         if (!yes) return
         when (request) {
-            is ConfirmRequest.PermanentDelete -> confirmPermanent(request.paths)
-            is ConfirmRequest.BinUnavailable -> confirmPermanent(request.paths)
+            is ConfirmRequest.PermanentDelete -> deletePermanently(request.paths)
+            is ConfirmRequest.BinUnavailable -> deletePermanently(request.paths)
             is ConfirmRequest.ExtensionChange -> commitRename(request.entry, request.newName, extensionConfirmed = true)
-            is ConfirmRequest.EmptyBin -> confirmPermanent(emptying)
+            is ConfirmRequest.EmptyBin -> deletePermanently(emptying)
             is ConfirmRequest.SkipUnstorable -> if (request.spec.sources.isNotEmpty()) submit(request.spec)
         }
     }
@@ -332,31 +364,52 @@ internal class OperationsUi(
             }
             shell.refreshShowing { it == at }
             shell.selectAt(at, listOf(made.path))
-            if (shell.here() == at) mutableState.update { it.copy(renaming = made) }
+            if (shell.here() == at) mutableState.update { it.copy(renaming = made, renameError = null) }
         }
     }
 
-    /** Puts [spec] in the runner's queue; a move of the clipboard is remembered, for [onFinished]. */
+    /** Puts [spec] in the runner's queue. */
     private fun submit(spec: OperationSpec) {
-        val runner = deps.runner ?: return
-        if (spec.kind == OpKind.MOVE) cuts[spec.id] = spec.sources.map { Paths.get(it) }
-        runner.submit(spec)
+        deps.runner?.submit(spec)
     }
 
-    private fun ask(request: ConfirmRequest) = mutableState.update { it.copy(confirm = request) }
+    /** Deletes [paths] for good (the user was asked). */
+    private fun deletePermanently(paths: List<Path>) {
+        if (paths.isNotEmpty()) submit(OperationSpec(newId(), OpKind.DELETE_PERMANENT, paths.map { it.toString() }))
+    }
 
-    /** The progress shows as a dialog again once nothing runs; each operation that ended is taken. */
+    /** Asks [request] now, or, while another question is open, once that one is answered: none is dropped. */
+    private fun ask(request: ConfirmRequest) {
+        if (state.value.confirm != null) return waiting.addLast(request)
+        mutableState.update { it.copy(confirm = request) }
+    }
+
+    /** Closes the question open; the next one waiting is asked. */
+    private fun closeQuestion() {
+        val next = waiting.removeFirstOrNull()
+        mutableState.update { it.copy(confirm = next) }
+    }
+
+    /**
+     * The progress shows as a dialog again once nothing runs, and the app's notice goes once the runner
+     * goes from having work to having none (no work goes on without the foreground service any more, and
+     * new work starts it again); each operation that ended is taken.
+     */
     private suspend fun onRunner(now: RunnerState) {
         val idle = now.running == null && now.queue.isEmpty()
+        // One that ended since it was last seen: there was work, even if the runner was not seen busy.
+        val worked = hadWork || now.finished.any { it.spec.id !in handled }
+        hadWork = !idle
         if (idle && state.value.inBackground) setInBackground(false)
+        if (idle && worked) dismissNotice()
         handled.retainAll(now.finished.map { it.spec.id }.toSet())
         for (op in now.finished) if (handled.add(op.spec.id)) onFinished(op)
     }
 
     /**
      * [op] ended: the runner forgets it, the tabs showing a folder it changed are read again, what a copy
-     * or a move made is the new selection where the active tab shows it, the items a move of the
-     * clipboard moved leave it, and how it ended is told ([tell]).
+     * or a move made is the new selection where the active tab shows it, the items a move moved leave a
+     * cut clipboard, and how it ended is told ([tell]).
      */
     private suspend fun onFinished(op: FinishedOp) {
         deps.runner?.dismiss(op.spec.id)
@@ -374,65 +427,64 @@ internal class OperationsUi(
             val made = result.created.filter { it.parent == target }
             if (made.isNotEmpty()) shell.selectAt(Location.Folder(target), made)
         }
-        cuts.remove(spec.id)?.let { sources ->
-            val left = existing(sources)
-            clipboard.afterPaste(sources.filterNot { it in left }.toSet())
-        }
+        if (spec.kind == OpKind.MOVE) afterMove(spec.sources.map { Paths.get(it) })
         tell(op)
     }
 
+    /** The [sources] of a move that are gone leave a cut clipboard; when that cannot be told, it stays as it is. */
+    private suspend fun afterMove(sources: List<Path>) {
+        val left = try {
+            present(sources)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return
+        }
+        clipboard.afterPaste(sources.filterNot { it in left }.toSet())
+    }
+
     /**
-     * How [op] ended, as messages about no place: one that did all it was asked with how many items (unless
-     * a message that matters more is shown: [showSuccess]), a refused one (nothing done) by its error only,
-     * one that stopped with how far it got and why, a move that left items in its sources with how many; a
-     * cancelled one, not at all. Its failures are listed ([State.failures]), but those of a delete to the
-     * Recycle Bin: the items that could not go there are asked about ([ConfirmRequest.BinUnavailable]),
-     * unless another question is open (they stay where they are), and those already gone need no word.
+     * Tells how [op] ended ([tellingOf]): its message about no place, a success only as [showSuccess] lets
+     * it; its question once no other is open ([ask]); its failures listed ([State.failures]).
      */
-    private fun tell(op: FinishedOp) {
-        val kind = op.spec.kind
-        when (val result = op.result) {
-            OpResult.Cancelled -> Unit
-            is OpResult.Failed -> when {
-                kind == OpKind.DELETE_TO_BIN && result.error == FsError.BinUnavailable ->
-                    askIfFree(ConfirmRequest.BinUnavailable(op.spec.sources.map { Paths.get(it) }))
-                result.done == 0 && result.total == 0 ->
-                    shell.showUnbound(UiMessage(errorText(result.error), InfoSeverity.ERROR))
-                else -> {
-                    val stopped = UiText.res(R.string.op_fatal, result.done, result.total, UiText.res(nameOf(kind)))
-                    shell.showUnbound(UiMessage(stopped, InfoSeverity.ERROR, detail = errorText(result.error)))
-                }
-            }
-            is OpResult.Done -> {
-                if (result.failed.isEmpty() && result.leftInSource == 0) {
-                    showSuccess(UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), InfoSeverity.SUCCESS))
-                }
-                if (result.leftInSource > 0) {
-                    val left = UiText.res(R.string.left_in_source, result.leftInSource)
-                    shell.showUnbound(UiMessage(left, InfoSeverity.WARNING))
-                }
-                if (kind == OpKind.DELETE_TO_BIN) {
-                    val refused = result.failed.filter { it.error == FsError.BinUnavailable }.map { Paths.get(it.path) }
-                    if (refused.isNotEmpty()) askIfFree(ConfirmRequest.BinUnavailable(refused))
-                } else if (result.failed.isNotEmpty()) {
-                    mutableState.update { it.copy(failures = it.failures + op) }
-                }
-            }
+    private suspend fun tell(op: FinishedOp) {
+        val telling = tellingOf(op, freeableFor(op))
+        telling.message?.let { if (it.severity == InfoSeverity.SUCCESS) showSuccess(it) else shell.showUnbound(it) }
+        telling.question?.let(::ask)
+        telling.listed?.let { listed -> mutableState.update { it.copy(failures = it.failures + listed) } }
+    }
+
+    /**
+     * What emptying the Recycle Bin of [op]'s target volume would free, read off the main thread, when [op]
+     * stopped for want of space; else 0.
+     */
+    private suspend fun freeableFor(op: FinishedOp): Long {
+        if ((op.result as? OpResult.Failed)?.error != FsError.NoSpace) return 0
+        val bin = deps.bin ?: return 0
+        val root = op.spec.target?.let { deps.lookup.volumeOf(Paths.get(it))?.root } ?: return 0
+        return try {
+            withContext(deps.io) { bin.totalSize(listOf(root)) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            0
         }
     }
 
     /**
      * Shows [success] about no place, but only over no message or another success: an error or a warning
-     * (an operation that stopped, items left in a source, the notice to keep the app open, an interrupted
-     * operation) matters more, and may be all that tells of what it is about.
+     * (an operation that stopped, items left in a source, an interrupted operation) matters more, and may
+     * be all that tells of what it is about. It is short: it goes by itself after [SUCCESS_SHOWN_FOR] (on
+     * the main thread's clock), unless another message took its place.
      */
     private fun showSuccess(success: UiMessage) {
         val shown = shell.shown()
-        if (shown == null || shown.severity == InfoSeverity.SUCCESS) shell.showUnbound(success)
-    }
-
-    private fun askIfFree(request: ConfirmRequest) = mutableState.update {
-        if (it.confirm == null) it.copy(confirm = request) else it
+        if (shown != null && shown.severity != InfoSeverity.SUCCESS) return
+        shell.showUnbound(success)
+        scope.launch {
+            delay(SUCCESS_SHOWN_FOR)
+            if (shell.shown() === success) shell.dismissMessage()
+        }
     }
 
     /**
@@ -471,13 +523,20 @@ internal class OperationsUi(
             target?.startsWith(path) == true
     }
 
-    /** The items of [paths] that are there, looked for off the main thread; none when that fails. */
-    private suspend fun existing(paths: List<Path>): List<Path> = try {
-        withContext(deps.io) { paths.filter(deps.fs::exists) }
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        emptyList()
+    /** The items of [paths] that are there, looked for off the main thread; throws when that cannot be told. */
+    private suspend fun present(paths: List<Path>): List<Path> = withContext(deps.io) { paths.filter(deps.fs::exists) }
+
+    /** The name [typed] for [entry] comes to, as the rename checks it ([NameValidator]): as typed when invalid. */
+    private fun checkedName(entry: FileEntry, typed: String): String {
+        val traits = deps.lookup.volumeOf(entry.path)?.traits ?: VolumeTraits()
+        return (NameValidator.validate(typed, traits) as? NameCheck.Ok)?.name ?: typed
+    }
+
+    /** The rename of [entry] to [typed] failed with [error]: said in its dialog, if open, else about [at]. */
+    private fun renameFailed(entry: FileEntry, typed: String, at: Location, error: FsError) {
+        val text = errorText(error)
+        if (state.value.renaming?.path != entry.path) return shell.showError(at, text)
+        mutableState.update { it.copy(renameError = RenameError(typed, text)) }
     }
 
     /** What the target of [spec] cannot store ([FileOps.precheck]); nothing when that cannot be told. */
@@ -498,15 +557,7 @@ internal class OperationsUi(
         /** The message of [OpsNotice.ForegroundRefused]. */
         val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
 
-        /** What an operation of [kind] is called in "Stopped …". */
-        fun nameOf(kind: OpKind): Int = when (kind) {
-            OpKind.COPY -> R.string.op_name_copy
-            OpKind.MOVE -> R.string.op_name_move
-            OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT -> R.string.op_name_delete
-            OpKind.RESTORE -> R.string.op_name_restore
-            OpKind.EMPTY_BIN -> R.string.op_name_empty_bin
-            OpKind.COMPRESS -> R.string.op_name_compress
-            OpKind.EXTRACT -> R.string.op_name_extract
-        }
+        /** How long the bar of an operation that did all it was asked shows. */
+        val SUCCESS_SHOWN_FOR = 4.seconds
     }
 }

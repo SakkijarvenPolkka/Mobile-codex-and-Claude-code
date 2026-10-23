@@ -20,8 +20,9 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 
 /**
  * Asks [request]; Yes calls [onAnswer] with true, No and Back with false. Deleting for good always
- * says how many items and that it cannot be undone ([R.string.delete_permanent_body]), after what led
- * to it when something else did (a Recycle Bin that cannot take the items, emptying it).
+ * says how many items and that it cannot be undone, once: in one sentence when it is asked
+ * ([R.string.delete_permanent_body]), else after what led to it (a Recycle Bin that cannot take the
+ * items, emptying it), followed by [R.string.cannot_undo].
  */
 @Composable
 fun ConfirmDialog(request: ConfirmRequest, onAnswer: (Boolean) -> Unit) {
@@ -29,12 +30,12 @@ fun ConfirmDialog(request: ConfirmRequest, onAnswer: (Boolean) -> Unit) {
         is ConfirmRequest.PermanentDelete ->
             R.string.delete_permanent_title to listOf(stringResource(R.string.delete_permanent_body, request.count))
         is ConfirmRequest.BinUnavailable -> R.string.delete_permanent_title to listOf(
-            stringResource(R.string.bin_unavailable),
-            stringResource(R.string.delete_permanent_body, request.paths.size),
+            stringResource(R.string.bin_unavailable, request.paths.size),
+            stringResource(R.string.cannot_undo),
         )
         is ConfirmRequest.EmptyBin -> R.string.cmd_empty_bin to listOf(
             stringResource(R.string.empty_bin_body, request.count),
-            stringResource(R.string.delete_permanent_body, request.count),
+            stringResource(R.string.cannot_undo),
         )
         is ConfirmRequest.SkipUnstorable ->
             R.string.cmd_paste to listOf(stringResource(R.string.precheck_skip, request.count))
