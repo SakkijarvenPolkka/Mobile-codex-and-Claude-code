@@ -16,6 +16,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -136,7 +137,8 @@ class OperationJournalTest {
                 fs.crashAtStep = before + crashAt
                 assertThrows(SimulatedCrash::class.java) { journal.committed(OP_ID, 2) }
                 // The new version got no further than its temporary file; the old one is whole.
-                val left = if (crashAt == 1) setOf("op1.json") else setOf("op1.json", "op1.json.xpart")
+                val whole = setOf("op1.json", "op1.progress.json")
+                val left = if (crashAt == 1) whole else whole + "op1.progress.json.xpart"
                 assertEquals("crash at step $crashAt", left, files(at))
             }
             return at to fs.steps - before
@@ -149,9 +151,31 @@ class OperationJournalTest {
             val at = commitOnce(crashAt = k).first
 
             assertEquals("crash at step $k", listOf(InterruptedOp(spec, 1)), restarted(at).sweep())
-            assertEquals("crash at step $k", setOf("op1.json"), files(at))
+            assertEquals("crash at step $k", setOf("op1.json", "op1.progress.json"), files(at))
         }
         assertEquals(listOf(InterruptedOp(spec, 2)), restarted(commitOnce(crashAt = null).first).sweep())
+    }
+
+    @Test
+    fun specIsWrittenOnceHoweverManySources() {
+        val many = spec.copy(sources = (1..1_000).map { "/src/photo-$it.jpg" })
+        val fs = FaultyFs()
+        val journal = OperationJournal(dir, fs)
+
+        journal.begin(many)
+        for (n in 1..1_000) {
+            val temp = volume.resolve(".photo-$n.jpg.$OP_ID.xpart")
+            journal.add(temp)
+            journal.remove(temp)
+            journal.committed(OP_ID, n)
+        }
+
+        // The spec when it began, and then only how far it got: a few bytes each time, not its sources.
+        val written = fs.calls.filter { it.op == FaultyFs.Op.CREATE_NEW }.map { it.path.fileName.toString() }
+        assertEquals(1, written.count { it == "op1.json.xpart" })
+        assertEquals(2_000, written.count { it == "op1.progress.json.xpart" })
+        assertTrue(dir.resolve("op1.progress.json").length() < 100)
+        assertEquals(listOf(InterruptedOp(many, 1_000)), restarted().sweep())
     }
 
     @Test

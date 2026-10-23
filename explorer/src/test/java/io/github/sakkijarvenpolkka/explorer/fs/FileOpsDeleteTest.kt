@@ -208,7 +208,7 @@ class FileOpsDeleteTest {
         val apart = FaultyFs().apply { exdevBetween(binOf(internal), a) }
         val keepBoth = Answering { Resolution(ConflictAction.KEEP_BOTH) }
         assertEquals(
-            OpResult.Done(emptyList(), listOf(ItemFailure(l3.payload.toString(), FsError.Unsupported))),
+            OpResult.Done(emptyList(), listOf(ItemFailure(l3.payload.toString(), FsError.Unsupported, into = "$a"))),
             ops(apart, bin).runToEnd(restore(l3), keepBoth),
         )
         assertEquals(listOf(FaultyFs.Call(FaultyFs.Op.ATOMIC_MOVE, l3.payload, a.resolve("l3 (2)"))), apart.calls)

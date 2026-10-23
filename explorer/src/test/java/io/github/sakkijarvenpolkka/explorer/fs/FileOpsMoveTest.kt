@@ -93,8 +93,8 @@ class FileOpsMoveTest {
             OpResult.Done(
                 listOf(sd.resolve("d")),
                 listOf(
-                    ItemFailure(second.toString(), FsError.AccessDenied, copiedButSourceKept = false),
-                    ItemFailure(third.toString(), FsError.AccessDenied, copiedButSourceKept = false),
+                    ItemFailure(second.toString(), FsError.AccessDenied, into = "$sd/d"),
+                    ItemFailure(third.toString(), FsError.AccessDenied, into = "$sd/d"),
                 ),
                 leftInSource = 2,
             ),

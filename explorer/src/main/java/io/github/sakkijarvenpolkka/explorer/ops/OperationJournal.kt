@@ -25,8 +25,11 @@ import java.util.UUID
 import java.util.logging.Level
 import java.util.logging.Logger
 
-/** The suffix of a journal file, `<key>.json`. */
-private const val JOURNAL_SUFFIX = ".json"
+/** The suffix of the file of an operation's spec, `<opId>.json`. */
+private const val SPEC_SUFFIX = ".json"
+
+/** The suffix of the file of a [Record], `<key>.progress.json`. */
+private const val RECORD_SUFFIX = ".progress.json"
 
 private val JOURNAL_JSON = Json { ignoreUnknownKeys = true }
 
@@ -36,29 +39,31 @@ private val LOG = Logger.getLogger("io.github.sakkijarvenpolkka.explorer.ops")
 data class InterruptedOp(val spec: OperationSpec, val committed: Int)
 
 /**
- * What a journal file holds: the operation it is for ([spec]; none for a rename, nor for temporary files
- * left once their operation is over), how many of its top-level sources were [committed], the temporary
- * files it may have on disk ([temps]), and the files between the two steps of a rename ([renames], from
- * the temporary name to the final one).
+ * What changes while an operation runs, kept apart from its spec so that a change writes a few bytes,
+ * however many sources it has: how many of its top-level sources were [committed], the temporary files
+ * it may have on disk ([temps]), and the files between the two steps of a rename ([renames], from the
+ * temporary name to the final one). A rename, and the temporary files of no operation begun here, have
+ * a record of their own, as do those of an operation once it is over.
  */
 @Serializable
 private data class Record(
-    val spec: OperationSpec? = null,
     val committed: Int = 0,
     val temps: List<String> = emptyList(),
     val renames: Map<String, String> = emptyMap(),
 ) {
-    /** Whether nothing is left to do for it. */
-    val done: Boolean get() = spec == null && temps.isEmpty() && renames.isEmpty()
+    /** Whether it says nothing (none committed is what no record says too). */
+    val empty: Boolean get() = committed == 0 && temps.isEmpty() && renames.isEmpty()
 }
 
 /**
- * The journal of the file operations (spec §5), one file in [dir] for each: `<opId>.json`, with its
- * spec, how many of its top-level sources are done and the temporary files it may have on disk (it is
- * the [TempJournal] they are recorded in). It is written when the operation begins ([begin]), when a
- * source is done ([committed]) and before each temporary file is made, and deleted when it ends ([end]).
- * A rename between its two steps has a file of its own ([addRename]). Each file is written to a
- * temporary file next to it, which is then renamed over it: a crash leaves the old version or the new.
+ * The journal of the file operations (spec §5), two files in [dir] for each: `<opId>.json`, its spec,
+ * written once when it begins ([begin]), and `<opId>.progress.json`, how many of its top-level sources
+ * are done and the temporary files it may have on disk (it is the [TempJournal] they are recorded in),
+ * written when a source is done ([committed]) and before each temporary file is made. Only the second is
+ * written again, and it stays a few bytes long however many sources there are. Both are deleted when
+ * the operation ends ([end]); an operation is interrupted while its spec is there. A rename between its
+ * two steps has a record of its own ([addRename]). Each file is written to a temporary file next to it,
+ * which is then renamed over it: a crash leaves the old version or the new.
  *
  * At the app's start and before each operation, [sweep] deletes the temporary files recorded and gives
  * the files a rename left halfway their new names; it returns the operations that never ended, whose
@@ -71,6 +76,9 @@ private data class Record(
 class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJournal {
     private val folder: Path = dir.toPath()
     private val lock = Any()
+
+    /** The operations begun here and not ended, by id. */
+    private val running = HashSet<String>()
 
     /** The records this instance keeps up to date, by key: an operation's id, or a key of its own. */
     private val live = HashMap<String, Record>()
@@ -85,33 +93,40 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
 
     /** Starts the journal of [spec]. */
     fun begin(spec: OperationSpec) {
-        synchronized(lock) { put(spec.id, Record(spec)) }
+        synchronized(lock) {
+            running += spec.id
+            write(specFileOf(spec.id), JOURNAL_JSON.encodeToString(OperationSpec.serializer(), spec))
+        }
     }
 
     /** Notes that the first [count] top-level sources of operation [opId] are done. */
     fun committed(opId: String, count: Int) {
         synchronized(lock) {
-            val record = live[opId] ?: return
-            put(opId, record.copy(committed = count))
+            if (opId !in running) return
+            put(opId, recordOf(opId).copy(committed = count))
         }
     }
 
     /**
-     * Ends the journal of operation [opId]: the temporary files it still records are deleted, and then its
-     * file. Those that cannot be deleted stay recorded, without the operation, for a later [sweep].
+     * Ends the journal of operation [opId]: its spec is deleted, then the temporary files it still records,
+     * and then their record. Those that cannot be deleted stay recorded, without the operation, for a
+     * later [sweep].
      */
     fun end(opId: String) {
         synchronized(lock) {
+            if (!running.remove(opId)) return
+            // From here on, it is not an interrupted operation.
+            deleteQuietly(specFileOf(opId))
             val record = live.remove(opId) ?: return
             record.temps.forEach(holders::remove)
-            settle(opId, record, tidied(record.copy(spec = null, committed = 0)))
+            settle(opId, record, tidied(record.copy(committed = 0)))
         }
     }
 
     /**
      * Deletes the temporary files of the operations not running here and gives a file a rename left at
      * its temporary name the name it was going to (unless that is taken); returns the operations that did
-     * not end, by id. Their journals stay, without what is done now. A temporary file
+     * not end (their specs), by id. Their journals stay, without what is done now. A temporary file
      * whose folder is not there is kept recorded (its volume may be away), and so is a rename whose new
      * name is taken.
      */
@@ -125,21 +140,25 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
                 LOG.log(Level.WARNING, "Cannot read the operations journal", e)
                 return emptyList()
             }
-            val interrupted = ArrayList<InterruptedOp>()
-            for (file in files.sortedBy { it.fileName.toString() }) {
-                val name = file.fileName.toString()
+            val names = files.map { it.fileName.toString() }.toSet()
+            val keys = sortedSetOf<String>()
+            for (name in names) {
                 when {
                     // A version a crash cut short; the one it was to replace is whole.
-                    name.endsWith(HiddenNames.PART_SUFFIX) -> deleteQuietly(file)
-                    name.endsWith(JOURNAL_SUFFIX) -> {
-                        val key = name.removeSuffix(JOURNAL_SUFFIX)
-                        if (key in live) continue
-                        val record = read(file) ?: continue
-                        val left = tidied(record)
-                        left.spec?.let { interrupted += InterruptedOp(it, left.committed) }
-                        settle(key, record, left)
-                    }
+                    name.endsWith(HiddenNames.PART_SUFFIX) -> deleteQuietly(folder.resolve(name))
+                    name.endsWith(RECORD_SUFFIX) -> keys += name.removeSuffix(RECORD_SUFFIX)
+                    name.endsWith(SPEC_SUFFIX) -> keys += name.removeSuffix(SPEC_SUFFIX)
                 }
+            }
+            val interrupted = ArrayList<InterruptedOp>()
+            for (key in keys) {
+                if (key in running || key in live) continue
+                val spec = if (key + SPEC_SUFFIX in names) readSpec(key) else null
+                val record = (if (key + RECORD_SUFFIX in names) readRecord(key) else null) ?: Record()
+                // Without its operation, how far that got means nothing.
+                val left = tidied(if (spec == null) record.copy(committed = 0) else record)
+                spec?.let { interrupted += InterruptedOp(it, left.committed) }
+                settle(key, record, left)
             }
             return interrupted
         }
@@ -151,9 +170,10 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
      */
     fun discard(opId: String) {
         synchronized(lock) {
-            if (opId in live) return
-            val record = read(fileOf(opId)) ?: return
-            settle(opId, record, tidied(record.copy(spec = null, committed = 0)))
+            if (opId in running || opId in live) return
+            deleteQuietly(specFileOf(opId))
+            val record = readRecord(opId) ?: return
+            settle(opId, record, tidied(record.copy(committed = 0)))
         }
     }
 
@@ -166,7 +186,7 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
             val path = temp.toString()
             if (path in holders) return
             val key = keyFor(temp)
-            val record = live[key] ?: Record()
+            val record = recordOf(key)
             holders[path] = key
             put(key, record.copy(temps = record.temps + path))
         }
@@ -181,8 +201,8 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
     }
 
     /**
-     * Forgets [temp], which is gone. A journal with nothing left in it is deleted at once; that of an
-     * operation is written with its next change (until then, a sweep would find the file gone).
+     * Forgets [temp], which is gone. A record with nothing left in it is deleted at once; one that still
+     * says something is written with its next change (until then, a sweep would find the file gone).
      */
     override fun remove(temp: Path) {
         synchronized(lock) {
@@ -190,9 +210,9 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
             val key = holders.remove(path) ?: return
             val record = live[key] ?: return
             val left = record.copy(temps = record.temps - path, renames = record.renames - path)
-            if (left.done) {
+            if (left.empty) {
                 live.remove(key)
-                deleteQuietly(fileOf(key))
+                deleteQuietly(recordFileOf(key))
             } else {
                 live[key] = left
             }
@@ -201,10 +221,10 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
 
     private fun keyFor(temp: Path): String {
         val name = temp.fileName?.toString().orEmpty()
-        return live.values.firstNotNullOfOrNull { record ->
-            record.spec?.id?.takeIf { name.endsWith(".$it${HiddenNames.PART_SUFFIX}") }
-        } ?: looseKey
+        return running.firstOrNull { name.endsWith(".$it${HiddenNames.PART_SUFFIX}") } ?: looseKey
     }
+
+    private fun recordOf(key: String): Record = live[key] ?: Record()
 
     /** [record] with its temporary files deleted and its renames finished: what is left of it. */
     private fun tidied(record: Record): Record = record.copy(
@@ -248,25 +268,32 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
         false
     }
 
-    /** Writes what is [left] of the record [key], which was [before]; deletes its file once nothing is. */
+    /** Writes what is [left] of the record [key], which was [before]; deletes its file once it is empty. */
     private fun settle(key: String, before: Record, left: Record) {
         when {
-            left.done -> deleteQuietly(fileOf(key))
-            left != before -> write(key, left)
+            left.empty -> deleteQuietly(recordFileOf(key))
+            left != before -> write(recordFileOf(key), JOURNAL_JSON.encodeToString(Record.serializer(), left))
         }
     }
 
     private fun put(key: String, record: Record) {
         live[key] = record
-        write(key, record)
+        write(recordFileOf(key), JOURNAL_JSON.encodeToString(Record.serializer(), record))
     }
 
-    private fun fileOf(key: String): Path = folder.resolve(key + JOURNAL_SUFFIX)
+    private fun specFileOf(opId: String): Path = folder.resolve(opId + SPEC_SUFFIX)
 
-    /** The record in [file]; null if there is none, or it cannot be read (a corrupt one is deleted). */
-    private fun read(file: Path): Record? = try {
-        val text = fs.openRead(file).use { it.readBytes() }.decodeToString()
-        JOURNAL_JSON.decodeFromString(Record.serializer(), text)
+    private fun recordFileOf(key: String): Path = folder.resolve(key + RECORD_SUFFIX)
+
+    private fun readSpec(opId: String): OperationSpec? =
+        read(specFileOf(opId)) { JOURNAL_JSON.decodeFromString(OperationSpec.serializer(), it) }
+
+    private fun readRecord(key: String): Record? =
+        read(recordFileOf(key)) { JOURNAL_JSON.decodeFromString(Record.serializer(), it) }
+
+    /** What [decode] makes of [file]; null if there is none, or it cannot be read (a corrupt one is deleted). */
+    private fun <T> read(file: Path, decode: (String) -> T): T? = try {
+        decode(fs.openRead(file).use { it.readBytes() }.decodeToString())
     } catch (e: NoSuchFileException) {
         null
     } catch (e: IOException) {
@@ -278,13 +305,13 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
         null
     }
 
-    private fun write(key: String, record: Record) {
+    private fun write(file: Path, text: String) {
         try {
-            writeAtomically(fileOf(key), JOURNAL_JSON.encodeToString(Record.serializer(), record).toByteArray())
+            writeAtomically(file, text.toByteArray())
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            LOG.log(Level.WARNING, "Cannot write the journal of $key", e)
+            LOG.log(Level.WARNING, "Cannot write $file", e)
         }
     }
 

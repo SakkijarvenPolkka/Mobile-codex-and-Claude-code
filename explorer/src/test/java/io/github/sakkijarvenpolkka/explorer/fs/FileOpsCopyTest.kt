@@ -382,9 +382,34 @@ class FileOpsCopyTest {
 
         val result = ops(fs).runToEnd(copy(a, b, c))
 
-        val missing = ItemFailure(c.toString(), FsError.NotFound)
+        val missing = ItemFailure(c.toString(), FsError.NotFound, into = dst.toString())
         assertEquals(done(listOf(dst.resolve("a.txt"), dst.resolve("b.txt")), listOf(missing)), result)
         assertEquals(mapOf("a.txt" to "a.txt", "b.txt" to "b.txt"), tree(dst))
+    }
+
+    @Test
+    fun failureNamesTheFolderItWasGoingInto() {
+        val d = write(src, "d/a/b.txt", "b").parent.parent
+        val e = write(src, "e/f.txt", "f").parent
+        write(dst, "e", "file e")
+        // Neither b.txt nor f.txt can be written.
+        val fs = FaultyFs().apply {
+            failAt(".b.txt.$OP_ID.xpart", 0, "Permission denied")
+            failAt(".f.txt.$OP_ID.xpart", 0, "Permission denied")
+        }
+
+        // Pasted into its own folder, d is copied as "d - 복사본"; e, kept beside the file e, as "e (2)".
+        val inPlace = ops(fs).runToEnd(copy(d, into = src))
+        val besides = ops(fs).runToEnd(copy(e), always(ConflictAction.KEEP_BOTH))
+
+        val copyOfD = src.resolve("d - 복사본")
+        assertEquals(
+            done(listOf(copyOfD), listOf(ItemFailure("$d/a/b.txt", FsError.AccessDenied, into = "$copyOfD/a"))),
+            inPlace,
+        )
+        val keptE = dst.resolve("e (2)")
+        val fFailed = ItemFailure("$e/f.txt", FsError.AccessDenied, into = "$keptE")
+        assertEquals(done(listOf(keptE), listOf(fFailed)), besides)
     }
 
     @Test
@@ -481,7 +506,9 @@ class FileOpsCopyTest {
         val result = ops(fs, volumes).runToEnd(spec)
 
         // What the drive cannot store is not written, and fails; the rest is copied.
-        assertEquals(done(listOf(sd.resolve("ok.txt"), sd.resolve("edge.bin"), sd.resolve("d")), unstorable), result)
+        val (colonFailed, hugeFailed, qFailed) = unstorable
+        val failed = listOf(colonFailed.copy(into = "$sd"), hugeFailed.copy(into = "$sd"), qFailed.copy(into = "$sd/d"))
+        assertEquals(done(listOf(sd.resolve("ok.txt"), sd.resolve("edge.bin"), sd.resolve("d")), failed), result)
         assertEquals(
             mapOf("d/" to "", "d/fine.txt" to "fine", "edge.bin" to "just under 4 GiB", "ok.txt" to "ok"),
             tree(sd),
@@ -521,7 +548,7 @@ class FileOpsCopyTest {
         val onFat = volumesOf(VolumeRoot("1234-5678", fat, VolumeTraits(fatNames = true), removable = true))
         val result = ops(fs, onFat).runToEnd(copy(huge, ok, into = fat))
         assertEquals(
-            done(listOf(fat.resolve("ok.txt")), listOf(ItemFailure(huge.toString(), FsError.TooLargeForVolume))),
+            done(listOf(fat.resolve("ok.txt")), listOf(ItemFailure("$huge", FsError.TooLargeForVolume, into = "$fat"))),
             result,
         )
         assertEquals(mapOf("ok.txt" to "ok"), tree(fat))
@@ -539,8 +566,8 @@ class FileOpsCopyTest {
 
         // A link is not followed, to a file or to a folder (here one that holds the copy).
         val links = listOf(
-            ItemFailure(link.toString(), FsError.Unsupported),
-            ItemFailure(dirLink.toString(), FsError.Unsupported),
+            ItemFailure(link.toString(), FsError.Unsupported, into = "$dst"),
+            ItemFailure(dirLink.toString(), FsError.Unsupported, into = "$dst/d"),
         )
         assertEquals(done(listOf(dst.resolve("d")), links), result)
         assertEquals(mapOf("d/" to "", "d/inner.txt" to "inner"), tree(dst))
@@ -555,7 +582,8 @@ class FileOpsCopyTest {
         }
         assumeTrue("mkfifo is needed for a special file", made)
         val special = ops().runToEnd(copy(p))
-        assertEquals(done(listOf(dst.resolve("p")), listOf(ItemFailure(fifo.toString(), FsError.Unsupported))), special)
+        val unsupported = ItemFailure(fifo.toString(), FsError.Unsupported, into = "$dst/p")
+        assertEquals(done(listOf(dst.resolve("p")), listOf(unsupported)), special)
         assertEquals(mapOf("d/" to "", "d/inner.txt" to "inner", "p/" to ""), tree(dst))
     }
 

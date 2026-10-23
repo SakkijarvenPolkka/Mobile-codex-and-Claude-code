@@ -70,9 +70,17 @@ fun interface ConflictResolver {
 
 /**
  * An item that failed, by its source [path]. [copiedButSourceKept] marks a move whose copy is complete
- * but whose source could not be deleted, so that retrying does not copy it twice.
+ * but whose source could not be deleted, so that retrying does not copy it twice. [into] is the folder
+ * a copy, a move or a restore was putting the item in, under the name that folder has there (a ` - Copy`
+ * or ` (2)` one included), so that retrying puts it there too; null when the item is in place, and for
+ * the other kinds.
  */
-data class ItemFailure(val path: String, val error: FsError, val copiedButSourceKept: Boolean = false)
+data class ItemFailure(
+    val path: String,
+    val error: FsError,
+    val copiedButSourceKept: Boolean = false,
+    val into: String? = null,
+)
 
 /** How an operation ended. */
 sealed interface OpResult {

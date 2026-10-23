@@ -328,9 +328,12 @@ internal class Transfer(
         return if (action in allowedActions(kind)) action else ConflictAction.SKIP
     }
 
-    /** Lists [path] as failed with [error]; whatever it was, it is not in the target. */
+    /**
+     * Lists [path] as failed with [error], with the folder it was going into ([parent]'s target); whatever
+     * it was, it is not in the target.
+     */
     private fun fail(path: Path, error: FsError, parent: Frame): Path? {
-        failed += ItemFailure(path.toString(), error)
+        failed += ItemFailure(path.toString(), error, into = parent.target?.toString())
         return stays(parent)
     }
 

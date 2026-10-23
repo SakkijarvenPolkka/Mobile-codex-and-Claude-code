@@ -265,24 +265,25 @@ class OperationRunnerTest {
         val src = internal.resolve("src")
         val dst = internal.resolve("dst")
         val spec = OperationSpec("op1", OpKind.MOVE, listOf("$src/d", "$src/x.txt", "$src/y.txt"), dst.toString())
+        // d went beside a file named d, as "d (2)".
         val failed = listOf(
-            ItemFailure("$src/d/sub/p.txt", FsError.AccessDenied),
+            ItemFailure("$src/d/sub/p.txt", FsError.AccessDenied, into = "$dst/d (2)/sub"),
             ItemFailure("$src/x.txt", FsError.AccessDenied, copiedButSourceKept = true),
-            ItemFailure("$src/d/q.txt", FsError.IoError),
-            ItemFailure("$src/y.txt", FsError.AccessDenied),
-            ItemFailure("$src/d/sub/r.txt", FsError.AccessDenied),
+            ItemFailure("$src/d/q.txt", FsError.IoError, into = "$dst/d (2)"),
+            ItemFailure("$src/y.txt", FsError.AccessDenied, into = dst.toString()),
+            ItemFailure("$src/d/sub/r.txt", FsError.AccessDenied, into = "$dst/d (2)/sub"),
         )
         val runner = runner()
 
-        runner.retryFailed(FinishedOp(spec, OpResult.Done(listOf(dst.resolve("d")), failed)))
+        runner.retryFailed(FinishedOp(spec, OpResult.Done(listOf(dst.resolve("d (2)")), failed)))
 
         // Each item goes to the folder it was going to, one operation for each; the one already copied
         // (its source could only not be deleted) is left out.
         val queued = runner.state.value.queue
         assertEquals(
             listOf(
-                Triple(OpKind.MOVE, listOf("$src/d/sub/p.txt", "$src/d/sub/r.txt"), "$dst/d/sub"),
-                Triple(OpKind.MOVE, listOf("$src/d/q.txt"), "$dst/d"),
+                Triple(OpKind.MOVE, listOf("$src/d/sub/p.txt", "$src/d/sub/r.txt"), "$dst/d (2)/sub"),
+                Triple(OpKind.MOVE, listOf("$src/d/q.txt"), "$dst/d (2)"),
                 Triple(OpKind.MOVE, listOf("$src/y.txt"), dst.toString()),
             ),
             queued.map { Triple(it.kind, it.sources, it.target) },
@@ -292,7 +293,32 @@ class OperationRunnerTest {
     }
 
     @Test
-    fun retryFailedOfOtherKindsRunsTheirSourcesAgain() = runTest {
+    fun retryFailedPutsAnItemInTheCopyOfItsFolder() = runTest {
+        val s = internal.resolve("s")
+        val d = write(s, "d/a/b.txt", "b").parent.parent
+        write(s, "d/a/c.txt", "c")
+        // b.txt cannot be written the first time.
+        val fs = FaultyFs().apply { failAt(".b.txt.op1.xpart", 0, "Permission denied") }
+        val runner = runner(fs)
+
+        // Pasted into its own folder: the copy is "d - 복사본".
+        runner.submit(copy("op1", listOf(d), s))
+        advanceUntilIdle()
+        val first = runner.state.value.finished.single()
+        runner.retryFailed(first)
+        advanceUntilIdle()
+
+        val copyOfD = s.resolve("d - 복사본")
+        val retried = runner.state.value.finished.last()
+        assertEquals(copy(retried.spec.id, listOf(d.resolve("a/b.txt")), copyOfD.resolve("a")), retried.spec)
+        assertEquals(OpResult.Done(listOf(copyOfD.resolve("a/b.txt")), emptyList()), retried.result)
+        // Into the copy, next to what was copied the first time; the folder copied from is as it was.
+        val original = mapOf("d/" to "", "d/a/" to "", "d/a/b.txt" to "b", "d/a/c.txt" to "c")
+        assertEquals(original + original.mapKeys { (name, _) -> name.replaceFirst("d/", "d - 복사본/") }, tree(s))
+    }
+
+    @Test
+    fun retryFailedOfOtherKinds() = runTest {
         val bin = internal.resolve(".Recycle.Bin")
         val restore = OperationSpec(
             "op1",
@@ -304,15 +330,19 @@ class OperationRunnerTest {
         val runner = runner()
 
         val restoreFailed = ItemFailure("$bin/b3/e/f.txt", FsError.IoError)
-        val deleteFailed = ItemFailure("$internal/d/locked", FsError.AccessDenied)
+        val deleteFailed = listOf(
+            ItemFailure("$internal/d/locked", FsError.AccessDenied),
+            ItemFailure("$internal/e/sub", FsError.AccessDenied),
+        )
         runner.retryFailed(FinishedOp(restore, OpResult.Done(emptyList(), listOf(restoreFailed))))
-        runner.retryFailed(FinishedOp(delete, OpResult.Done(emptyList(), listOf(deleteFailed))))
+        runner.retryFailed(FinishedOp(delete, OpResult.Done(emptyList(), deleteFailed)))
 
-        // The top-level source a failure is in, with its bin item.
+        // A restore runs again on the top-level source a failure is in, with its bin item.
         val (again, deleteAgain) = runner.state.value.queue
         val restoreAgain = restore.copy(sources = listOf("$bin/b3/e"), options = OpOptions(binItemIds = listOf("b3")))
         assertEquals(restoreAgain.copy(id = again.id), again)
-        assertEquals(delete.copy(id = deleteAgain.id, sources = listOf("$internal/d")), deleteAgain)
+        // A delete deletes what failed only, never what was put in its folders since.
+        assertEquals(delete.copy(id = deleteAgain.id, sources = deleteFailed.map { it.path }), deleteAgain)
         assertTrue(again.id != restore.id && deleteAgain.id != delete.id)
     }
 
@@ -353,6 +383,55 @@ class OperationRunnerTest {
         assertEquals(mapOf("a.txt" to "a", "b.txt" to "b", "c.txt" to "c"), tree(dst))
         // Both journals are gone.
         assertEquals(emptyList<String>(), journalDir.list().orEmpty().toList())
+    }
+
+    @Test
+    fun retryRunsAgainWhatCannotBeToldDone() = runTest {
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        // On a card that is not mounted now: its folder is not there.
+        val away = internal.resolveSibling("card").resolve("DCIM")
+        val copying = OperationSpec("old1", OpKind.COPY, listOf("$away/a.jpg", "$away/b.jpg"), dst.toString())
+        val moving = OperationSpec("old2", OpKind.MOVE, listOf("$away/c.jpg"), dst.toString())
+        OperationJournal(journalDir, NioFsBackend).apply {
+            begin(copying)
+            begin(moving)
+        }
+        val runner = runner()
+        runner.loadInterrupted()
+        advanceUntilIdle()
+
+        runner.state.value.interrupted.forEach(runner::retry)
+        advanceUntilIdle()
+
+        // Neither is taken for done: each runs on all it had left, and says what it could not find.
+        val (copied, moved) = runner.state.value.finished
+        assertEquals(copying.copy(id = copied.spec.id), copied.spec)
+        assertEquals(moving.copy(id = moved.spec.id), moved.spec)
+        val notFound = { spec: OperationSpec -> spec.sources.map { ItemFailure(it, FsError.NotFound, into = "$dst") } }
+        assertEquals(OpResult.Done(emptyList(), notFound(copying)), copied.result)
+        assertEquals(OpResult.Done(emptyList(), notFound(moving)), moved.result)
+        assertEquals(emptyList<String>(), journalDir.list().orEmpty().toList())
+    }
+
+    @Test
+    fun retryOfWhatIsAllDoneRunsNothing() = runTest {
+        val src = Files.createDirectory(internal.resolve("src"))
+        val dst = Files.createDirectory(internal.resolve("dst"))
+        write(dst, "a.txt", "a")
+        // A move that got to its only source before it could note it.
+        val move = OperationSpec("old1", OpKind.MOVE, listOf("$src/a.txt"), dst.toString())
+        OperationJournal(journalDir, NioFsBackend).begin(move)
+        val runner = runner()
+        runner.loadInterrupted()
+        advanceUntilIdle()
+
+        runner.retry(runner.state.value.interrupted.single())
+        advanceUntilIdle()
+
+        // Nothing is submitted, and it stays as it was, its journal kept, until it is dismissed.
+        assertEquals(emptyList<FinishedOp>(), runner.state.value.finished)
+        assertEquals(listOf(InterruptedOp(move, 0)), runner.state.value.interrupted)
+        assertEquals(listOf("old1.json"), journalDir.list().orEmpty().toList())
     }
 
     @Test

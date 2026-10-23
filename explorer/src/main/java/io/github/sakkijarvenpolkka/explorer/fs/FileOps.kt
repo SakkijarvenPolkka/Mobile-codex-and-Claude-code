@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.IOException
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.time.TimeSource
@@ -107,8 +108,9 @@ class FileOps(
      *
      * A fatal failure leaves the sources where they are, and the file being written is deleted when the
      * run stops or is cancelled. Any other failure the file system reports is listed in
-     * [OpResult.Done.failed] and the rest goes on; a move whose copy is in place but whose source (a file,
-     * or a folder whose content all went) could not be deleted is marked [ItemFailure.copiedButSourceKept].
+     * [OpResult.Done.failed], with the folder the item was going into ([ItemFailure.into]), and the rest
+     * goes on; a move whose copy is in place but whose source (a file, or a folder whose content all went)
+     * could not be deleted is marked [ItemFailure.copiedButSourceKept].
      * A source folder a move had to leave behind, because something in it was skipped or failed, stays,
      * and the items left in such folders are counted in [OpResult.Done.leftInSource].
      * [OpResult.Done.created] holds where each top-level source now is (a folder merged into included).
@@ -166,13 +168,27 @@ class FileOps(
     }
 
     /**
-     * Whether [path] itself is there (a link is, whatever it points to); true when that cannot be told, so
-     * that an operation on it says what is wrong.
+     * Whether [path] is known to be gone: nothing has its name (a link is something, whatever it points
+     * to), in a folder that is there. False whenever that cannot be told: the folder is not there either
+     * (its volume may be away), or [path] cannot be looked at.
      */
-    fun exists(path: Path): Boolean = try {
-        fs.exists(path)
+    fun isGone(path: Path): Boolean {
+        val parent = path.parent ?: return false
+        val missing = try {
+            fs.attributes(path)
+            false
+        } catch (e: NoSuchFileException) {
+            true
+        } catch (e: IOException) {
+            false
+        }
+        return missing && isFolder(parent)
+    }
+
+    private fun isFolder(path: Path): Boolean = try {
+        fs.attributes(path).isDirectory
     } catch (e: IOException) {
-        true
+        false
     }
 
     /** Creates a folder named [NameLabels.newFolder] in [parent] (numbered if taken) and returns it. */

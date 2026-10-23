@@ -40,6 +40,9 @@ import java.util.UUID
 /** How many finished operations [RunnerState.finished] keeps. */
 private const val MAX_FINISHED = 20
 
+/** The kinds whose sources, once done, are no longer where they were. */
+private val GONE_ONCE_DONE = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE)
+
 /**
  * A conflict the running operation [opId] waits on: [conflict], and the answers its kind offers
  * ([allowed]). The UI shows it from the runner's state, so it outlives the activity, and [answer]s it;
@@ -167,23 +170,38 @@ class OperationRunner(
 
     /**
      * Runs [interrupted] again, under a new id, on what it had not done: the top-level sources it had done
-     * are left out, and so are those no longer there (a move or a delete that got to them before it could
-     * note it). A compression runs whole again: its archive is written at once. Its journal is discarded.
+     * are left out, and so, for a kind whose sources are no longer where they were once done (a move, a
+     * delete, a restore), are those known to be gone ([FileOps.isGone]: a move or a delete that got to them
+     * before it could note it). Any other source is run again, so that one out of reach (its volume away,
+     * its folder unreadable) fails as such. A compression runs whole again: its archive is written at
+     * once. Its journal is discarded once the new operation is submitted. If nothing is left to run, none
+     * is: it stays in [RunnerState.interrupted], with its journal, until it is dismissed.
      */
     fun retry(interrupted: InterruptedOp) {
         forgetInterrupted(interrupted.spec.id)
         scope.launch(dispatcher) {
+            val again = remainderOf(interrupted)
+            if (again == null) {
+                mutableState.update { state ->
+                    state.copy(interrupted = (state.interrupted + interrupted).sortedBy { it.spec.id })
+                }
+                return@launch
+            }
             journal.discard(interrupted.spec.id)
-            submit(remainderOf(interrupted))
+            submit(again)
         }
     }
 
     /**
      * Runs again, under new ids, what [op] could not do ([OpResult.Done.failed]), except what was copied
      * but could not be deleted from its source ([ItemFailure.copiedButSourceKept]), which would be copied
-     * twice. A copy or a move takes each such item to the folder it was going to (the one that matches
-     * its folder under its top-level source), one operation for each folder; any other kind runs again
-     * on the top-level sources the failures are in (a restore with their bin items).
+     * twice:
+     * - a copy or a move takes each item to the folder it was going into ([ItemFailure.into], under the
+     *   name that folder got there), one operation for each folder;
+     * - a delete takes the items that failed, and only them: not what was put in their folders since
+     *   (the folders kept because of them stay);
+     * - a restore, emptying the bin, and the ZIP kinds run again on the top-level sources the failures
+     *   are in: a restore goes by bin item, emptying by bin, and an archive is read or written whole.
      */
     fun retryFailed(op: FinishedOp) {
         val failed = (op.result as? OpResult.Done)?.failed.orEmpty().filterNot { it.copiedButSourceKept }
@@ -191,12 +209,13 @@ class OperationRunner(
         val spec = op.spec
         val again = when (spec.kind) {
             OpKind.COPY, OpKind.MOVE -> {
-                val target = Paths.get(requireNotNull(spec.target) { "${spec.kind} needs a target" })
-                val tops = spec.sources.map { Paths.get(it) }
-                failed.groupBy({ destinationOf(Paths.get(it.path), tops, target) }, { it.path })
-                    .map { (folder, paths) -> spec.copy(id = newId(), sources = paths, target = folder.toString()) }
+                val target = requireNotNull(spec.target) { "${spec.kind} needs a target" }
+                failed.groupBy({ it.into ?: target }, { it.path })
+                    .map { (folder, paths) -> spec.copy(id = newId(), sources = paths, target = folder) }
             }
-            else -> {
+            OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT ->
+                listOf(spec.copy(id = newId(), sources = failed.map { it.path }))
+            OpKind.RESTORE, OpKind.EMPTY_BIN, OpKind.COMPRESS, OpKind.EXTRACT -> {
                 val paths = failed.map { Paths.get(it.path) }
                 val indices = spec.sources.indices.filter { i ->
                     val top = Paths.get(spec.sources[i])
@@ -205,7 +224,7 @@ class OperationRunner(
                 listOf(spec.narrowedTo(indices))
             }
         }
-        again.forEach(::submit)
+        again.filter { it.sources.isNotEmpty() }.forEach(::submit)
     }
 
     /** Forgets the finished operation [opId]. */
@@ -343,12 +362,13 @@ class OperationRunner(
         mutableState.update { state -> state.copy(interrupted = state.interrupted.filterNot { it.spec.id == opId }) }
     }
 
-    /** What [op] had not done, under a new id (see [retry]). */
-    private fun remainderOf(op: InterruptedOp): OperationSpec {
+    /** What [op] had not done, under a new id (see [retry]); null if nothing is left. */
+    private fun remainderOf(op: InterruptedOp): OperationSpec? {
         val spec = op.spec
         if (spec.kind == OpKind.COMPRESS) return spec.copy(id = newId())
         val left = spec.sources.indices.drop(op.committed.coerceAtLeast(0))
-        return spec.narrowedTo(left.filter { ops.exists(Paths.get(spec.sources[it])) })
+        val gone = { index: Int -> spec.kind in GONE_ONCE_DONE && ops.isGone(Paths.get(spec.sources[index])) }
+        return spec.narrowedTo(left.filterNot(gone)).takeIf { it.sources.isNotEmpty() }
     }
 
     /** [this] under a new id, on its sources at [indices] only (and, for a restore, their bin items). */
@@ -356,16 +376,6 @@ class OperationRunner(
         val ids = options.binItemIds
         val items = if (ids.isEmpty()) options else options.copy(binItemIds = indices.mapNotNull { ids.getOrNull(it) })
         return copy(id = newId(), sources = indices.map { sources[it] }, options = items)
-    }
-
-    /**
-     * The folder the failed item [path] was going to: [target] for a top-level source, else the folder in
-     * it that matches [path]'s folder under its top-level source (the longest of [tops] it is under).
-     */
-    private fun destinationOf(path: Path, tops: List<Path>, target: Path): Path {
-        val top = tops.filter { path.startsWith(it) }.maxByOrNull { it.nameCount } ?: return target
-        val folder = top.parent?.relativize(path)?.parent ?: return target
-        return target.resolve(folder)
     }
 
     private fun pathsOf(spec: OperationSpec): List<Path> =
