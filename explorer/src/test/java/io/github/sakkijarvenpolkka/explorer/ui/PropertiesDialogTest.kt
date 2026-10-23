@@ -10,10 +10,12 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.Formats

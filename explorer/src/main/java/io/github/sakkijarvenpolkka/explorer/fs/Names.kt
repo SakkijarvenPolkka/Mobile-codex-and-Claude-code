@@ -11,7 +11,7 @@ import java.nio.file.FileAlreadyExistsException
 import java.nio.file.Path
 
 /** The longest name a volume stores, in UTF-8 bytes. */
-private const val MAX_NAME_BYTES = 255
+internal const val MAX_NAME_BYTES = 255
 
 /** The last number [claimUniqueName] tries (`name (9999)`). */
 private const val MAX_UNIQUE_NUMBER = 9999
@@ -148,7 +148,7 @@ fun <T> claimUniqueName(
 fun sameNameIgnoringCase(a: String, b: String): Boolean = NameComparator.key(a) == NameComparator.key(b)
 
 /** The UTF-8 length of [text] in bytes. A lone surrogate counts as 3, the size of its replacement character. */
-private fun utf8Length(text: String): Int {
+internal fun utf8Length(text: String): Int {
     var bytes = 0
     var i = 0
     while (i < text.length) {
@@ -167,7 +167,7 @@ private fun utf8Length(codePoint: Int): Int = when {
 }
 
 /** The longest start of this string that is at most [maxBytes] in UTF-8, cut between code points. */
-private fun String.takeUtf8(maxBytes: Int): String {
+internal fun String.takeUtf8(maxBytes: Int): String {
     var bytes = 0
     var end = 0
     while (end < length) {

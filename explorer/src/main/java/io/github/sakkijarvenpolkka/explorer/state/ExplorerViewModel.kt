@@ -18,11 +18,13 @@ import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewSetting
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.ListOptions
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
+import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
@@ -31,8 +33,6 @@ import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
-import io.github.sakkijarvenpolkka.explorer.ui.ContentCount
-import io.github.sakkijarvenpolkka.explorer.ui.countContents
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText

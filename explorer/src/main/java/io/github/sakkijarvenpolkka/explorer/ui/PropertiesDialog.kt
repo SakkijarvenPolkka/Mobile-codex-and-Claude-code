@@ -1,6 +1,5 @@
 /*
- * Files — the properties dialog of the selection or the current folder, and the count of what
- * its folders contain.
+ * Files — the properties dialog of the selection or the current folder.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -33,81 +32,17 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
-import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
-import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
+import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ContentDialog
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.MinTouchTarget
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.Formats
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
-import java.io.IOException
-import java.nio.file.Path
 import java.time.ZoneId
-
-/** What a selection holds as counted so far: files, folders and the files' size in bytes. */
-data class ContentCount(val files: Int = 0, val folders: Int = 0, val bytes: Long = 0)
-
-/**
- * Counts [entries] and everything under their folders, emitting the total so far at once and
- * again after each folder is read. A selected file counts itself; a selected folder counts
- * itself only among several, since the properties of one folder show what it contains. Links
- * are neither followed nor counted, the app's internal names are left out, and so is a folder
- * that cannot be read. The walk stops when its collector is cancelled.
- */
-fun countContents(fs: FsBackend, entries: List<FileEntry>): Flow<ContentCount> = flow {
-    var files = 0
-    var folders = 0
-    var bytes = 0L
-    val pending = ArrayDeque<Path>()
-    for (entry in entries) {
-        when (entry.kind) {
-            EntryKind.FILE -> {
-                files++
-                bytes += entry.size
-            }
-            EntryKind.DIR -> {
-                if (entries.size > 1) folders++
-                pending.addLast(entry.path)
-            }
-            EntryKind.SYMLINK, EntryKind.OTHER -> Unit
-        }
-    }
-    emit(ContentCount(files, folders, bytes))
-    while (pending.isNotEmpty()) {
-        currentCoroutineContext().ensureActive()
-        val children = try {
-            fs.list(pending.removeLast())
-        } catch (e: IOException) {
-            continue
-        }
-        for (child in children) {
-            if (HiddenNames.isInternal(child.fileName.toString())) continue
-            val attributes = try {
-                fs.attributes(child)
-            } catch (e: IOException) {
-                continue
-            }
-            when {
-                attributes.isSymbolicLink -> Unit
-                attributes.isDirectory -> {
-                    folders++
-                    pending.addLast(child)
-                }
-                attributes.isRegularFile -> {
-                    files++
-                    bytes += attributes.size()
-                }
-            }
-        }
-        emit(ContentCount(files, folders, bytes))
-    }
-}
 
 /**
  * The properties of [entries]. One item shows its icon and name, type, location, size, what a
