@@ -149,6 +149,60 @@ class FileOpsDeleteTest {
     }
 
     @Test
+    fun linkIsRestoredByRenameOnly() {
+        val target = write(internal, "t.txt", "t")
+        val a = Files.createDirectory(internal.resolve("a"))
+        val links = listOf("l1", "l2", "l3").map { Files.createSymbolicLink(a.resolve(it), target) }
+        val bin = bin()
+        ops(bin = bin).runToEnd(delete(OpKind.DELETE_TO_BIN, *links.toTypedArray()))
+        val (l1, l2, l3) = bin.list(listOf(internal)).sortedBy { it.id }
+        // Their names are taken again: by a file, by a folder, and by a file again.
+        write(internal, "a/l1", "new")
+        Files.createDirectory(a.resolve("l2"))
+        write(internal, "a/l3", "new")
+
+        // A link that would have to cross volumes is never copied: it stays in the bin.
+        val apart = FaultyFs().apply { exdevBetween(binOf(internal), a) }
+        val keepBoth = Answering { Resolution(ConflictAction.KEEP_BOTH) }
+        assertEquals(
+            OpResult.Done(emptyList(), listOf(ItemFailure(l3.payload.toString(), FsError.Unsupported))),
+            ops(apart, bin).runToEnd(restore(l3), keepBoth),
+        )
+        assertEquals(listOf(FaultyFs.Call(FaultyFs.Op.ATOMIC_MOVE, l3.payload, a.resolve("l3 (2)"))), apart.calls)
+        assertEquals(setOf(l1, l2, l3), bin.list(listOf(internal)).toSet())
+
+        // A taken name is a conflict, as for a file; each answer is carried out by renaming.
+        val answers = Answering { c ->
+            when (c.source.name) {
+                "l1" -> Resolution(ConflictAction.REPLACE)
+                "l2" -> Resolution(ConflictAction.SKIP)
+                else -> Resolution(ConflictAction.KEEP_BOTH)
+            }
+        }
+        val result = ops(bin = bin).runToEnd(restore(l1, l2, l3), answers)
+
+        assertEquals(
+            listOf(ConflictKind.FILE_FILE, ConflictKind.FILE_DIR, ConflictKind.FILE_FILE),
+            answers.asked.map { it.kind },
+        )
+        assertEquals(listOf(l1.payload, l2.payload, l3.payload), answers.asked.map { it.source.path })
+        assertEquals(List(3) { EntryKind.SYMLINK }, answers.asked.map { it.source.kind })
+        assertEquals(OpResult.Done(listOf(a.resolve("l1"), a.resolve("l3 (2)")), emptyList()), result)
+        assertEquals(
+            mapOf(
+                "a/" to "",
+                "a/l1" to "-> $target",
+                "a/l2/" to "",
+                "a/l3" to "new",
+                "a/l3 (2)" to "-> $target",
+                "t.txt" to "t",
+            ),
+            outsideBin(internal),
+        )
+        assertEquals(listOf(l2), bin.list(listOf(internal)))
+    }
+
+    @Test
     fun restoreOfAnItemNoLongerInTheBinFails() {
         val x = write(internal, "x.txt", "x")
         val bin = bin()

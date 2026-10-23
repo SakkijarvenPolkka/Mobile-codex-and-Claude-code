@@ -61,11 +61,13 @@ class FileOps(
      *   [OpResult.Done.failed], and the folders it is in are kept, untried;
      * - [RESTORE][OpKind.RESTORE] moves the bin items [OpOptions.binItemIds] names back where they came
      *   from ([RecycleBin.restoreTarget]), making that folder again if it is gone, as a move does (a name
-     *   taken there is a conflict for [resolver]). The items are looked for in the bins of the volumes the
-     *   sources are on: the sources are the items' [BinItem.payload]s, one for each id in the same order
-     *   (else this throws [IllegalArgumentException]). An item no longer in the bin fails as
-     *   [FsError.NotFound], under its source; one that is not wholly moved out (skipped, or partly merged)
-     *   stays in the bin, with its record;
+     *   taken there is a conflict for [resolver]). An item that is a link or a special file is only ever
+     *   renamed back (its conflicts are those of a file, and replacing is a rename too), never copied:
+     *   where that would cross volumes, it fails as [FsError.Unsupported]. The items are looked for in
+     *   the bins of the volumes the sources are on: the sources are the items' [BinItem.payload]s, one
+     *   for each id in the same order (else this throws [IllegalArgumentException]). An item no longer
+     *   in the bin fails as [FsError.NotFound], under its source; one that is not wholly moved out
+     *   (skipped, failed, or partly merged) stays in the bin, with its record;
      * - [EMPTY_BIN][OpKind.EMPTY_BIN] deletes every item in the Recycle Bins of the volumes its sources
      *   are on (the bin folders, [RecycleBin.binDir]) for good ([RecycleBin.purge]);
      * - the ZIP kinds are [FsError.Unsupported], after 0 of 0 items.

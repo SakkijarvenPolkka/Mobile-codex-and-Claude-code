@@ -99,6 +99,39 @@ class RecycleBinTest {
     }
 
     @Test
+    fun binRoundTripKeepsLink() {
+        val docs = Files.createDirectory(internal.resolve("docs"))
+        val target = write(internal, "target/t.txt", "t")
+        val links = listOf(
+            Files.createSymbolicLink(docs.resolve("to-file"), target),
+            Files.createSymbolicLink(docs.resolve("to-dir"), target.parent),
+            Files.createSymbolicLink(docs.resolve("dangling"), internal.resolve("gone")),
+        )
+        val targets = links.map(Files::readSymbolicLink)
+        val before = tree(internal)
+        val bin = bin()
+        val ops = ops(bin)
+
+        val deleted = ops.runToEnd(OperationSpec(OP_ID, OpKind.DELETE_TO_BIN, links.map { it.toString() }))
+        assertTrue(deleted is OpResult.Done && deleted.failed.isEmpty())
+        // The links themselves went, not what they point to.
+        assertEquals(mapOf("docs/" to "", "target/" to "", "target/t.txt" to "t"), outsideBin(internal))
+
+        val items = bin.list(listOf(internal)).sortedBy { it.id }
+        assertEquals(links.map { it.fileName.toString() }, items.map { it.name })
+        val restored = ops.runToEnd(restore(*items.toTypedArray()))
+
+        assertEquals(OpResult.Done(links, emptyList()), restored)
+        for ((link, linkTarget) in links.zip(targets)) {
+            assertTrue("$link", Files.isSymbolicLink(link))
+            assertEquals("$link", linkTarget, Files.readSymbolicLink(link))
+        }
+        assertEquals(before, outsideBin(internal))
+        assertEquals(emptyList<BinItem>(), bin.list(listOf(internal)))
+        assertEquals(emptyMap<String, String>(), tree(binOf(internal)))
+    }
+
+    @Test
     fun restoreRecreatesMissingParent() {
         val file = write(internal, "a/b/c.txt", "c")
         val bin = bin()

@@ -33,7 +33,8 @@ internal fun FsBackend.sameFile(a: Path, b: Path): Boolean = try {
 
 /**
  * One run of a copy or a move through its [plan], writing through [writer] on [fs]: what [FileOps.run]
- * does once its checks have passed. A restore runs as a move, out of the Recycle Bin. [unstorable] are
+ * does once its checks have passed. A restore runs as a move, out of the Recycle Bin, and puts back a
+ * link or special file that is an item there by renaming it only ([placeByRename]). [unstorable] are
  * the items not to write, [removable] says whether the target is on removable media; [labels], [time],
  * [resolver], [onProgress] and [onCommitted] are those of [FileOps] and of the run.
  */
@@ -50,7 +51,8 @@ internal class Transfer(
     onProgress: (OpProgress) -> Unit,
     private val onCommitted: (Int) -> Unit,
 ) {
-    private val move = spec.kind == OpKind.MOVE || spec.kind == OpKind.RESTORE
+    private val restore = spec.kind == OpKind.RESTORE
+    private val move = spec.kind == OpKind.MOVE || restore
     private val unstorable = unstorable.associate { it.path to it.error }
     private val progress = Progress(time, onProgress, plan.totalItems, plan.totalBytes)
 
@@ -104,6 +106,7 @@ internal class Transfer(
                 refused != null -> fail(entry.path, refused, parent)
                 entry.kind == EntryKind.FILE -> placeFile(entry, into, parent)
                 entry.kind == EntryKind.DIR -> placeDir(entry, into, parent, step.depth).also { frame = it }.placed
+                restore && step.depth == 0 -> placeByRename(entry, into, parent)
                 else -> fail(entry.path, FsError.Unsupported, parent)
             }
         } catch (e: IOException) {
@@ -207,6 +210,35 @@ internal class Transfer(
             stays(parent)
         }
     }
+
+    /**
+     * Puts the link or special file [entry], an item a restore takes out of the bin, into [dir] by renaming
+     * it, never by copying: one that would have to cross volumes fails as [FsError.Unsupported]. A name
+     * taken there is a conflict, as for a file; it is not checked for the same file first, which would
+     * follow the link.
+     */
+    private suspend fun placeByRename(entry: FileEntry, dir: Path, parent: Frame): Path? {
+        val dst = dir.resolve(entry.name)
+        if (!fs.exists(dst)) return renameOnly(entry, dst, parent)
+        val existing = Listing.entry(fs, dst, NO_MIME)
+        val kind = if (existing.kind == EntryKind.DIR) ConflictKind.FILE_DIR else ConflictKind.FILE_FILE
+        return when (decide(kind, entry, existing)) {
+            // A rename replaces the file that has the name.
+            ConflictAction.REPLACE -> renameOnly(entry, dst, parent)
+            ConflictAction.KEEP_BOTH -> {
+                val (stem, ext) = splitName(entry.name)
+                claimUniqueName(dir, stem, ext, UniqueStyle.KEEP_BOTH, labels, 2) { candidate ->
+                    if (fs.exists(candidate)) throw FileAlreadyExistsException(candidate.toString())
+                    renameOnly(entry, candidate, parent)
+                }.second
+            }
+            else -> stays(parent)
+        }
+    }
+
+    /** Renames [entry] to [dst]; returns [dst], or null with [entry] failed if that would cross volumes. */
+    private fun renameOnly(entry: FileEntry, dst: Path, parent: Frame): Path? =
+        if (renamed(entry.path, dst)) dst else fail(entry.path, FsError.Unsupported, parent)
 
     /** Puts the folder [entry] into [dir]; returns the [Frame] its content goes through. */
     private suspend fun placeDir(entry: FileEntry, dir: Path, parent: Frame, depth: Int): Frame {
