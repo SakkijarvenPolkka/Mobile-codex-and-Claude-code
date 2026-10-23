@@ -8,6 +8,13 @@ import org.junit.Test
 
 class DisplayNameTest {
 
+    /** U+200E, U+200F, U+061C, U+202A–U+202E, U+2066–U+2069 and U+2028/U+2029, ascending. */
+    private val directionAndSeparatorCodes: IntArray = intArrayOf(
+        0x061C, 0x200E, 0x200F, 0x2028, 0x2029,
+        0x202A, 0x202B, 0x202C, 0x202D, 0x202E,
+        0x2066, 0x2067, 0x2068, 0x2069,
+    )
+
     // --- of ---
 
     @Test
@@ -76,6 +83,46 @@ class DisplayNameTest {
         assertEquals(once, DisplayName.of(once))
     }
 
+    @Test
+    fun bidiControlsAndLineSeparatorsBecomeAMiddleDot() {
+        for (code in directionAndSeparatorCodes) {
+            assertEquals("U+%04X".format(code), "·", DisplayName.of(code.toChar().toString()))
+        }
+    }
+
+    @Test
+    fun ofCoversExactlyTheDocumentedInvisibleSet() {
+        val replaced = (0x00..0xFFFF).filter { code ->
+            val shown = DisplayName.of(code.toChar().toString())
+            val isControl = code.toChar().isISOControl()
+            shown != code.toChar().toString() && !isControl
+        }
+        assertEquals(directionAndSeparatorCodes.toList(), replaced)
+    }
+
+    @Test
+    fun aReorderingNameCannotHideItsExtension() {
+        val shown = DisplayName.of("photo\u202Egnp.exe")
+        assertEquals("photo·gnp.exe", shown)
+        assertFalse(shown.any { it in '\u202A'..'\u202E' })
+    }
+
+    @Test
+    fun lineAndParagraphSeparatorsDoNotBreakARow() {
+        assertEquals("a·b·c", DisplayName.of("a\u2028b\u2029c"))
+    }
+
+    @Test
+    fun ofIsIdempotentForDirectionControls() {
+        val once = DisplayName.of("a\u200Eb\u061Cc\u2066d\u2069e\u2028f\n")
+        assertEquals(once, DisplayName.of(once))
+    }
+
+    @Test
+    fun otherInvisibleCharactersAreKept() {
+        assertEquals("a\u200Bb\u200Dc\uFEFFd\u2060e", DisplayName.of("a\u200Bb\u200Dc\uFEFFd\u2060e"))
+    }
+
     // --- inSentence ---
 
     @Test
@@ -86,6 +133,25 @@ class DisplayNameTest {
     @Test
     fun inSentenceAlsoMakesControlsVisible() {
         assertEquals("\u2068a␊b\u2069", DisplayName.inSentence("a\nb"))
+    }
+
+    @Test
+    fun aNameCannotCloseTheIsolateOrReorderTheSentence() {
+        val shown = DisplayName.inSentence("x\u2069\u202Eabc")
+        assertEquals("\u2068x··abc\u2069", shown)
+        assertEquals(1, shown.count { it == '\u2069' })
+        assertEquals(1, shown.count { it == '\u2068' })
+        assertFalse(shown.contains('\u202E'))
+    }
+
+    @Test
+    fun inSentenceHasNoDirectionControlsOtherThanItsOwnPair() {
+        val every = directionAndSeparatorCodes.joinToString("") { it.toChar().toString() }
+        val shown = DisplayName.inSentence("a${every}b")
+        val inner = shown.substring(1, shown.length - 1)
+        assertTrue(inner, inner.none { it.code in directionAndSeparatorCodes })
+        assertTrue(shown.startsWith("\u2068"))
+        assertTrue(shown.endsWith("\u2069"))
     }
 
     // --- middleEllipsis ---

@@ -17,15 +17,18 @@ object DisplayName {
     private const val CONTROL_PICTURES = 0x2400
     private const val DELETE_PICTURE = '\u2421'
     private const val NEWLINE_PICTURE = '\u2424'
-    private const val UNKNOWN_CONTROL = '\u00B7'
+    private const val PLACEHOLDER = '\u00B7'
 
     /**
      * [raw] with each C0/C1 control character (line breaks included) replaced by a visible
      * symbol from the Control Pictures block: `\n` becomes `␊`, NEL becomes `␤`, DEL becomes
-     * `␡`, and the C1 controls that have no picture become `·`.
+     * `␡`, and the C1 controls that have no picture become `·`. The characters that reorder
+     * text or end a line without being C0/C1 controls (the direction marks U+200E, U+200F and
+     * U+061C, the embedding, override and isolate controls U+202A–U+202E and U+2066–U+2069,
+     * and the line and paragraph separators U+2028 and U+2029) become `·` as well.
      */
     fun of(raw: String): String {
-        if (raw.none { it.isISOControl() }) return raw
+        if (raw.none { visible(it) != it }) return raw
         val shown = StringBuilder(raw.length)
         for (c in raw) shown.append(visible(c))
         return shown.toString()
@@ -35,13 +38,15 @@ object DisplayName {
         in 0x00..0x1F -> (CONTROL_PICTURES + c.code).toChar()
         0x7F -> DELETE_PICTURE
         0x85 -> NEWLINE_PICTURE
-        in 0x80..0x9F -> UNKNOWN_CONTROL
+        in 0x80..0x9F -> PLACEHOLDER
+        0x061C, 0x200E, 0x200F, 0x2028, 0x2029 -> PLACEHOLDER
+        in 0x202A..0x202E, in 0x2066..0x2069 -> PLACEHOLDER
         else -> c
     }
 
     /**
-     * [of] wrapped in first-strong isolate marks (U+2068 … U+2069), so a name in the middle
-     * of a sentence cannot reorder the text around it.
+     * [of] wrapped in first-strong isolate marks (U+2068 … U+2069). The name itself holds no
+     * direction control, so it cannot close the isolate early or reorder the text around it.
      */
     fun inSentence(raw: String): String = "$FSI${of(raw)}$PDI"
 
