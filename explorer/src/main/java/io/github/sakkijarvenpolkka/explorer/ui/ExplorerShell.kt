@@ -120,6 +120,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     // Keys reach only what has the focus: the shell takes it back when what had it is gone.
     val focus = remember { FocusRequester() }
     var hasFocus by remember { mutableStateOf(false) }
+    // The shell itself, not a button or row in it, has the focus.
+    var focused by remember { mutableStateOf(false) }
     val nothingOpen = ui.overlay == null
     LaunchedEffect(nothingOpen) { if (nothingOpen && !hasFocus) focus.requestFocus() }
     Box(
@@ -129,9 +131,12 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .onPreviewKeyEvent { event ->
                 // The address box is the shell's only text field.
                 val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit)
-                action != null && vm.onShortcut(action, ui)
+                action != null && vm.onShortcut(action, ui, shellFocused = focused)
             }
-            .onFocusChanged { hasFocus = it.hasFocus }
+            .onFocusChanged {
+                hasFocus = it.hasFocus
+                focused = it.isFocused
+            }
             .focusRequester(focus)
             .focusTarget()
             .testTag(Tags.SHELL),
@@ -185,9 +190,11 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
 
 /**
  * Does what the shortcut [action] asks for in [ui]: false when it does nothing there (a command
- * not offered, nowhere to go), so that the key goes on to what has the focus.
+ * not offered, nowhere to go), so that the key goes on to what has the focus. Enter opens the
+ * one selected item only while the shell itself is [shellFocused]: a focused button, crumb or
+ * row gets it first.
  */
-private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiState): Boolean {
+private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiState, shellFocused: Boolean): Boolean {
     fun offered(c: Command): Boolean = (c in ui.commands).also { if (it) command(c) }
     fun can(possible: Boolean, act: () -> Unit): Boolean = possible.also { if (it) act() }
     return when (action) {
@@ -199,7 +206,7 @@ private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiS
         ShortcutAction.DELETE_PERMANENT -> offered(Command.DELETE_PERMANENT)
         ShortcutAction.RENAME -> offered(Command.RENAME)
         ShortcutAction.REFRESH -> offered(Command.REFRESH)
-        ShortcutAction.OPEN -> offered(Command.OPEN)
+        ShortcutAction.OPEN -> shellFocused && ui.selected.size == 1 && offered(Command.OPEN)
         ShortcutAction.FOCUS_ADDRESS -> can(ui.location is Location.Folder) { editAddress() }
         ShortcutAction.BACK -> can(ui.backTarget != null) { systemBack() }
         ShortcutAction.FORWARD -> can(ui.tabs.active.forward.isNotEmpty()) { forward() }

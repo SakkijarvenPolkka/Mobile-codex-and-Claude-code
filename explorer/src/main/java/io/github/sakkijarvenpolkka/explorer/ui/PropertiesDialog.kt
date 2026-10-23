@@ -145,7 +145,8 @@ fun PropertiesDialog(entries: List<FileEntry>, contents: Flow<ContentCount>, onD
             val bytes = if (single?.kind == EntryKind.FILE) single.size else counted.bytes
             Property(R.string.prop_size, Formats.size(bytes, korean))
             if (single == null || single.kind == EntryKind.DIR) {
-                Property(R.string.prop_contains, res.getString(R.string.prop_contains, counted.files, counted.folders))
+                val contains = res.getString(R.string.prop_contains, counted.files, counted.folders)
+                Property(R.string.prop_contains_label, contains)
             }
             Separator()
             if (single != null) {

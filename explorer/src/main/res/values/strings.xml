@@ -46,6 +46,7 @@
     <string name="prop_type">Type</string>
     <string name="prop_location">Location</string>
     <string name="prop_size">Size</string>
+    <string name="prop_contains_label">Contains</string>
     <string name="prop_contains">%1$d files, %2$d folders</string>
     <string name="prop_modified">Modified</string>
     <string name="prop_hidden">Hidden</string>

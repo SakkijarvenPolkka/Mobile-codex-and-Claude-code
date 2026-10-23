@@ -2,8 +2,10 @@
 package io.github.sakkijarvenpolkka.explorer.ui
 
 import androidx.compose.runtime.remember
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
@@ -97,6 +99,9 @@ class PropertiesDialogTest {
         show(listOf(entry(docs)), fs)
 
         rule.onNodeWithText("파일 폴더").assertExists()
+        rule.onNodeWithText("내용").assertExists()
+        // No label shows a format template such as 파일 %1$d개, 폴더 %2$d개.
+        rule.onAllNodes(hasText("%", substring = true)).assertCountEquals(0)
         rule.waitUntil(5_000) { shown("파일 1개, 폴더 1개") }
         rule.onNodeWithText("100바이트").assertExists()
         gate.countDown()

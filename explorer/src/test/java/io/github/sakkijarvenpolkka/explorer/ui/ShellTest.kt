@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.os.Process
 import androidx.activity.ComponentActivity
+import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
@@ -15,9 +16,14 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -53,6 +59,7 @@ import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.withKeyDown
 import androidx.lifecycle.viewModelScope
@@ -121,6 +128,9 @@ class ShellTest {
     private lateinit var volumes: FakeVolumes
     private lateinit var vm: ExplorerViewModel
 
+    /** The keys pressed that the shell let through, as the activity would get them. */
+    private val passedOn = mutableListOf<Key>()
+
     @Before
     fun setUp() {
         root = folder.newFolder("primary").toPath().toRealPath()
@@ -149,7 +159,9 @@ class ShellTest {
             val global by settings.global.collectAsState()
             InLocale(locale.value) {
                 ExplorerTheme(global) {
-                    ExplorerShell(vm, widthClass)
+                    Box(Modifier.onKeyEvent { if (it.type == KeyEventType.KeyDown) passedOn += it.key; false }) {
+                        ExplorerShell(vm, widthClass)
+                    }
                     probe()
                 }
             }
@@ -631,6 +643,40 @@ class ShellTest {
         rule.onRoot().performKeyInput { pressKey(Key.Backspace) }
         rule.waitForIdle()
         assertEquals(Location.Folder(root.resolve("a/b")), location())
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun enterGoesToTheFocusedButtonBeforeTheSelection() {
+        dir("a/b/c")
+        file("a/b/x.txt")
+        show()
+        vm.navigate(Location.Folder(root.resolve("a")))
+        rule.waitForIdle()
+
+        // On the shell itself, Enter opens the one selected item.
+        row("b").performTouchInput { longClick() }
+        rule.waitForIdle()
+        rule.onRoot().performKeyInput { pressKey(Key.Enter) }
+        rule.waitForIdle()
+        assertEquals(Location.Folder(root.resolve("a/b")), location())
+
+        // With two selected there is no one item to open, so Enter goes on.
+        rule.onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.A) } }
+        rule.waitForIdle()
+        rule.onRoot().performKeyInput { pressKey(Key.Enter) }
+        rule.waitForIdle()
+        assertTrue(Key.Enter in passedOn)
+        assertEquals(Location.Folder(root.resolve("a/b")), location())
+
+        // A focused button gets Enter before the one selected file does.
+        row("c").performClick()
+        rule.waitForIdle()
+        assertEquals(listOf("x.txt"), vm.ui.value.selected.map { it.name })
+        rule.onNodeWithTag(Tags.UP).requestFocus()
+        rule.onNodeWithTag(Tags.UP).performKeyInput { pressKey(Key.Enter) }
+        rule.waitForIdle()
+        assertEquals(Location.Folder(root.resolve("a")), location())
     }
 
     @Test
