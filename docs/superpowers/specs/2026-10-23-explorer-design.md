@@ -376,7 +376,7 @@ suspend fun FileOps.run(spec: OperationSpec, resolver: ConflictResolver,
   - 시작이 거부되면(`ForegroundServiceStartNotAllowedException`) 프로세스 안에서 실행하고 "앱을 연 채로
     두세요"를 알린다.
   - `POST_NOTIFICATIONS`는 첫 작업 때 한 번 요청(거부해도 서비스는 동작).
-- **저널**: `filesDir/ops/<opId>.json` = OperationSpec + 진행 중 임시 경로 + 확정된 개수. 시작할 때와 항목이
+- **저널**: 작업마다 두 파일 — `filesDir/ops/<opId>.json` = OperationSpec(시작할 때 한 번), `filesDir/ops/<opId>.progress.json` = 진행 중 임시 경로 + 확정된 개수(큰 선택에서 기록 비용이 제곱으로 늘지 않게). 시작할 때와 항목이
   확정될 때마다 임시+이름 바꾸기로 기록, 끝나면 삭제. 앱 시작 시와 각 작업 전에 기록된 임시 경로를
   지운다. 남은 저널이 있으면 "작업이 중단되었습니다: X/Y 완료 — 다시 시도"(같은 spec을 남은 항목에 대해
   다시 실행).
