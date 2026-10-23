@@ -24,6 +24,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.PermissionGate
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
@@ -44,10 +45,11 @@ class MainActivity : ComponentActivity() {
         viewModelFactory {
             initializer {
                 val app = application as ExplorerApp
-                ExplorerViewModel(
-                    app,
-                    ExplorerDeps(NioFsBackend, app.settings, app.volumes, app.volumes, MimeResolver(), Dispatchers.IO),
+                val mime = MimeResolver()
+                val deps = ExplorerDeps(
+                    NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
                 )
+                ExplorerViewModel(app, deps)
             }
         }
     }

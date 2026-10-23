@@ -25,9 +25,14 @@ import io.github.sakkijarvenpolkka.explorer.fs.ListOptions
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
+import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
+import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
+import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
+import io.github.sakkijarvenpolkka.explorer.ui.ContentCount
+import io.github.sakkijarvenpolkka.explorer.ui.countContents
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
@@ -41,6 +46,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -68,7 +74,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /** The tabs on volumes that are not mounted; main thread only, as the maps below. */
     private val volumeTracking: VolumeTracking
-    private val shell = MutableStateFlow(ShellState())
+    private val shell = MutableStateFlow(ShellState(obbAllowed = installsAllowed()))
 
     /** What each tab's list was last read for. */
     private val loadedFor = HashMap<TabId, LoadKey>()
@@ -135,13 +141,24 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     /** Reads the active tab's folder again, keeping its rows on screen until the new ones arrive. */
     fun refresh() = ensureLoaded(refresh = true)
 
-    /** Opens a folder (a link is followed when it leads to a folder in storage). */
+    /**
+     * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a
+     * file in another app (the built-in viewers come later). An APK needs the user to let this
+     * app install apps first, which a message offers to do.
+     */
     fun open(entry: FileEntry) {
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            // Files are opened by the viewers and other apps, which come later.
-            EntryKind.FILE, EntryKind.OTHER -> Unit
+            EntryKind.FILE -> handOver(listOf(entry.path)) { openWith ->
+                if (entry.mime == APK_MIME && openWith.needsInstallPermission()) {
+                    Prepared.Refused(OpenResult.NeedsInstallPermission)
+                } else {
+                    Prepared.Launch(openWith.viewIntent(entry.path))
+                }
+            }
+            // A pipe, socket or device: no app reads it as a file.
+            EntryKind.OTHER -> showError(here(), UiText.res(R.string.open_unsupported))
         }
     }
 
@@ -194,6 +211,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /** The app came back: the active tab is read again, the others are marked out of date. */
     fun onResume() {
+        // The user may have let the app install apps in the settings meanwhile.
+        shell.update { it.copy(obbAllowed = installsAllowed()) }
         val model = tabs.value
         model.tabs.filter { it.id != model.activeId }.forEach { loader.markStale(it.id) }
         ensureLoaded(refresh = true)
@@ -210,14 +229,31 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Command.REFRESH -> refresh()
             Command.OPTIONS -> shell.update { it.copy(overlay = Overlay.Options) }
             Command.OPEN -> selectedEntries().singleOrNull()?.let(::open)
+            Command.OPEN_WITH -> selectedEntries().singleOrNull()?.let(::openWith)
+            Command.SHARE -> share(selectedEntries().map { it.path })
+            Command.PROPERTIES -> showProperties()
             else -> Unit
         }
     }
+
+    /**
+     * The shell started [intent], the one [ExplorerUiState.launch] held, with [result]; a failure
+     * shows a message about where the active tab was when the intent was asked for.
+     */
+    fun launched(intent: Intent, result: OpenResult) {
+        val pending = shell.value.launch?.takeIf { it.intent === intent } ?: return
+        shell.update { it.copy(launch = null) }
+        onOpenResult(result, pending.at)
+    }
+
+    /** What [entries] hold, counted off the main thread while the flow is collected ([countContents]). */
+    fun contentsOf(entries: List<FileEntry>): Flow<ContentCount> = countContents(deps.fs, entries).flowOn(deps.io)
 
     /** Opens the menu of [folder]'s subfolders (nothing when it has none or is on no mounted volume). */
     fun showSubfolders(folder: Path) {
         if (deps.lookup.volumeOf(folder) == null) return
         val options = ListOptions(showHidden = settings.global.value.showHidden)
+        val at = here()
         viewModelScope.launch {
             val children = try {
                 withContext(deps.io) {
@@ -226,7 +262,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showError(errorText(e.toFsError()))
+                showError(at, errorText(e.toFsError()))
                 return@launch
             }
             if (children.isNotEmpty()) shell.update { it.copy(overlay = Overlay.Subfolders(folder, children)) }
@@ -354,7 +390,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private fun offerRestart() {
         val restart = UiText.res(R.string.restart) to ::restartApp
-        showHere(UiMessage(UiText.res(R.string.usb_restart), InfoSeverity.WARNING, restart))
+        showAt(here(), UiMessage(UiText.res(R.string.usb_restart), InfoSeverity.WARNING, restart))
     }
 
     /** Starts the app again in a new process, which has all files access from its start. */
@@ -370,6 +406,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
      * or with [showFile] to a file's folder with the file selected.
      */
     private fun goTo(text: String, base: Path?, showFile: Boolean) {
+        val at = here()
         viewModelScope.launch {
             val target = try {
                 withContext(deps.io) { resolve(text, base) }
@@ -388,8 +425,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     navigate(Location.Folder(target.path.parent))
                     reduce(TabAction.Select(target.path))
                 }
-                Resolved.Outside -> showError(UiText.res(R.string.outside_storage))
-                is Resolved.Failed -> showError(errorText(target.error))
+                Resolved.Outside -> showError(at, UiText.res(R.string.outside_storage))
+                is Resolved.Failed -> showError(at, errorText(target.error))
             }
         }
     }
@@ -406,11 +443,101 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         return if (deps.fs.attributes(real).isDirectory) Resolved.Folder(real) else Resolved.File(real)
     }
 
-    private fun showError(text: UiText) = showHere(UiMessage(text, InfoSeverity.ERROR))
+    private fun here(): Location = tabs.value.active.current.location
 
-    /** Shows [message] about the active tab's location: it goes when the tab is somewhere else. */
-    private fun showHere(message: UiMessage) =
-        shell.update { it.copy(message = message, messageAt = tabs.value.active.current.location) }
+    private fun showError(at: Location, text: UiText) = showAt(at, UiMessage(text, InfoSeverity.ERROR))
+
+    /**
+     * Shows [message] about [at], where the active tab was when the user asked for what it
+     * answers: not at all when the tab has left it since, and it goes when the tab leaves it.
+     */
+    private fun showAt(at: Location, message: UiMessage) {
+        if (here() == at) shell.update { it.copy(message = message, messageAt = at) }
+    }
+
+    /** "Open with": the system chooser for the file [entry], which asks every time. */
+    private fun openWith(entry: FileEntry) {
+        if (entry.kind != EntryKind.FILE) return
+        val title = getApplication<Application>().getString(R.string.open_with_title)
+        handOver(listOf(entry.path)) { Prepared.Launch(it.chooserIntent(entry.path, title)) }
+    }
+
+    /** Shares the files [paths] through the system share sheet. */
+    private fun share(paths: List<Path>) {
+        if (paths.isEmpty()) return
+        handOver(paths) { Prepared.Launch(Intent.createChooser(it.shareIntent(paths), null)) }
+    }
+
+    /**
+     * Hands [files] to another app with the intent [prepare] makes, off the main thread, for the
+     * shell to start ([ExplorerUiState.launch]). A file gone since its folder was read shows "not
+     * found" and the folder is read again; one the FileProvider does not serve cannot be opened.
+     * Nothing is handed over without [ExplorerDeps.openWith].
+     */
+    private fun handOver(files: List<Path>, prepare: (OpenWith) -> Prepared) {
+        val openWith = deps.openWith ?: return
+        val at = here()
+        viewModelScope.launch {
+            val prepared = try {
+                withContext(deps.io) {
+                    if (files.all(deps.fs::exists)) prepare(openWith) else Prepared.Refused(OpenResult.NotFound)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val error = e.toFsError()
+                if (error == FsError.Unsupported) Prepared.Refused(OpenResult.Unsupported) else Prepared.Failed(error)
+            }
+            when (prepared) {
+                is Prepared.Launch -> shell.update { it.copy(launch = PendingLaunch(prepared.intent, at)) }
+                is Prepared.Refused -> onOpenResult(prepared.result, at)
+                is Prepared.Failed -> showError(at, errorText(prepared.error))
+            }
+        }
+    }
+
+    /** What [result] of handing a file to another app, asked for at [at], tells the user. */
+    private fun onOpenResult(result: OpenResult, at: Location) {
+        when (result) {
+            OpenResult.Started -> Unit
+            OpenResult.NoApp -> showError(at, UiText.res(R.string.open_no_app))
+            OpenResult.Unsupported -> showError(at, UiText.res(R.string.open_unsupported))
+            OpenResult.NotFound -> {
+                showError(at, UiText.res(R.string.error_not_found))
+                if (here() == at) refresh()
+            }
+            OpenResult.NeedsInstallPermission -> {
+                val openWith = deps.openWith ?: return
+                val allow = UiText.res(R.string.permission_button) to {
+                    dismissMessage()
+                    shell.update { it.copy(launch = PendingLaunch(openWith.installPermissionIntent(), at)) }
+                }
+                showAt(at, UiMessage(UiText.res(R.string.install_permission), InfoSeverity.WARNING, allow))
+            }
+        }
+    }
+
+    /** The properties of the selection, else of the current folder (read off the main thread). */
+    private fun showProperties() {
+        val selected = selectedEntries()
+        if (selected.isNotEmpty()) return shell.update { it.copy(overlay = Overlay.Properties(selected)) }
+        val at = here()
+        val folder = (at as? Location.Folder)?.path ?: return
+        viewModelScope.launch {
+            val entry = try {
+                withContext(deps.io) { Listing.entry(deps.fs, folder, deps.mime::mimeOf) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                showError(at, errorText(e.toFsError()))
+                return@launch
+            }
+            if (here() == at) shell.update { it.copy(overlay = Overlay.Properties(listOf(entry))) }
+        }
+    }
+
+    /** Whether the user lets this app install apps, which also opens `Android/obb` to it. */
+    private fun installsAllowed(): Boolean = deps.openWith?.needsInstallPermission() == false
 
     /**
      * A volume going or mounted ([VolumeTracking.onVolumeEvent]): a tab that loses its folder is
@@ -467,7 +594,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val selected = rows.mapNotNull { row -> row.entry.takeIf { it.path in tab.selection.items } }
         val folder = (location as? Location.Folder)?.path?.takeIf { unavailable == null }
         val volume = folder?.let(deps.lookup::volumeOf)
-        val restricted = folder != null && volume != null && isRestrictedAppDataPath(volume.root, folder)
+        val restricted = folder != null && volume != null &&
+            isRestrictedAppDataPath(volume.root, folder, obbAllowed = core.shell.obbAllowed)
         val roots = env.volumes.mapNotNull { it.root }
         val commands = if (unavailable != null) {
             setOf(Command.REFRESH, Command.OPTIONS)
@@ -507,6 +635,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             drawerOpen = core.shell.drawerOpen,
             selected = selected,
             up = upFrom(location, unavailable != null, roots),
+            launch = core.shell.launch?.intent,
         )
     }
 
@@ -529,7 +658,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /**
      * What is open over the shell, the message and the location it is about ([messageAt], null
-     * for one that stays until dismissed), and a counter that moves whenever a folder's view changes.
+     * for one that stays until dismissed), a counter that moves whenever a folder's view changes,
+     * the intent for the shell to start, and whether `Android/obb` is open to the app.
      */
     private data class ShellState(
         val overlay: Overlay? = null,
@@ -537,6 +667,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val message: UiMessage? = null,
         val messageAt: Location? = null,
         val viewRevision: Int = 0,
+        val launch: PendingLaunch? = null,
+        val obbAllowed: Boolean = false,
     ) {
         /** This state with the active tab at [location]: without a message about another place. */
         fun at(location: Location): ShellState =
@@ -558,6 +690,16 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     )
 
     private data class LoadKey(val folder: Path, val options: ListOptions)
+
+    /** An [intent] for the shell to start, asked for while the active tab was [at]. */
+    private class PendingLaunch(val intent: Intent, val at: Location)
+
+    /** What handing files to another app comes to before anything is started. */
+    private sealed interface Prepared {
+        class Launch(val intent: Intent) : Prepared
+        class Refused(val result: OpenResult) : Prepared
+        class Failed(val error: FsError) : Prepared
+    }
 
     private class ScrollSpot(val location: Location, val index: Int, val offset: Int)
 

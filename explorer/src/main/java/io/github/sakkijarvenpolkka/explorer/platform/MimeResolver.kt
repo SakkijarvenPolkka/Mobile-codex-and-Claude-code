@@ -29,7 +29,7 @@ class MimeResolver {
             "vtt" to "text/vtt",
             "md" to "text/markdown",
             "kt" to "text/x-kotlin",
-            "apk" to "application/vnd.android.package-archive",
+            "apk" to APK_MIME,
             "heic" to "image/heic",
             "avif" to "image/avif",
         )

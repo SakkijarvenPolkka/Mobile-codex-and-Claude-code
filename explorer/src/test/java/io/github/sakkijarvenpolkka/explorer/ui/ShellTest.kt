@@ -17,6 +17,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -24,6 +25,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assert
@@ -42,13 +44,17 @@ import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.test.withKeyDown
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.MainActivity
@@ -78,6 +84,7 @@ import kotlinx.coroutines.cancel
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -585,6 +592,64 @@ class ShellTest {
         row("b").performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(Tags.STATUS_SELECTION).assertTextEquals("1개 항목 선택됨")
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun keyboardShortcutsReachTheShell() {
+        dir("a/b")
+        file("a/x.txt")
+        show()
+        vm.navigate(Location.Folder(root.resolve("a/b")))
+        rule.waitForIdle()
+
+        rule.onRoot().performKeyInput { withKeyDown(Key.AltLeft) { pressKey(Key.DirectionUp) } }
+        rule.waitForIdle()
+        assertEquals(Location.Folder(root.resolve("a")), location())
+
+        rule.onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.A) } }
+        rule.waitForIdle()
+        assertEquals(setOf(root.resolve("a/b"), root.resolve("a/x.txt")), vm.ui.value.tabs.active.selection.items)
+
+        // While the address is typed, Backspace edits it (the whole path is selected); Alt+← is still Back.
+        rule.onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.L) } }
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.ADDRESS_EDIT).performKeyInput { pressKey(Key.Backspace) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.ADDRESS_EDIT).assertTextEquals("")
+        rule.onNodeWithTag(Tags.ADDRESS_EDIT).performKeyInput {
+            withKeyDown(Key.AltLeft) { pressKey(Key.DirectionLeft) }
+        }
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.ADDRESS_EDIT).assertDoesNotExist()
+        assertTrue(vm.ui.value.tabs.active.selection.active)
+
+        // Back on the shell, the keys work again: Backspace clears the selection, then goes back.
+        rule.onRoot().performKeyInput { pressKey(Key.Backspace) }
+        rule.waitForIdle()
+        assertFalse(vm.ui.value.tabs.active.selection.active)
+        rule.onRoot().performKeyInput { pressKey(Key.Backspace) }
+        rule.waitForIdle()
+        assertEquals(Location.Folder(root.resolve("a/b")), location())
+    }
+
+    @Test
+    fun propertiesFromTheContextMenu() {
+        file("report.pdf", bytes = 2048)
+        show()
+        row("report.pdf").performTouchInput { longClick() }
+        rule.onNodeWithTag(Tags.rowMore("report.pdf")).performClick()
+        rule.onNodeWithTag(Tags.contextCommand(Command.PROPERTIES)).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.PROPERTIES).assertExists()
+        inside(Tags.PROPERTIES, hasText("report.pdf")).assertExists()
+        inside(Tags.PROPERTIES, hasText(str(R.string.type_file_ext, "PDF"))).assertExists()
+        inside(Tags.PROPERTIES, hasText(Formats.size(2048, korean = false))).assertExists()
+
+        rule.onNodeWithText(str(R.string.close)).performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.PROPERTIES).assertDoesNotExist()
+        assertNull(vm.ui.value.overlay)
     }
 
     /** The name of the topmost row the details list shows, at least in part. */

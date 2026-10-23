@@ -250,14 +250,16 @@ private class Look(
     /** The size of a file; folders have none. */
     fun size(entry: FileEntry): String? = if (entry.kind == EntryKind.FILE) Formats.size(entry.size, korean) else null
 
-    /** "File folder", "PDF File" (the extension upper-cased the same in every language), or "File". */
-    fun type(entry: FileEntry): String {
-        val extension = extensionOf(entry.name).uppercase(Locale.ROOT)
-        return when {
-            entry.kind == EntryKind.DIR -> res.getString(R.string.type_folder)
-            extension.isNotEmpty() -> res.getString(R.string.type_file_ext, DisplayName.of(extension))
-            else -> res.getString(R.string.type_file)
-        }
+    fun type(entry: FileEntry): String = typeLabel(entry, res)
+}
+
+/** "File folder", "PDF File" (the extension upper-cased the same in every language), or "File". */
+internal fun typeLabel(entry: FileEntry, res: Resources): String {
+    val extension = extensionOf(entry.name).uppercase(Locale.ROOT)
+    return when {
+        entry.kind == EntryKind.DIR -> res.getString(R.string.type_folder)
+        extension.isNotEmpty() -> res.getString(R.string.type_file_ext, DisplayName.of(extension))
+        else -> res.getString(R.string.type_file)
     }
 }
 
@@ -366,8 +368,9 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look) {
     }
 }
 
+/** The icon of [entry]; folders in Windows folder yellow. */
 @Composable
-private fun EntryIcon(entry: FileEntry, modifier: Modifier) {
+internal fun EntryIcon(entry: FileEntry, modifier: Modifier) {
     val tint = if (entry.kind == EntryKind.DIR) FolderTint else FluentTheme.colors.text
     FluentIcon(iconFor(entry), contentDescription = null, modifier = modifier, tint = tint)
 }
@@ -397,7 +400,7 @@ private fun Secondary(text: String, modifier: Modifier = Modifier, align: TextAl
 
 /** The selection check box of a row: an accent box with a check mark when [checked], an outline otherwise. */
 @Composable
-private fun CheckMark(checked: Boolean) {
+internal fun CheckMark(checked: Boolean) {
     val colors = FluentTheme.colors
     val shape = FluentTheme.shapes.control
     val box = if (checked) {

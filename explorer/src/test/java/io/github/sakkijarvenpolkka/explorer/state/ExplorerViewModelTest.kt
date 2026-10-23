@@ -10,6 +10,7 @@ import io.github.sakkijarvenpolkka.explorer.data.DecodedLocation
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewMode
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
@@ -17,8 +18,11 @@ import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.util.UiText
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -61,15 +65,24 @@ class ExplorerViewModelTest {
     private fun start(
         settings: SettingsStore = SettingsStore(null),
         volumes: FakeVolumes = FakeVolumes(FakeVolumes.primary(root)),
+        io: CoroutineDispatcher = Dispatchers.Unconfined,
     ): ExplorerViewModel {
         this.volumes = volumes
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined)
+        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io)
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         settle()
         return vm
     }
 
     private fun settle() = shadowOf(Looper.getMainLooper()).idle()
+
+    /** Runs what is queued on [io], then on the main thread, a few rounds over: each hands work to the other. */
+    private fun drain(io: TestDispatcher) {
+        repeat(5) {
+            io.scheduler.advanceUntilIdle()
+            settle()
+        }
+    }
 
     private fun dir(rel: String): Path = Files.createDirectories(root.resolve(rel))
 
@@ -123,6 +136,24 @@ class ExplorerViewModelTest {
         vm.typedPath("/proc")
         settle()
         assertEquals(Location.Folder(root.resolve("a")), location())
+        assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
+    }
+
+    @Test
+    fun lateMessageIsDroppedOnceTheTabHasMoved() {
+        dir("a")
+        val io = StandardTestDispatcher()
+        start(io = io)
+        drain(io)
+        vm.typedPath("/proc")
+        // The path is still being resolved when the tab moves on.
+        vm.navigate(Location.Folder(root.resolve("a")))
+        drain(io)
+        assertEquals(Location.Folder(root.resolve("a")), location())
+        assertNull(ui.message)
+
+        vm.typedPath("/proc")
+        drain(io)
         assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
     }
 
@@ -375,6 +406,29 @@ class ExplorerViewModelTest {
         assertEquals(Location.Folder(root), location())
         assertNull(ui.unavailable)
         assertEquals(listOf("a.txt", "b.txt"), names())
+    }
+
+    @Test
+    fun propertiesShowTheSelectionOrElseTheFolder() {
+        dir("a")
+        file("b.txt")
+        file("c.txt")
+        start()
+        vm.command(Command.PROPERTIES)
+        settle()
+        val folder = (ui.overlay as Overlay.Properties).entries.single()
+        assertEquals(root, folder.path)
+        assertEquals(EntryKind.DIR, folder.kind)
+
+        vm.closeOverlay()
+        vm.onLongPress(entry("c.txt"))
+        vm.onTap(entry("b.txt"))
+        settle()
+        vm.command(Command.PROPERTIES)
+        settle()
+        // In listing order.
+        assertEquals(listOf("b.txt", "c.txt"), (ui.overlay as Overlay.Properties).entries.map { it.name })
+        assertEquals(BackTarget.OVERLAY, ui.backTarget)
     }
 
     @Test

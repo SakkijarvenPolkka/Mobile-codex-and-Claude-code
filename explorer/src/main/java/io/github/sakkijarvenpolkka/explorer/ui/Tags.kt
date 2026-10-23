@@ -50,6 +50,8 @@ object Tags {
     const val SYSTEM_ACCENT = "system_accent"
     const val OPTION_HIDDEN = "option_hidden"
     const val OPTION_EXTENSIONS = "option_extensions"
+    const val PROPERTIES = "properties"
+    const val PROP_HIDDEN = "prop_hidden"
 
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"

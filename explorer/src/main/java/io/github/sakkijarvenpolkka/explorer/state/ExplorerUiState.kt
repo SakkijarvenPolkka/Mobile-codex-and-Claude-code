@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import android.content.Intent
 import io.github.sakkijarvenpolkka.explorer.data.DecodedLocation
 import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
@@ -14,6 +15,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
@@ -21,7 +23,10 @@ import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import java.nio.file.Path
 
-/** What [ExplorerViewModel] works with; [io] reads folders and resolves paths. */
+/**
+ * What [ExplorerViewModel] works with; [io] reads folders and resolves paths. Without
+ * [openWith], files are not handed to other apps.
+ */
 data class ExplorerDeps(
     val fs: FsBackend,
     val settings: SettingsStore,
@@ -29,6 +34,7 @@ data class ExplorerDeps(
     val lookup: VolumeLookup,
     val mime: MimeResolver,
     val io: CoroutineDispatcher,
+    val openWith: OpenWith? = null,
 )
 
 /**
@@ -50,13 +56,19 @@ sealed interface Overlay {
     data object AddressEdit : Overlay
 
     data object Options : Overlay
+
+    /** The properties of [entries]: the selection in listing order, or the current folder. */
+    data class Properties(val entries: List<FileEntry>) : Overlay
 }
 
 /**
  * Everything the shell shows. [listing] is the active tab's; [unavailable] is set when the
  * active tab's folder is on a volume that is not mounted (the tab keeps its place);
- * [restricted] when the folder is under `Android/data` or `Android/obb`. [selected] are the
- * selected items in listing order; [up] is where Up goes, null when it is disabled.
+ * [restricted] when the folder is under `Android/data` or, unless the user lets the app install
+ * apps, `Android/obb`. [selected] are the selected items in listing order; [up] is where Up
+ * goes, null when it is disabled. [launch] is an intent for the shell to start from the
+ * activity, so that the app it opens comes back here, and to report with
+ * [ExplorerViewModel.launched].
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -74,6 +86,7 @@ data class ExplorerUiState(
     val drawerOpen: Boolean = false,
     val selected: List<FileEntry> = emptyList(),
     val up: Location? = null,
+    val launch: Intent? = null,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location

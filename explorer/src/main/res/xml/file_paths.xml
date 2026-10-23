@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — what the FileProvider serves: the storage volumes and USB drives, never the app's own data. SPDX-License-Identifier: MIT -->
+<paths>
+    <root-path name="storage" path="storage/" />
+    <root-path name="usb" path="mnt/media_rw/" />
+</paths>

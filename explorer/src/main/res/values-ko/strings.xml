@@ -35,6 +35,21 @@
     <string name="type_file_ext">%s 파일</string>
     <string name="type_file">파일</string>
 
+    <!-- Opening in other apps -->
+    <string name="open_no_app">이 파일을 열 수 있는 앱이 없습니다</string>
+    <string name="open_unsupported">이 파일은 열 수 없습니다</string>
+    <string name="open_with_title">연결 프로그램</string>
+    <string name="install_permission">APK를 설치하려면 이 앱에서 ‘알 수 없는 앱 설치’를 허용해 주세요.</string>
+
+    <!-- Properties -->
+    <string name="prop_title">%s 속성</string>
+    <string name="prop_type">유형</string>
+    <string name="prop_location">위치</string>
+    <string name="prop_size">크기</string>
+    <string name="prop_contains">파일 %1$d개, 폴더 %2$d개</string>
+    <string name="prop_modified">수정한 날짜</string>
+    <string name="prop_hidden">숨김</string>
+
     <!-- Status bar -->
     <plurals name="items_count">
         <item quantity="other">항목 %d개</item>

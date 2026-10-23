@@ -35,6 +35,21 @@
     <string name="type_file_ext">%s File</string>
     <string name="type_file">File</string>
 
+    <!-- Opening in other apps -->
+    <string name="open_no_app">No app can open this file</string>
+    <string name="open_unsupported">This file can\'t be opened</string>
+    <string name="open_with_title">Open with</string>
+    <string name="install_permission">To install APKs, allow “Install unknown apps” for this app.</string>
+
+    <!-- Properties -->
+    <string name="prop_title">%s Properties</string>
+    <string name="prop_type">Type</string>
+    <string name="prop_location">Location</string>
+    <string name="prop_size">Size</string>
+    <string name="prop_contains">%1$d files, %2$d folders</string>
+    <string name="prop_modified">Modified</string>
+    <string name="prop_hidden">Hidden</string>
+
     <!-- Status bar -->
     <plurals name="items_count">
         <item quantity="one">%d item</item>
