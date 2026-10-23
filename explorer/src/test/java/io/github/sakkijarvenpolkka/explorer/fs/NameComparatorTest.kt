@@ -43,8 +43,11 @@ class NameComparatorTest {
     }
 
     @Test
-    fun punctuationSortsBeforeDigits() {
-        assertTrue(NameComparator.compare("a.txt", "a1.txt") < 0)
+    fun digitChunksSortBeforeOtherText() {
+        assertTrue(NameComparator.compare("a1.txt", "a.txt") < 0)
+        assertTrue(NameComparator.compare("a2.txt", "a (2).txt") < 0)
+        assertTrue(NameComparator.compare("1b", "a") < 0)
+        assertTrue(NameComparator.compare("a", "a1") < 0)
     }
 
     private fun assertOppositeNonZero(a: String, b: String) {

@@ -28,42 +28,52 @@ object NameComparator : Comparator<String> {
     }
 
     /**
-     * Compares two [key]s char by char, except that where both have a digit the whole digit
-     * runs are compared by value: leading zeros dropped, then the longer run is larger, then
-     * digit by digit. A digit against another char compares as chars, so `a.txt` < `a1.txt`.
+     * Compares two [key]s chunk by chunk, a chunk being a run of digits or a run of other
+     * chars. Two digit runs compare by value: leading zeros dropped, then the longer run is
+     * larger, then digit by digit. Two other runs compare as strings. A digit run sorts before
+     * other text, and a name that runs out of chunks first sorts first, so `a1.txt` < `a.txt`.
      */
     internal fun compareKeys(a: String, b: String): Int {
         var i = 0
         var j = 0
         while (i < a.length && j < b.length) {
-            if (a[i].isAsciiDigit() && b[j].isAsciiDigit()) {
-                val endA = digitsEnd(a, i)
-                val endB = digitsEnd(b, j)
-                val startA = zerosEnd(a, i, endA)
-                val startB = zerosEnd(b, j, endB)
-                val byLength = (endA - startA).compareTo(endB - startB)
-                if (byLength != 0) return byLength
-                for (k in 0 until endA - startA) {
-                    val byDigit = a[startA + k].compareTo(b[startB + k])
-                    if (byDigit != 0) return byDigit
-                }
-                i = endA
-                j = endB
-            } else {
-                val byChar = a[i].compareTo(b[j])
-                if (byChar != 0) return byChar
-                i++
-                j++
-            }
+            val digitsA = a[i].isAsciiDigit()
+            val digitsB = b[j].isAsciiDigit()
+            if (digitsA != digitsB) return if (digitsA) -1 else 1
+            val endA = chunkEnd(a, i, digitsA)
+            val endB = chunkEnd(b, j, digitsB)
+            val byChunk = if (digitsA) compareNumbers(a, i, endA, b, j, endB) else compareText(a, i, endA, b, j, endB)
+            if (byChunk != 0) return byChunk
+            i = endA
+            j = endB
         }
         return (a.length - i).compareTo(b.length - j)
     }
 
+    private fun compareNumbers(a: String, fromA: Int, endA: Int, b: String, fromB: Int, endB: Int): Int {
+        val startA = zerosEnd(a, fromA, endA)
+        val startB = zerosEnd(b, fromB, endB)
+        val byLength = (endA - startA).compareTo(endB - startB)
+        if (byLength != 0) return byLength
+        return compareText(a, startA, endA, b, startB, endB)
+    }
+
+    /** `a.substring(fromA, endA).compareTo(b.substring(fromB, endB))` without the copies. */
+    private fun compareText(a: String, fromA: Int, endA: Int, b: String, fromB: Int, endB: Int): Int {
+        val length = minOf(endA - fromA, endB - fromB)
+        for (k in 0 until length) {
+            val byChar = a[fromA + k].compareTo(b[fromB + k])
+            if (byChar != 0) return byChar
+        }
+        return (endA - fromA).compareTo(endB - fromB)
+    }
+
     private fun Char.isAsciiDigit(): Boolean = this in '0'..'9'
 
-    private fun digitsEnd(s: String, from: Int): Int {
+    /** The end of the chunk at [from]: a digit run if [digits], else a run of other chars. */
+    private fun chunkEnd(s: String, from: Int, digits: Boolean): Int {
         var end = from
-        while (end < s.length && s[end].isAsciiDigit()) end++
+        while (end < s.length && s[end].isAsciiDigit() == digits) end++
         return end
     }
 

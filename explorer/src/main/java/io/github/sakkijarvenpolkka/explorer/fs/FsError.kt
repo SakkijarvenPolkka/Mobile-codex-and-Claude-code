@@ -84,16 +84,16 @@ class FsException(val error: FsError, cause: Throwable? = null) : IOException(er
 
 /**
  * The [FsError] for a failure: by exception type, then by the [FileSystemException.reason]
- * or the message, where an errno name (Android: `open failed: ENOENT (...)`) wins over a
- * strerror phrase. Anything else, EXDEV included, is [FsError.Unknown].
+ * or, without one, the message, where an errno name (Android: `open failed: ENOENT (...)`)
+ * wins over a strerror phrase. Anything else, EXDEV included, is [FsError.Unknown].
  */
 fun Throwable.toFsError(): FsError = when (this) {
     is FsException -> error
     is AccessDeniedException -> FsError.AccessDenied
     is NoSuchFileException -> FsError.NotFound
     is FileAlreadyExistsException -> FsError.AlreadyExists
-    // A FileSystemException's message also holds the paths; only its reason is read.
-    else -> errorIn(if (this is FileSystemException) reason else message) ?: FsError.Unknown(message)
+    // A FileSystemException's message also holds the paths, so its reason is read when it has one.
+    else -> errorIn((this as? FileSystemException)?.reason ?: message) ?: FsError.Unknown(message)
 }
 
 private val NOT_ALLOWED_BY_VOLUME = FsError.NameInvalid(NameProblem.NotAllowedByVolume)

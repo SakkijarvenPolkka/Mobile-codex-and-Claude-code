@@ -24,10 +24,13 @@ class FsErrorTest {
         assertEquals(FsError.Busy, FsException(FsError.Busy).toFsError())
 
         assertEquals(FsError.NoSpace, FileSystemException("f", null, "No space left on device").toFsError())
+        // Without a reason, the message is read.
+        assertEquals(FsError.NoSpace, FileSystemException("No space left on device").toFsError())
         assertEquals(FsError.NoSpace, IOException("write failed: ENOSPC (No space left on device)").toFsError())
         assertEquals(FsError.NoSpace, IOException("write failed: EDQUOT").toFsError())
 
         assertEquals(FsError.ReadOnly, FileSystemException("f", null, "Read-only file system").toFsError())
+        assertEquals(FsError.ReadOnly, FileSystemException("Read-only file system").toFsError())
         assertEquals(FsError.ReadOnly, IOException("open failed: EROFS").toFsError())
 
         assertEquals(FsError.TooLargeForVolume, FileSystemException("f", null, "File too large").toFsError())
