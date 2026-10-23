@@ -254,28 +254,36 @@ class FileOpsServiceTest {
     fun firstNotificationPostedOnce() {
         // Long after the device started, as it always is.
         ShadowSystemClock.advanceBy(Duration.ofMinutes(10))
-        val dst = submitConflictingCopy()
+        // Started with a copy running (it waits for an answer), and the same copy queued after it.
+        val pending = waitingCopy()
+        val again = OperationSpec("op2", OpKind.COPY, listOf("$volume/src/a.txt"), "$volume/dst")
+        runner.submit(again)
         val service = start().get()
+        assertEquals("Your decision is needed", shadowOf(service).lastForegroundNotification.title())
         val posted = arrayListOf(shadowOf(service).lastForegroundNotification)
         fun look() {
             val shown = shownNotification() ?: return
             if (posted.none { it === shown }) posted += shown
         }
 
-        // Its first second, looked at every 10 ms, while the copy runs until it asks.
+        // Its first second, looked at every 10 ms: the copy is answered, and the next one runs until it asks.
         look()
+        pending.answer(Resolution(ConflictAction.REPLACE))
         runOps()
         repeat(100) {
             idleFor(10)
             look()
         }
-        assertEquals("Your decision is needed", shownNotification().title())
+        val shown = shownNotification()
+        assertEquals("Your decision is needed", shown.title())
+        // Of the next copy: the update came.
+        val cancels = shadowOf(shown?.actions?.single()?.actionIntent).savedIntent
+        assertEquals("op2", cancels.getStringExtra(OpsNotifications.EXTRA_OP_ID))
         // What startForeground posted, and at most one update.
         assertTrue("posted ${posted.size} times", posted.size <= 2)
 
         // A change it does not show (another operation queued) is not posted again.
-        val shown = shownNotification()
-        runner.submit(OperationSpec("op2", OpKind.COPY, listOf("$volume/src/a.txt"), dst.toString()))
+        runner.submit(again.copy(id = "op3"))
         idleFor(2_000)
         assertSame(shown, shownNotification())
     }
