@@ -1,12 +1,10 @@
 /*
- * Files — the Recycle Bin of each volume (spec §4.6), and deleting a folder tree for good.
+ * Files — the Recycle Bin of each volume (spec §4.6).
  *
  * SPDX-License-Identifier: MIT
  */
 package io.github.sakkijarvenpolkka.explorer.fs
 
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
@@ -81,14 +79,15 @@ class RecycleBin(
      * it as an item there. In order: the bin and the item's folder `<id>/` are made, the record is written
      * (to a temporary file, flushed, then renamed: [WriteProtocol]), and the item is renamed to
      * `<id>/<name>`. The record holds the real path of [path]'s folder with its name, the time from
-     * [clock], and the size (a folder's is that of the files in it, walked first).
+     * [clock], and the size ([binnedSize]: a folder's is that of the files in it, walked first, unless the
+     * caller has walked it already and gives its [size]).
      *
      * Fails with [FsException]: [FsError.NotFound] if [path] is not there, else [FsError.BinUnavailable],
      * with nothing changed: when [path] is on no known volume, is a volume's root, the bin itself or in
      * it, or when the bin cannot be used (a read-only volume, a denied rename, ...). What was made for the
      * item is deleted again then, and when the move is cancelled.
      */
-    suspend fun moveToBin(path: Path): BinItem {
+    suspend fun moveToBin(path: Path, size: Long? = null): BinItem {
         val name = path.fileName?.toString() ?: unavailable()
         val parent = path.parent ?: unavailable()
         val original = try {
@@ -106,7 +105,7 @@ class RecycleBin(
         val meta = BinMeta(
             originalPath = original.toString(),
             deletedAt = clock(),
-            size = recordedSize(entry),
+            size = size ?: binnedSize(fs, entry),
             isDir = entry.kind == EntryKind.DIR,
         )
         val bin = binDir(volume.root)
@@ -143,10 +142,11 @@ class RecycleBin(
     /**
      * The items in the Recycle Bins of the volumes at [volumeRoots], in no particular order, after
      * tidying what a crash or a partial restore leaves behind there: a record whose item is gone is
-     * deleted with the item's empty folder, and so are an empty folder without a record and a leftover
-     * temporary record. An item whose record is missing, cannot be read or is of an unknown version is
-     * listed without one ([BinItem.meta] null). Items [moveToBin] is still putting in are left alone.
-     * A bin that cannot be read lists nothing.
+     * deleted with the item's empty folder (once the folder, looked for again, is not there), and so are
+     * an empty folder without a record and a leftover temporary record. An item whose record is missing,
+     * cannot be read or is of an unknown version is listed without one ([BinItem.meta] null), and so is
+     * a file or link something else put in the bin itself, as an item of its own. Items [moveToBin] is
+     * still putting in are left alone. A bin that cannot be read lists nothing.
      */
     fun list(volumeRoots: List<Path>): List<BinItem> = volumeRoots.flatMap(::itemsIn)
 
@@ -252,19 +252,33 @@ class RecycleBin(
             if (id in inFlight) continue
             val folder = bin.resolve(id)
             val record = bin.resolve(id + META_SUFFIX)
-            val content = if (id in folders) {
+            // Looked for again, not taken from the listing: reading a folder is not atomic, so it may have
+            // missed an item's folder that was made before its record was written.
+            val attributes = try {
+                fs.attributes(folder)
+            } catch (e: NoSuchFileException) {
+                null
+            } catch (e: IOException) {
+                continue
+            }
+            if (attributes != null && !attributes.isDirectory) {
+                // Not put here by this app, so where it came from is not known.
+                items += BinItem(id, volumeRoot, folder, id, meta = null, attributes.lastModifiedTime().toMillis())
+                continue
+            }
+            val content = if (attributes == null) {
+                emptyList()
+            } else {
                 try {
                     fs.list(folder)
                 } catch (e: IOException) {
-                    continue // Not a folder, or not readable: not ours to tidy.
+                    continue // Not readable: not ours to tidy.
                 }
-            } else {
-                emptyList()
             }
             // Only one thing is ever put in an item's folder.
             val payload = content.minByOrNull { it.fileName.toString() }
             if (payload == null) {
-                if (id in folders) deleteQuietly(folder)
+                if (attributes != null) deleteQuietly(folder)
                 if (id in records) deleteQuietly(record)
                 continue
             }
@@ -291,20 +305,6 @@ class RecycleBin(
         null
     } catch (e: IllegalArgumentException) {
         null // Not JSON, or not a record (SerializationException).
-    }
-
-    /** The size [entry] is recorded with: a file's own, a folder's files' (links not followed), else 0. */
-    private suspend fun recordedSize(entry: FileEntry): Long = when (entry.kind) {
-        EntryKind.FILE -> entry.size
-        EntryKind.DIR -> {
-            var total = 0L
-            walk(fs, entry.path) { item ->
-                total += item.entry.size
-                true
-            }
-            total
-        }
-        EntryKind.SYMLINK, EntryKind.OTHER -> 0L
     }
 
     private fun makeBin(bin: Path) {
@@ -339,65 +339,18 @@ class RecycleBin(
 }
 
 /**
- * A folder tree to delete for good, as one [walk] found it: [entries], its root first and then in walk
- * order, and what could not be read in it ([unreadable]: a folder that could not be listed, an item
- * whose attributes could not be read), with why.
+ * The size [entry] is recorded with in the Recycle Bin: a file's own, that of the files in a folder (links
+ * not followed, the app's internal names left out), else 0.
  */
-internal class DoomedTree(val entries: List<FileEntry>, val unreadable: List<Pair<Path, FsError>>)
-
-/**
- * [root] and everything under it, links not followed and no name left out (a folder being deleted goes
- * whole). Throws what reading [root] itself throws.
- */
-internal suspend fun doomedTree(fs: FsBackend, root: Path): DoomedTree {
-    val top = Listing.entry(fs, root, NO_MIME)
-    val entries = arrayListOf(top)
-    val unreadable = ArrayList<Pair<Path, FsError>>()
-    if (top.kind == EntryKind.DIR) {
-        walk(fs, root, include = { true }, onSkipped = { path, error -> unreadable += path to error }) { item ->
-            entries += item.entry
+internal suspend fun binnedSize(fs: FsBackend, entry: FileEntry): Long = when (entry.kind) {
+    EntryKind.FILE -> entry.size
+    EntryKind.DIR -> {
+        var total = 0L
+        walk(fs, entry.path) { item ->
+            total += item.entry.size
             true
         }
+        total
     }
-    return DoomedTree(entries, unreadable)
-}
-
-/**
- * Deletes [tree] one item at a time ([FsBackend.delete], nothing recursive), each before the folder it is
- * in: its entries last first. A link is deleted, never what it points to. A folder is kept, untried,
- * when something in it is unreadable or could not be deleted, since it could only fail as not empty.
- * An item already gone counts as deleted. [onDone] gets each entry once it is dealt with (deleted,
- * failed or kept), [onFailed] each that could not be deleted, with why. A failure that ends everything
- * ([isFatal]) stops the deletion at once and is returned; null when it went to the end.
- */
-internal suspend fun deleteTree(
-    fs: FsBackend,
-    tree: DoomedTree,
-    onFailed: (Path, FsError) -> Unit,
-    onDone: (FileEntry) -> Unit = {},
-): FsError? {
-    val kept = HashSet<Path>()
-    // Marks [path] and every folder above it as kept; a folder kept already has its own above it kept.
-    fun keep(path: Path) {
-        var folder: Path? = path
-        while (folder != null && kept.add(folder)) folder = folder.parent
-    }
-    for ((path, _) in tree.unreadable) keep(path)
-    for (entry in tree.entries.asReversed()) {
-        currentCoroutineContext().ensureActive()
-        if (entry.path !in kept) {
-            try {
-                fs.delete(entry.path)
-            } catch (e: NoSuchFileException) {
-                // Already gone.
-            } catch (e: IOException) {
-                val error = e.toFsError()
-                if (error.isFatal) return error
-                onFailed(entry.path, error)
-                keep(entry.path)
-            }
-        }
-        onDone(entry)
-    }
-    return null
+    EntryKind.SYMLINK, EntryKind.OTHER -> 0L
 }

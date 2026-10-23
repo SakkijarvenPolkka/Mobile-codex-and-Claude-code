@@ -19,16 +19,22 @@ const val OP_ID = "op1"
 /** When the tests delete things to the Recycle Bin. */
 const val DELETED_AT = 1_700_000_000_000L
 
-/** A journal in memory: the temporary files still recorded. */
+/** A journal in memory: the temporary files still recorded, and the renames between their two steps. */
 class MemoryJournal : TempJournal {
     val recorded = LinkedHashSet<Path>()
+    val renames = LinkedHashMap<Path, Path>()
 
     override fun add(temp: Path) {
         recorded.add(temp)
     }
 
+    override fun addRename(temp: Path, final: Path) {
+        renames[temp] = final
+    }
+
     override fun remove(temp: Path) {
         recorded.remove(temp)
+        renames.remove(temp)
     }
 }
 

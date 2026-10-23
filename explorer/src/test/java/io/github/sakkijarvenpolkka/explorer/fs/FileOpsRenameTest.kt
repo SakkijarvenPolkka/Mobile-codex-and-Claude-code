@@ -109,6 +109,40 @@ class FileOpsRenameTest {
     }
 
     @Test
+    fun caseOnlyRenameIsJournaledBetweenItsSteps() {
+        val photo = write(dir, "photo.jpg", "jpeg")
+        val journal = MemoryJournal()
+        val faulty = FaultyFs().apply { caseInsensitive = true }
+        val seen = ArrayList<Map<Path, Path>>()
+        val watching = object : FsBackend by faulty {
+            override fun atomicMove(from: Path, to: Path) {
+                seen += journal.renames.toMap()
+                faulty.atomicMove(from, to)
+            }
+        }
+
+        FileOps(watching, VolumeLookup { null }, KO_LABELS, journal, ids = { "r1" }).renameBlocking(photo, "Photo.jpg")
+
+        // Recorded, with the name it goes to, before the first step; forgotten after the second.
+        val temp = dir.resolve(".~ren-r1")
+        assertEquals(List(2) { mapOf(temp to dir.resolve("Photo.jpg")) }, seen)
+        assertEquals(emptyMap<Path, Path>(), journal.renames)
+        assertEquals(emptySet<Path>(), journal.recorded)
+
+        // When the second step fails and so does undoing the first, the file keeps the temporary name, and
+        // the record stays, for the journal's sweep to finish.
+        val stuck = FaultyFs().apply {
+            caseInsensitive = true
+            refuse(FaultyFs.Op.ATOMIC_MOVE, "/.~ren-r1", "Input/output error")
+        }
+        val ops = FileOps(stuck, VolumeLookup { null }, KO_LABELS, journal, ids = { "r1" })
+        val e = assertThrows(FsException::class.java) { ops.renameBlocking(dir.resolve("Photo.jpg"), "PHOTO.jpg") }
+        assertEquals(FsError.IoError, e.error)
+        assertEquals(listOf(".~ren-r1"), names())
+        assertEquals(mapOf(temp to dir.resolve("PHOTO.jpg")), journal.renames)
+    }
+
+    @Test
     fun invalidNameRejected() {
         val a = write(dir, "a.txt", "a")
         val sd = folder.newFolder("sd").toPath()

@@ -15,6 +15,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
+import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
@@ -27,7 +28,7 @@ import java.nio.file.Path
 /**
  * What [ExplorerViewModel] works with; [io] reads folders and resolves paths. Without
  * [openWith], files are not handed to other apps. [bin] is the app's one Recycle Bin, shared with
- * the file operations; without it, there is none.
+ * the file operations; without it, there is none. [runner] is the app's one operation runner.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -38,6 +39,7 @@ data class ExplorerDeps(
     val io: CoroutineDispatcher,
     val openWith: OpenWith? = null,
     val bin: RecycleBin? = null,
+    val runner: OperationRunner? = null,
 )
 
 /**

@@ -111,4 +111,9 @@
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
     <string name="system_accent">Use system accent color</string>
+
+    <!-- The names of new items and of copies -->
+    <string name="label_new_folder">New folder</string>
+    <string name="label_new_text">New Text Document</string>
+    <string name="label_copy_suffix">" - Copy"</string>
 </resources>

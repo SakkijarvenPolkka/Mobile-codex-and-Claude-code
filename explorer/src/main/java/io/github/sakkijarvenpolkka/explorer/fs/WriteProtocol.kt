@@ -27,6 +27,13 @@ interface TempJournal {
     fun add(temp: Path)
 
     fun remove(temp: Path)
+
+    /**
+     * Records that a file is about to be renamed to [temp] on its way to [final] (the two steps of a
+     * rename), so that one a crash leaves at [temp] can be given [final]: never deleted. [remove] of
+     * [temp] forgets it. By default, nothing is recorded.
+     */
+    fun addRename(temp: Path, final: Path) = Unit
 }
 
 /** A [TempJournal] that records nothing. */

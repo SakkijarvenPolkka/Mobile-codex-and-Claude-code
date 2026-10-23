@@ -54,20 +54,22 @@ class FileOps(
      * - [DELETE_TO_BIN][OpKind.DELETE_TO_BIN] moves each source into the Recycle Bin of its volume
      *   ([RecycleBin.moveToBin]), without asking. One that cannot go there stays where it is, listed in
      *   [OpResult.Done.failed] as [FsError.BinUnavailable] (or [FsError.NotFound]): it is never deleted
-     *   instead, that is for the caller to ask. [OpResult.Done.created] holds where each one is in the bin;
+     *   instead, that is for the caller to ask. [OpResult.Done.created] holds where each one is in the bin.
+     *   The sources are walked once first, for the bytes the progress counts and their records hold;
      * - [DELETE_PERMANENT][OpKind.DELETE_PERMANENT] deletes each source and everything under it for good,
      *   from one [walk] (no name left out), one item at a time and each before the folder it is in. A link
      *   is deleted, never what it points to. What cannot be read or deleted is listed in
      *   [OpResult.Done.failed], and the folders it is in are kept, untried;
      * - [RESTORE][OpKind.RESTORE] moves the bin items [OpOptions.binItemIds] names back where they came
-     *   from ([RecycleBin.restoreTarget]), making that folder again if it is gone, as a move does (a name
-     *   taken there is a conflict for [resolver]). An item that is a link or a special file is only ever
-     *   renamed back (its conflicts are those of a file, and replacing is a rename too), never copied:
-     *   where that would cross volumes, it fails as [FsError.Unsupported]. The items are looked for in
-     *   the bins of the volumes the sources are on: the sources are the items' [BinItem.payload]s, one
-     *   for each id in the same order (else this throws [IllegalArgumentException]). An item no longer
-     *   in the bin fails as [FsError.NotFound], under its source; one that is not wholly moved out
-     *   (skipped, failed, or partly merged) stays in the bin, with its record;
+     *   from ([RecycleBin.restoreTarget]) with all they hold (the app's internal names included), making
+     *   that folder again if it is gone, as a move does (a name taken there is a conflict for [resolver]).
+     *   An item that is a link or a special file is only ever renamed back (its conflicts are those of a
+     *   file, and replacing is a rename too), never copied: where that would cross volumes, it fails as
+     *   [FsError.Unsupported]. The items are looked for in the bins of the volumes the sources are on:
+     *   the sources are the items' [BinItem.payload]s, one for each id in the same order (else this
+     *   throws [IllegalArgumentException]). An item no longer in the bin fails as [FsError.NotFound],
+     *   under its source; one that is not wholly moved out (skipped, failed, or partly merged) stays in
+     *   the bin, with its record;
      * - [EMPTY_BIN][OpKind.EMPTY_BIN] deletes every item in the Recycle Bins of the volumes its sources
      *   are on (the bin folders, [RecycleBin.binDir]) for good ([RecycleBin.purge]);
      * - the ZIP kinds are [FsError.Unsupported], after 0 of 0 items.
@@ -163,6 +165,16 @@ class FileOps(
         target
     }
 
+    /**
+     * Whether [path] itself is there (a link is, whatever it points to); true when that cannot be told, so
+     * that an operation on it says what is wrong.
+     */
+    fun exists(path: Path): Boolean = try {
+        fs.exists(path)
+    } catch (e: IOException) {
+        true
+    }
+
     /** Creates a folder named [NameLabels.newFolder] in [parent] (numbered if taken) and returns it. */
     suspend fun createFolder(parent: Path): Path = asFsFailure {
         currentCoroutineContext().ensureActive()
@@ -211,23 +223,33 @@ class FileOps(
     ): OpResult {
         val created = ArrayList<Path>()
         val failed = ArrayList<ItemFailure>()
-        val progress = Progress(time, onProgress, spec.sources.size, totalBytes = 0)
+        // Walked once, for the progress, and the records reuse the sizes.
+        val sizes = spec.sources.map { sizeInBin(Paths.get(it)) }
+        val progress = Progress(time, onProgress, spec.sources.size, sizes.sumOf { it ?: 0L })
         progress.report(force = true)
         for ((index, raw) in spec.sources.withIndex()) {
             currentCoroutineContext().ensureActive()
             val path = Paths.get(raw)
             progress.currentName = path.fileName?.toString()
             try {
-                created.add(bin.moveToBin(path).payload)
+                created.add(bin.moveToBin(path, sizes[index]).payload)
             } catch (e: FsException) {
                 failed += ItemFailure(raw, e.error)
             }
             progress.doneItems++
+            progress.doneBytes += sizes[index] ?: 0L
             progress.report()
             onCommitted(index + 1)
         }
         progress.report(force = true)
         return OpResult.Done(created, failed)
+    }
+
+    /** The size [path] is recorded with in the Recycle Bin ([binnedSize]); null when it cannot be read. */
+    private suspend fun sizeInBin(path: Path): Long? = try {
+        binnedSize(fs, Listing.entry(fs, path, NO_MIME))
+    } catch (e: IOException) {
+        null
     }
 
     /** Each source and everything under it deleted for good, as [run] describes it. */
@@ -297,7 +319,7 @@ class FileOps(
         var totalItems = 0
         var totalBytes = 0L
         val sources = items.map { item ->
-            val steps = stepsFrom(topOf(item.payload))
+            val steps = stepsFrom(topOf(item.payload), everything = true)
             for (step in steps) {
                 if (step !is Item) continue
                 totalItems++
@@ -365,10 +387,20 @@ class FileOps(
         return OpResult.Done(emptyList(), failed)
     }
 
-    /** `a.txt` → `.~ren-<id>` → `A.txt`; if the second step fails, the first is undone. */
+    /**
+     * `a.txt` → `.~ren-<id>` → `A.txt`; if the second step fails, the first is undone. The journal knows
+     * where the file is going while it has the temporary name ([TempJournal.addRename]), and keeps that
+     * when the undo fails too.
+     */
     private fun renameInTwoSteps(from: Path, to: Path) {
         val temp = from.resolveSibling(RENAME_TEMP_PREFIX + ids())
-        fs.atomicMove(from, temp)
+        journal.addRename(temp, to)
+        try {
+            fs.atomicMove(from, temp)
+        } catch (e: Exception) {
+            journal.remove(temp)
+            throw e
+        }
         try {
             fs.atomicMove(temp, to)
         } catch (e: Exception) {
@@ -376,9 +408,12 @@ class FileOps(
                 fs.atomicMove(temp, from)
             } catch (undo: IOException) {
                 e.addSuppressed(undo)
+                throw e
             }
+            journal.remove(temp)
             throw e
         }
+        journal.remove(temp)
     }
 
     /** [block], with an IOException it throws as an [FsException] of its [toFsError]. */
@@ -442,13 +477,17 @@ class FileOps(
         return Plan(sources, items, bytes)
     }
 
-    /** The source [top] and everything under it, in walk order, with what could not be read where it was. */
-    private suspend fun stepsFrom(top: Step): List<Step> {
+    /**
+     * The source [top] and everything under it, in walk order, with what could not be read where it was:
+     * the app's internal names left out, unless [everything] is to be taken (an item out of the bin).
+     */
+    private suspend fun stepsFrom(top: Step, everything: Boolean = false): List<Step> {
         if (top !is Item || top.entry.kind != EntryKind.DIR) return listOf(top)
         val path = top.path
         val steps = arrayListOf<Step>(top)
-        walk(fs, path, onSkipped = { skipped, error ->
-            if (!HiddenNames.isInternal(skipped.fileName.toString())) {
+        val taken = { name: String -> everything || !HiddenNames.isInternal(name) }
+        walk(fs, path, include = { taken(it.name) }, onSkipped = { skipped, error ->
+            if (taken(skipped.fileName.toString())) {
                 // A folder that cannot be listed is reported right after itself, as if it were its content.
                 val last = steps.last()
                 val listed = last is Item && last.entry.path == skipped

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -11,6 +13,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.nio.channels.FileChannel
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -163,6 +166,66 @@ class RecycleBinTest {
 
         assertEquals(listOf(BinItem("loose", internal, loose, "y.txt", null, modified(loose))), items)
         assertEquals(mapOf("loose/" to "", "loose/y.txt" to "y"), tree(binFolder))
+    }
+
+    @Test
+    fun listChecksForTheFolderBeforeDeletingItsRecord() {
+        val bin = bin()
+        val item = bin.move(write(internal, "a/x.txt", "x"))
+        val binFolder = binOf(internal)
+        // A listing that read the bin's names before the item's folder was made and after its record was:
+        // reading a folder is not atomic.
+        val stale = object : FsBackend by NioFsBackend {
+            override fun list(dir: Path): List<Path> =
+                if (dir == binFolder) listOf(binFolder.resolve("b1.json")) else NioFsBackend.list(dir)
+        }
+
+        val items = bin(stale).list(listOf(internal))
+
+        assertEquals(listOf(item), items)
+        assertEquals(setOf("b1/", "b1/x.txt", "b1.json"), tree(binFolder).keys)
+    }
+
+    @Test
+    fun strayFileInBinIsListedAndPurged() {
+        val binFolder = binOf(internal)
+        val stray = write(binFolder, "stray.txt", "ss")
+        val bin = bin()
+
+        val items = bin.list(listOf(internal))
+
+        // Where it came from is not known: it goes back to the volume's root.
+        assertEquals(listOf(BinItem("stray.txt", internal, stray, "stray.txt", null, modified(stray))), items)
+        assertEquals(internal.resolve("stray.txt"), bin.restoreTarget(items.single()))
+        assertEquals(2L, bin.totalSize(listOf(internal)))
+        val emptied = ops(bin).runToEnd(OperationSpec(OP_ID, OpKind.EMPTY_BIN, listOf(binFolder.toString())))
+        assertEquals(OpResult.Done(emptyList(), emptyList()), emptied)
+        assertEquals(emptyMap<String, String>(), tree(binFolder))
+    }
+
+    @Test
+    fun cancelledMoveLeavesNothingInTheBin() {
+        val file = write(internal, "x.txt", "x")
+        lateinit var job: Job
+        // Cancelled while the record is being written, after the item's folder was made.
+        val cancelling = object : FsBackend by NioFsBackend {
+            override fun createNew(path: Path): FileChannel = NioFsBackend.createNew(path).also { job.cancel() }
+        }
+        val fs = FaultyFs(cancelling)
+        val bin = bin(fs)
+
+        runBlocking {
+            job = launch { bin.moveToBin(file) }
+            job.join()
+        }
+
+        assertTrue(job.isCancelled)
+        assertEquals(mapOf(".Recycle.Bin/" to "", "x.txt" to "x"), tree(internal))
+        // The record's temporary file goes first, then the item's folder.
+        val binFolder = binOf(internal)
+        val deleted = fs.calls.filter { it.op == FaultyFs.Op.DELETE }.map { it.path }
+        assertEquals(listOf(binFolder.resolve(tempNameFor("b1.json", "b1")), binFolder.resolve("b1")), deleted)
+        assertEquals(emptyList<BinItem>(), bin.list(listOf(internal)))
     }
 
     @Test

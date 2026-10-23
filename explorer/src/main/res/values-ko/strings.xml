@@ -109,4 +109,9 @@
     <string name="theme_light">밝게</string>
     <string name="theme_dark">어둡게</string>
     <string name="system_accent">시스템 강조색 사용</string>
+
+    <!-- The names of new items and of copies -->
+    <string name="label_new_folder">새 폴더</string>
+    <string name="label_new_text">새 텍스트 문서</string>
+    <string name="label_copy_suffix">" - 복사본"</string>
 </resources>

@@ -56,8 +56,30 @@ class FileOpsDeleteTest {
             ),
             bin.list(listOf(internal)).sortedBy { it.id }.map { it.meta },
         )
-        assertEquals(OpProgress(0, 0, 2, 0, null), progress.first())
-        assertEquals(OpProgress(0, 0, 2, 2, "x.txt"), progress.last())
+        assertEquals(OpProgress(3, 0, 2, 0, null), progress.first())
+        assertEquals(OpProgress(3, 3, 2, 2, "x.txt"), progress.last())
+    }
+
+    @Test
+    fun deleteToBinProgressCountsBytes() {
+        val d = write(internal, "d/f.txt", "f").parent
+        write(internal, "d/sub/g.txt", "gg")
+        val x = write(internal, "x.txt", "xxx")
+        val listed = ArrayList<Path>()
+        val counting = object : FsBackend by NioFsBackend {
+            override fun list(dir: Path): List<Path> = NioFsBackend.list(dir).also { listed.add(dir) }
+        }
+        val bin = bin(counting)
+        val progress = ArrayList<OpProgress>()
+
+        val result = ops(counting, bin).runToEnd(delete(OpKind.DELETE_TO_BIN, d, x), NeverAsked) { progress += it }
+
+        assertTrue(result is OpResult.Done && result.failed.isEmpty())
+        assertEquals(OpProgress(6, 0, 2, 0, null), progress.first())
+        assertEquals(OpProgress(6, 6, 2, 2, "x.txt"), progress.last())
+        // The folder is walked once, for the progress and its record alike.
+        assertEquals(listOf(d, d.resolve("sub")), listed.filter { it.startsWith(d) })
+        assertEquals(listOf(3L, 3L), bin.list(listOf(internal)).sortedBy { it.id }.map { it.meta?.size })
     }
 
     @Test
@@ -146,6 +168,27 @@ class FileOpsDeleteTest {
         assertEquals(OpResult.Done(listOf(internal.resolve("a/x (2).txt")), emptyList()), result)
         assertEquals(mapOf("a/" to "", "a/x (2).txt" to "old", "a/x.txt" to "new"), outsideBin(internal))
         assertEquals(emptyList<BinItem>(), bin.list(listOf(internal)))
+    }
+
+    @Test
+    fun mergedRestoreTakesHiddenChildrenToo() {
+        val d = write(internal, "d/a.txt", "a").parent
+        write(internal, "d/.b.txt.op9.xpart", "part")
+        write(internal, "d/.Recycle.Bin/c.txt", "c")
+        val before = tree(internal)
+        val bin = bin()
+        val ops = ops(bin = bin)
+        ops.runToEnd(delete(OpKind.DELETE_TO_BIN, d))
+        // Its name is taken again, by a folder, so restoring it merges.
+        Files.createDirectory(d)
+        val item = bin.list(listOf(internal)).single()
+
+        val result = ops.runToEnd(restore(item), Answering { Resolution(ConflictAction.MERGE) })
+
+        assertEquals(OpResult.Done(listOf(d), emptyList()), result)
+        assertEquals(before, outsideBin(internal))
+        assertEquals(emptyList<BinItem>(), bin.list(listOf(internal)))
+        assertEquals(emptyMap<String, String>(), tree(binOf(internal)))
     }
 
     @Test
