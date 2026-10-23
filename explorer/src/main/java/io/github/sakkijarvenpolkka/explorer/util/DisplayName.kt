@@ -51,14 +51,14 @@ object DisplayName {
     fun inSentence(raw: String): String = "$FSI${of(raw)}$PDI"
 
     /**
-     * [name] cut to at most [maxChars] characters with `…` in the middle. The extension (from
-     * the last dot, which is not the first character) stays visible; a name whose extension
-     * leaves no room for any of its start is cut in the middle as a whole.
+     * [name] cut to at most [maxChars] characters with `…` in the middle. The extension with its
+     * dot (see [extensionStart]) stays visible; a name without one, or whose extension leaves no
+     * room for any of its start, is cut in the middle as a whole.
      */
     fun middleEllipsis(name: String, maxChars: Int): String {
         if (name.length <= maxChars) return name
         if (maxChars <= 1) return ELLIPSIS.take(maxChars.coerceAtLeast(0))
-        val dot = name.lastIndexOf('.')
+        val dot = extensionStart(name)
         if (dot > 0) {
             val headLength = maxChars - ELLIPSIS.length - (name.length - dot)
             if (headLength >= 1) return name.safeHead(headLength) + ELLIPSIS + name.substring(dot)

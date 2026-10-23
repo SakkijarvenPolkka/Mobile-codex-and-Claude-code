@@ -52,4 +52,7 @@ data class TabState(
 data class TabsModel(val tabs: List<TabState>, val activeId: TabId, val nextId: Long) {
     /** The tab with [activeId]. */
     val active: TabState get() = tabs.first { it.id == activeId }
+
+    /** Where the tab [id] is, or null when it is not open. */
+    fun locationOf(id: TabId): Location? = tabs.firstOrNull { it.id == id }?.current?.location
 }

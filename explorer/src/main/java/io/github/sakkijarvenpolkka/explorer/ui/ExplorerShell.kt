@@ -204,17 +204,12 @@ private fun LoadingBar() {
 /** Why the folder cannot be listed; for a folder that is gone, an Up button to [up] when there is one. */
 @Composable
 private fun ListingError(error: FsError, up: Location?, onUp: (Location) -> Unit) {
-    val text = when (error) {
-        FsError.NotFound -> R.string.error_not_found
-        FsError.VolumeRemoved -> R.string.volume_unavailable
-        else -> R.string.error_access_denied
-    }
     Column(
         Modifier.fillMaxSize().padding(24.dp).testTag(Tags.LISTING_ERROR),
         verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Note(stringResource(text), tag = null)
+        Note(errorText(error).text(), tag = null)
         if (error == FsError.NotFound && up != null) FluentButton(stringResource(R.string.go_up), { onUp(up) })
     }
 }

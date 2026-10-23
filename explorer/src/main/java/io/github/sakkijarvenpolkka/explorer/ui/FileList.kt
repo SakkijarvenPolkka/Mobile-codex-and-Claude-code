@@ -85,6 +85,8 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.MinTouchTarget
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.iconFor
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.Formats
+import io.github.sakkijarvenpolkka.explorer.util.extensionOf
+import io.github.sakkijarvenpolkka.explorer.util.extensionStart
 import java.nio.file.Path
 import java.time.ZoneId
 import java.util.Locale
@@ -248,11 +250,12 @@ private class Look(
     /** The size of a file; folders have none. */
     fun size(entry: FileEntry): String? = if (entry.kind == EntryKind.FILE) Formats.size(entry.size, korean) else null
 
+    /** "File folder", "PDF File" (the extension upper-cased the same in every language), or "File". */
     fun type(entry: FileEntry): String {
-        val extension = extension(entry.name)
+        val extension = extensionOf(entry.name).uppercase(Locale.ROOT)
         return when {
             entry.kind == EntryKind.DIR -> res.getString(R.string.type_folder)
-            extension.isNotEmpty() -> res.getString(R.string.type_file_ext, DisplayName.of(extension.uppercase(locale)))
+            extension.isNotEmpty() -> res.getString(R.string.type_file_ext, DisplayName.of(extension))
             else -> res.getString(R.string.type_file)
         }
     }
@@ -277,15 +280,10 @@ private fun rememberLook(
     }
 }
 
-/** [name] without its extension (from the last dot that does not start it). */
+/** [name] without its extension and the dot before it ([extensionStart]). */
 private fun stem(name: String): String {
-    val dot = name.lastIndexOf('.')
-    return if (dot > 0) name.substring(0, dot) else name
-}
-
-private fun extension(name: String): String {
-    val dot = name.lastIndexOf('.')
-    return if (dot > 0) name.substring(dot + 1) else ""
+    val dot = extensionStart(name)
+    return if (dot < 0) name else name.substring(0, dot)
 }
 
 @Composable

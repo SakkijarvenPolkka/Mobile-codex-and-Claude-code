@@ -9,7 +9,6 @@ package io.github.sakkijarvenpolkka.explorer.state
 import android.app.Application
 import android.content.Intent
 import android.os.Process
-import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.sakkijarvenpolkka.explorer.R
@@ -33,6 +32,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
+import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CancellationException
@@ -66,8 +66,9 @@ data class ExplorerDeps(
 )
 
 /**
- * A message shown in an info bar until it is dismissed: [text], [severity] and an optional
- * [action], as its label and what it does.
+ * A message shown in an info bar: [text], [severity] and an optional [action], as its label and
+ * what it does. One about the active tab's location goes when the tab leaves it; any other stays
+ * until it is dismissed.
  */
 data class UiMessage(val text: UiText, val severity: InfoSeverity, val action: Pair<UiText, () -> Unit>? = null)
 
@@ -134,12 +135,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private val tabs: MutableStateFlow<TabsModel>
 
-    /** Tabs whose folder is on a volume that is not mounted, with where on the volume they are. */
-    private val unavailableTabs: MutableStateFlow<Map<TabId, DecodedLocation.Unavailable>>
+    /** The tabs on volumes that are not mounted; main thread only, as the maps below. */
+    private val volumeTracking: VolumeTracking
     private val shell = MutableStateFlow(ShellState())
-
-    /** Where each volume was last mounted, to find the tabs on it once it is gone. Main thread only, as below. */
-    private val lastRoots = HashMap<String, Path>()
 
     /** What each tab's list was last read for. */
     private val loadedFor = HashMap<TabId, LoadKey>()
@@ -153,8 +151,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     init {
         val restored = settings.loadSession(codec)
         tabs = MutableStateFlow(restored?.model ?: TabsReducer.initial(startLocation()))
-        unavailableTabs = MutableStateFlow(restored?.unavailable.orEmpty())
-        rememberRoots(deps.volumes.volumes.value)
+        volumeTracking = VolumeTracking(deps.volumes, codec, restored?.unavailable.orEmpty())
     }
 
     private val activeListing: Flow<Pair<TabId, ListingState>> = tabs
@@ -163,7 +160,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         .flatMapLatest { id -> loader.state(id).map { id to it } }
 
     val ui: StateFlow<ExplorerUiState> = combine(
-        combine(tabs, activeListing, unavailableTabs, shell) { t, l, u, s -> Core(t, l, u, s) },
+        combine(tabs, activeListing, volumeTracking.unavailable, shell) { t, l, u, s -> Core(t, l, u, s) },
         combine(settings.global, deps.volumes.volumes, clipboard.state, settings.favorites) { g, v, c, f ->
             Env(g, v, c, f)
         },
@@ -172,18 +169,21 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         viewModelScope,
         SharingStarted.Eagerly,
         build(
-            Core(tabs.value, tabs.value.activeId to ListingState.Loading, unavailableTabs.value, shell.value),
+            Core(
+                tabs.value, tabs.value.activeId to ListingState.Loading, volumeTracking.unavailable.value, shell.value,
+            ),
             Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, settings.favorites.value),
         ),
     )
 
     init {
-        viewModelScope.launch { deps.volumes.volumes.collect(::rememberRoots) }
+        viewModelScope.launch { deps.volumes.volumes.collect(volumeTracking::rememberRoots) }
         viewModelScope.launch { deps.volumes.events.collect(::onVolumeEvent) }
         viewModelScope.launch { activeListing.collect { (id, state) -> onListing(id, state) } }
         viewModelScope.launch {
             val viewRevision = shell.map { it.viewRevision }.distinctUntilChanged()
-            combine(tabs, unavailableTabs, settings.global, viewRevision) { _, _, _, _ -> }.collect { ensureLoaded() }
+            val unavailable = volumeTracking.unavailable
+            combine(tabs, unavailable, settings.global, viewRevision) { _, _, _, _ -> }.collect { ensureLoaded() }
         }
     }
 
@@ -198,7 +198,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun up() {
         val tab = tabs.value.active
         val roots = deps.volumes.volumes.value.mapNotNull { it.root }
-        upFrom(tab.current.location, tab.id in unavailableTabs.value, roots)?.let(::navigate)
+        upFrom(tab.current.location, tab.id in volumeTracking.unavailable.value, roots)?.let(::navigate)
     }
 
     /** Reads the active tab's folder again, keeping its rows on screen until the new ones arrive. */
@@ -268,7 +268,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         ensureLoaded(refresh = true)
     }
 
-    fun dismissMessage() = shell.update { it.copy(message = null) }
+    fun dismissMessage() = shell.update { it.copy(message = null, messageAt = null) }
 
     /** Runs a command of the command bar or a menu; commands of later phases do nothing yet. */
     fun command(c: Command) {
@@ -295,7 +295,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showError(messageFor(e.toFsError()))
+                showError(errorText(e.toFsError()))
                 return@launch
             }
             if (children.isNotEmpty()) shell.update { it.copy(overlay = Overlay.Subfolders(folder, children)) }
@@ -348,9 +348,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             loader.drop(closed)
             loadedFor.remove(closed)
         }
-        unavailableTabs.update { gone -> gone.filterKeys { after.locationOf(it) == before.locationOf(it) } }
-        scrollSpots.keys.retainAll { after.locationOf(it) == before.locationOf(it) }
-        shell.update { it.copy(overlay = null) }
+        val stayed = { id: TabId -> after.locationOf(id) == before.locationOf(id) }
+        volumeTracking.retain(stayed)
+        scrollSpots.keys.retainAll(stayed)
+        // A tab put where its volume is mounted now (any tab, not only this one) leaves what is open alone.
+        val keepOverlay = a is TabAction.ReplaceCurrent
+        shell.update {
+            val here = it.at(after.active.current.location)
+            if (keepOverlay) here else here.copy(overlay = null)
+        }
         settings.saveSession(after, codec)
     }
 
@@ -360,8 +366,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         -> true
         else -> false
     }
-
-    private fun TabsModel.locationOf(id: TabId): Location? = tabs.firstOrNull { it.id == id }?.current?.location
 
     /** The active tab's rows as the loader has them now. */
     private fun listedRows(): List<Row> = loader.state(tabs.value.activeId).value.rows()
@@ -381,7 +385,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun ensureLoaded(refresh: Boolean = false) {
         val tab = tabs.value.active
         val folder = (tab.current.location as? Location.Folder)?.path ?: return
-        if (tab.id in unavailableTabs.value) return
+        if (tab.id in volumeTracking.unavailable.value) return
         if (deps.lookup.volumeOf(folder) == null) return placeOffVolume(tab.id, folder)
         val global = settings.global.value
         val options = ListOptions(global.showHidden, viewFor(tab.current.location, global).sort)
@@ -418,12 +422,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     }
 
     private fun offerRestart() {
-        val message = UiMessage(
-            UiText.res(R.string.usb_restart),
-            InfoSeverity.WARNING,
-            UiText.res(R.string.restart) to ::restartApp,
-        )
-        shell.update { it.copy(message = message) }
+        val restart = UiText.res(R.string.restart) to ::restartApp
+        showHere(UiMessage(UiText.res(R.string.usb_restart), InfoSeverity.WARNING, restart))
     }
 
     /** Starts the app again in a new process, which has all files access from its start. */
@@ -457,8 +457,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     navigate(Location.Folder(target.path.parent))
                     reduce(TabAction.Select(target.path))
                 }
-                Resolved.Outside -> showError(R.string.outside_storage)
-                is Resolved.Failed -> showError(messageFor(target.error))
+                Resolved.Outside -> showError(UiText.res(R.string.outside_storage))
+                is Resolved.Failed -> showError(errorText(target.error))
             }
         }
     }
@@ -475,94 +475,35 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         return if (deps.fs.attributes(real).isDirectory) Resolved.Folder(real) else Resolved.File(real)
     }
 
-    private fun showError(@StringRes text: Int) {
-        shell.update { it.copy(message = UiMessage(UiText.res(text), InfoSeverity.ERROR)) }
-    }
+    private fun showError(text: UiText) = showHere(UiMessage(text, InfoSeverity.ERROR))
 
-    @StringRes
-    private fun messageFor(error: FsError): Int = when (error) {
-        FsError.AccessDenied, FsError.Restricted -> R.string.error_access_denied
-        FsError.VolumeRemoved -> R.string.volume_unavailable
-        else -> R.string.error_not_found
-    }
-
-    private fun onVolumeEvent(e: VolumeEvent) {
-        when (e) {
-            is VolumeEvent.Ejecting -> markEjected(e.uuid)
-            is VolumeEvent.Mounted -> remount(e.uuid)
-        }
-    }
-
-    /** The tabs in folders of the volume [uuid] keep their place but show it as unavailable. */
-    private fun markEjected(uuid: String) {
-        val root = lastRoots[uuid] ?: return
-        val gone = tabs.value.tabs.mapNotNull { tab ->
-            val path = (tab.current.location as? Location.Folder)?.path?.takeIf { it.startsWith(root) }
-            path?.let { tab.id to DecodedLocation.Unavailable(uuid, root.relativize(it).toString()) }
-        }.toMap()
-        if (gone.isEmpty()) return
-        gone.keys.forEach(loadedFor::remove)
-        if (tabs.value.activeId in gone) closeOverlay()
-        unavailableTabs.update { it + gone }
-    }
+    /** Shows [message] about the active tab's location: it goes when the tab is somewhere else. */
+    private fun showHere(message: UiMessage) =
+        shell.update { it.copy(message = message, messageAt = tabs.value.active.current.location) }
 
     /**
-     * The tabs waiting for the volume [uuid] go to their folders on it, where it is mounted now
-     * (a saved tab only guessed the mount point), without a new history entry.
+     * A volume going or mounted ([VolumeTracking.onVolumeEvent]): a tab that loses its folder is
+     * read again once it is back, and the moves to where a volume is now are dispatched.
      */
-    private fun remount(uuid: String) {
-        val root = deps.volumes.volumes.value.firstOrNull { it.uuid == uuid }?.root ?: return
-        val back = unavailableTabs.value.filterValues { it.uuid == uuid }
-        if (back.isEmpty()) return
-        moveTabs(back.mapValues { (_, gone) -> Location.Folder(root.resolve(gone.rel)) })
-        unavailableTabs.update { it - back.keys }
-    }
-
-    /** Puts each tab of [places] at its new place instead of its current one, without a new history entry. */
-    private fun moveTabs(places: Map<TabId, Location>) {
-        val before = tabs.value
-        val after = before.copy(
-            tabs = before.tabs.map { tab ->
-                val place = places[tab.id]
-                if (place == null || place == tab.current.location) tab else tab.copy(current = HistoryEntry(place))
-            },
-        )
-        if (after == before) return
-        tabs.value = after
-        settings.saveSession(after, codec)
+    private fun onVolumeEvent(e: VolumeEvent) {
+        val change = volumeTracking.onVolumeEvent(e, tabs.value)
+        change.ejected.forEach(loadedFor::remove)
+        if (tabs.value.activeId in change.ejected) closeOverlay()
+        change.moves.forEach(::reduce)
     }
 
     /**
-     * The tab [tab] is at [folder], which is on no mounted volume (a place kept from before its
-     * volume went out or moved): shown as unavailable while the volume is out, moved to the same
-     * folder where the volume is mounted now, and shown as not found when it is on no volume at all.
+     * The tab [tab] is at [folder], on no mounted volume, which is never read there: it shows the
+     * drive as unavailable, moves to the same folder where the volume is mounted now, or shows the
+     * folder as not found when it is on no volume at all ([VolumeTracking.placeOffVolume]).
      */
     private fun placeOffVolume(tab: TabId, folder: Path) {
-        when (val place = placeOf(folder)) {
-            is DecodedLocation.Unavailable -> unavailableTabs.update { it + (tab to place) }
-            is DecodedLocation.Ok -> moveTabs(mapOf(tab to place.location))
-            DecodedLocation.Invalid -> {
-                loadedFor.remove(tab)
-                loader.setSource(tab, flowOf(ListingState.Error(FsError.NotFound)))
-            }
+        volumeTracking.placeOffVolume(tab, folder)?.let { return reduce(it) }
+        // Not what the tab read last any more: Back to that folder reads it again.
+        loadedFor.remove(tab)
+        if (tab !in volumeTracking.unavailable.value) {
+            loader.setSource(tab, flowOf(ListingState.Error(FsError.NotFound)))
         }
-    }
-
-    private fun rememberRoots(volumes: List<Volume>) {
-        for (volume in volumes) volume.root?.let { lastRoots[volume.uuid] = it }
-    }
-
-    /**
-     * Which volume [path], on no mounted one, belongs to: one that was mounted at the root it is
-     * under and is not now, else the one whose usual mount point it is under (as [codec] places
-     * it: unavailable, or the same folder where the volume is mounted now). Invalid for neither.
-     */
-    private fun placeOf(path: Path): DecodedLocation {
-        val known = lastRoots.entries.filter { path.startsWith(it.value) }.maxByOrNull { it.value.nameCount }
-        if (known != null && deps.volumes.volumes.value.none { it.uuid == known.key && it.root != null }) {
-            return DecodedLocation.Unavailable(known.key, known.value.relativize(path).toString())
-        }
-        return codec.encode(Location.Folder(path))?.let(codec::decode) ?: DecodedLocation.Invalid
     }
 
     /**
@@ -655,13 +596,21 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         is Location.SearchResults -> LocationKind.SEARCH
     }
 
-    /** What is open over the shell, and a counter that moves whenever a folder's view changes. */
+    /**
+     * What is open over the shell, the message and the location it is about ([messageAt], null
+     * for one that stays until dismissed), and a counter that moves whenever a folder's view changes.
+     */
     private data class ShellState(
         val overlay: Overlay? = null,
         val drawerOpen: Boolean = false,
         val message: UiMessage? = null,
+        val messageAt: Location? = null,
         val viewRevision: Int = 0,
-    )
+    ) {
+        /** This state with the active tab at [location]: without a message about another place. */
+        fun at(location: Location): ShellState =
+            if (messageAt == null || messageAt == location) this else copy(message = null, messageAt = null)
+    }
 
     private data class Core(
         val tabs: TabsModel,

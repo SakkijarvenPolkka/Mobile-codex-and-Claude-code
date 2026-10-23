@@ -6,19 +6,18 @@
 package io.github.sakkijarvenpolkka.explorer.platform
 
 import android.webkit.MimeTypeMap
-import java.util.Locale
+import io.github.sakkijarvenpolkka.explorer.util.extensionOf
 
 /**
- * The MIME type of a file name, from its extension (after the last dot, ignoring case; a name
- * that starts with its only dot has none): the app's own table first, so these types are the
- * same on every Android version, then [MimeTypeMap].
+ * The MIME type of a file name, from its extension ([extensionOf], so ignoring case; none
+ * without one): the app's own table first, so these types are the same on every Android
+ * version, then [MimeTypeMap].
  */
 class MimeResolver {
 
     fun mimeOf(name: String): String? {
-        val dot = name.lastIndexOf('.')
-        if (dot <= 0 || dot == name.length - 1) return null
-        val extension = name.substring(dot + 1).lowercase(Locale.ROOT)
+        val extension = extensionOf(name)
+        if (extension.isEmpty()) return null
         return SUPPLEMENT[extension] ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
     }
 

@@ -29,6 +29,7 @@
     <string name="restricted_banner">Android restricts this folder. Other apps\' data can\'t be changed here.</string>
     <string name="error_access_denied">You don\'t have access to this folder</string>
     <string name="error_not_found">The location couldn\'t be found</string>
+    <string name="error_generic">Something went wrong</string>
     <string name="selection_mode_on">Selection mode</string>
     <string name="type_folder">File folder</string>
     <string name="type_file_ext">%s File</string>
@@ -40,7 +41,10 @@
         <item quantity="other">%d items</item>
     </plurals>
     <string name="selected_count">%d selected</string>
-    <string name="selected_items">%d items selected</string>
+    <plurals name="selected_items">
+        <item quantity="one">%d item selected</item>
+        <item quantity="other">%d items selected</item>
+    </plurals>
 
     <!-- Commands -->
     <string name="cmd_new">New</string>

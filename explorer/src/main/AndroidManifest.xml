@@ -8,14 +8,17 @@
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:ignore="ScopedStorage" />
 
+    <!-- The settings are neither backed up nor moved to another device (the rules: Android 12 and later). -->
     <application
         android:name=".ExplorerApp"
         android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Explorer">
+        android:theme="@style/Theme.Explorer"
+        tools:targetApi="31">
         <!-- No configChanges: the activity is recreated on rotation and resizing. -->
         <activity
             android:name=".MainActivity"

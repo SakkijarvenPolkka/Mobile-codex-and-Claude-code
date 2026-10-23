@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.util.extensionOf
 import java.util.Locale
 
 /**
@@ -726,12 +727,6 @@ private fun iconForExtension(extension: String): ImageVector? = when (extension)
     in CODE_EXTENSIONS -> FluentIcons.Code
     in TEXT_EXTENSIONS -> FluentIcons.Text
     else -> null
-}
-
-/** The lower-case text after the last dot, or "" when there is none or the dot starts the name. */
-private fun extensionOf(name: String): String {
-    val dot = name.lastIndexOf('.')
-    return if (dot <= 0) "" else name.substring(dot + 1).lowercase(Locale.ROOT)
 }
 
 private val ARCHIVE_MIMES = setOf(

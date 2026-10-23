@@ -5,14 +5,21 @@ import android.app.Application
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
@@ -85,6 +92,7 @@ import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.Locale
 
 /** The shell on a phone-wide window (every primary command fits the command bar at 600 dp). */
 @RunWith(RobolectricTestRunner::class)
@@ -99,6 +107,9 @@ class ShellTest {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
     private val settings = SettingsStore(null)
+
+    /** The language the shell is shown in; the device's while null. */
+    private val locale = mutableStateOf<Locale?>(null)
     private lateinit var root: Path
     private lateinit var volumes: FakeVolumes
     private lateinit var vm: ExplorerViewModel
@@ -129,13 +140,31 @@ class ShellTest {
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         val content: @Composable () -> Unit = {
             val global by settings.global.collectAsState()
-            ExplorerTheme(global) {
-                ExplorerShell(vm, widthClass)
-                probe()
+            InLocale(locale.value) {
+                ExplorerTheme(global) {
+                    ExplorerShell(vm, widthClass)
+                    probe()
+                }
             }
         }
         if (restoration != null) restoration.setContent(content) else rule.setContent(content)
         rule.waitForIdle()
+    }
+
+    /** [content] with the strings of [locale], or the device's when null. */
+    @Composable
+    private fun InLocale(locale: Locale?, content: @Composable () -> Unit) {
+        if (locale == null) return content()
+        val base = LocalContext.current
+        val resources = remember(locale) {
+            val configuration = Configuration(base.resources.configuration).apply { setLocale(locale) }
+            base.createConfigurationContext(configuration).resources
+        }
+        CompositionLocalProvider(
+            LocalResources provides resources,
+            LocalConfiguration provides resources.configuration,
+            content = content,
+        )
     }
 
     private fun str(id: Int, vararg args: Any): String = context.getString(id, *args)
@@ -261,7 +290,8 @@ class ShellTest {
 
         row("d").performClick()
         rule.waitForIdle()
-        rule.onNodeWithTag(Tags.STATUS_SELECTION).assertTextEquals(str(R.string.selected_items, 3))
+        rule.onNodeWithTag(Tags.STATUS_SELECTION)
+            .assertTextEquals(context.resources.getQuantityString(R.plurals.selected_items, 3, 3))
         rule.onNodeWithTag(Tags.STATUS_SIZE).assertDoesNotExist()
     }
 
@@ -520,6 +550,41 @@ class ShellTest {
         restoration.emulateSavedInstanceStateRestore()
         rule.waitForIdle()
         assertEquals("f050.txt", firstShownRow())
+    }
+
+    @Test
+    fun backRestoresScrollPosition() {
+        repeat(200) { dir("d${it.toString().padStart(3, '0')}") }
+        show()
+        rule.onNodeWithTag(Tags.fileList(ViewMode.DETAILS)).performScrollToIndex(120)
+        rule.waitForIdle()
+        val shown = firstShownRow()
+        assertEquals("d120", shown)
+
+        row(shown).performClick()
+        rule.waitForIdle()
+        assertEquals(Location.Folder(root.resolve(shown)), location())
+        pressBack()
+        assertEquals(Location.Folder(root), location())
+        assertEquals(shown, firstShownRow())
+    }
+
+    @Test
+    fun selectedItemsPlural() {
+        dir("a")
+        dir("b")
+        show()
+        row("a").performTouchInput { longClick() }
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.STATUS_SELECTION).assertTextEquals("1 item selected")
+        row("b").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.STATUS_SELECTION).assertTextEquals("2 items selected")
+
+        locale.value = Locale.KOREAN
+        row("b").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.STATUS_SELECTION).assertTextEquals("1개 항목 선택됨")
     }
 
     /** The name of the topmost row the details list shows, at least in part. */

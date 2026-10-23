@@ -322,6 +322,62 @@ class ExplorerViewModelTest {
     }
 
     @Test
+    fun locationMessageClearedOnNavigation() {
+        dir("a")
+        start()
+        vm.typedPath("/proc")
+        settle()
+        assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
+        // Staying in the folder keeps it.
+        vm.refresh()
+        vm.navigate(Location.Folder(root))
+        settle()
+        assertEquals(UiText.res(R.string.outside_storage), ui.message?.text)
+
+        vm.navigate(Location.Folder(root.resolve("a")))
+        settle()
+        assertNull(ui.message)
+
+        // The same for a path that is not there, and for Back.
+        vm.typedPath("$root/missing")
+        settle()
+        assertEquals(UiText.res(R.string.error_not_found), ui.message?.text)
+        vm.back()
+        settle()
+        assertEquals(Location.Folder(root), location())
+        assertNull(ui.message)
+    }
+
+    @Test
+    fun backAfterUnavailableEntryReReadsFolder() {
+        val usb = folder.newFolder("usb").toPath().toRealPath()
+        Files.createDirectory(usb.resolve("docs"))
+        file("a.txt")
+        val settings = SettingsStore(null)
+        val mounted = FakeVolumes(FakeVolumes.primary(root), FakeVolumes.removable("USB1", "USB drive", usb))
+        val saved = TabsReducer.initial(Location.Folder(root))
+            .let { TabsReducer.reduce(it, TabAction.Navigate(Location.Folder(usb.resolve("docs")))) }
+            .let { TabsReducer.reduce(it, TabAction.Back) }
+        settings.saveSession(saved, VolumeLocationCodec { mounted.volumes.value })
+
+        // Started while the drive is out: the folder is read, and Forward reaches the restored entry on the drive.
+        val out = FakeVolumes.removable("USB1", "USB drive", null, VolumeState.UNMOUNTED)
+        start(settings, FakeVolumes(FakeVolumes.primary(root), out))
+        assertEquals(listOf("a.txt"), names())
+        vm.forward()
+        settle()
+        assertEquals(DecodedLocation.Unavailable("USB1", "docs"), ui.unavailable)
+
+        // Back to the folder reads it again.
+        file("b.txt")
+        vm.back()
+        settle()
+        assertEquals(Location.Folder(root), location())
+        assertNull(ui.unavailable)
+        assertEquals(listOf("a.txt", "b.txt"), names())
+    }
+
+    @Test
     fun folderOnNoVolumeIsNotRead() {
         val elsewhere = folder.newFolder("elsewhere").toPath().toRealPath()
         Files.createFile(elsewhere.resolve("a.txt"))

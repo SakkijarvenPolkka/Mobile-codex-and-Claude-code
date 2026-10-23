@@ -5,6 +5,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import io.github.sakkijarvenpolkka.explorer.util.extensionOf
 import kotlinx.serialization.Serializable
 import java.io.IOException
 import java.nio.file.Path
@@ -83,10 +84,7 @@ object Listing {
     /** An entry with its sort keys computed once. */
     private class Keyed(val entry: FileEntry, val name: String, val type: String)
 
-    /** The folded extension: after the last dot, none for folders and dot files. */
-    private fun typeKey(entry: FileEntry): String {
-        if (entry.kind == EntryKind.DIR) return ""
-        val dot = entry.name.lastIndexOf('.')
-        return if (dot <= 0) "" else NameComparator.key(entry.name.substring(dot + 1))
-    }
+    /** The folded extension ([extensionOf]); none for folders. */
+    private fun typeKey(entry: FileEntry): String =
+        if (entry.kind == EntryKind.DIR) "" else NameComparator.key(extensionOf(entry.name))
 }

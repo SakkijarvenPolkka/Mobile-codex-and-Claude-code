@@ -25,6 +25,13 @@ sealed interface TabAction {
     /** Go to the nearest forward entry, if any. */
     data object Forward : TabAction
 
+    /**
+     * Put [location] in place of the current entry of tab [id], active or not (such as its
+     * folder where its volume is mounted now), keeping its back and forward stacks; clears its
+     * selection.
+     */
+    data class ReplaceCurrent(val id: TabId, val location: Location) : TabAction
+
     /** Open a tab at [location] after the last one, and activate it. */
     data class NewTab(val location: Location) : TabAction
 
@@ -92,6 +99,9 @@ object TabsReducer {
         is TabAction.Navigate -> m.updateActive { it.navigate(a.location, a.leaving) }
         TabAction.Back -> m.updateActive { it.goBack() }
         TabAction.Forward -> m.updateActive { it.goForward() }
+        is TabAction.ReplaceCurrent -> m.updateTab(a.id) {
+            it.copy(current = HistoryEntry(a.location), selection = SelectionState())
+        }
         is TabAction.NewTab -> m.open(a.location)
         is TabAction.Close -> m.close(a.id)
         is TabAction.CloseOthers -> m.closeOthers(a.id)
@@ -116,13 +126,18 @@ object TabsReducer {
 
     private fun List<HistoryEntry>.capped(): List<HistoryEntry> = takeLast(HISTORY_CAP)
 
-    /** Applies [change] to the active tab; returns this model itself when [change] returns the tab itself. */
-    private inline fun TabsModel.updateActive(change: (TabState) -> TabState): TabsModel {
-        val tab = active
+    /**
+     * Applies [change] to the tab [id]; returns this model itself when that tab is not open or
+     * [change] returns the tab itself.
+     */
+    private inline fun TabsModel.updateTab(id: TabId, change: (TabState) -> TabState): TabsModel {
+        val tab = tabs.firstOrNull { it.id == id } ?: return this
         val changed = change(tab)
         if (changed === tab) return this
-        return copy(tabs = tabs.map { if (it.id == activeId) changed else it })
+        return copy(tabs = tabs.map { if (it.id == id) changed else it })
     }
+
+    private inline fun TabsModel.updateActive(change: (TabState) -> TabState): TabsModel = updateTab(activeId, change)
 
     private inline fun TabsModel.updateSelection(change: (SelectionState) -> SelectionState): TabsModel =
         updateActive { it.copy(selection = change(it.selection)) }

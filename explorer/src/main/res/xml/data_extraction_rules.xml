@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Files — what Android 12 and later may back up or move to a new device: not the settings,
+  whose saved tabs, favorites and recent files name this device's volumes and paths.
+  SPDX-License-Identifier: MIT
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="explorer_settings.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="explorer_settings.xml" />
+    </device-transfer>
+</data-extraction-rules>

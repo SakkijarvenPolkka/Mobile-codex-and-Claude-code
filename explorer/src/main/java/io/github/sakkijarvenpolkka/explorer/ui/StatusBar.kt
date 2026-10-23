@@ -56,8 +56,13 @@ fun StatusBar(ui: ExplorerUiState, onSetMode: (ViewMode) -> Unit, modifier: Modi
             if (selected.isNotEmpty()) {
                 val filesOnly = selected.all { it.kind == EntryKind.FILE }
                 StatusText("·", tag = null)
-                val text = if (filesOnly) R.string.selected_count else R.string.selected_items
-                StatusText(stringResource(text, selected.size), Tags.STATUS_SELECTION)
+                val count = selected.size
+                val text = if (filesOnly) {
+                    stringResource(R.string.selected_count, count)
+                } else {
+                    pluralStringResource(R.plurals.selected_items, count, count)
+                }
+                StatusText(text, Tags.STATUS_SELECTION)
                 if (filesOnly) StatusText(Formats.size(selected.sumOf { it.size }, korean), Tags.STATUS_SIZE)
             }
         }

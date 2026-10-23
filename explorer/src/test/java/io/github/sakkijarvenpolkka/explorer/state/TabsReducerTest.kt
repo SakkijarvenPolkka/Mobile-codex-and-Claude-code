@@ -315,6 +315,27 @@ class TabsReducerTest {
     }
 
     @Test
+    fun replaceCurrentKeepsHistory() {
+        val m = TabsReducer.initial(folder("A"))
+            .then(TabAction.Navigate(folder("B")), TabAction.Navigate(folder("C")), TabAction.Back)
+            .then(TabAction.Select(a))
+        val id = m.activeId
+        val replaced = reduce(m, TabAction.ReplaceCurrent(id, folder("X")))
+        assertEquals(HistoryEntry(folder("X")), replaced.active.current)
+        assertEquals(m.active.back, replaced.active.back)
+        assertEquals(m.active.forward, replaced.active.forward)
+        assertEquals(SelectionState(), replaced.active.selection)
+
+        // Any open tab, not only the active one; an unknown one changes nothing.
+        val two = m.then(TabAction.NewTab(folder("N")))
+        val background = reduce(two, TabAction.ReplaceCurrent(id, folder("Y")))
+        assertEquals(two.activeId, background.activeId)
+        assertEquals(HistoryEntry(folder("Y")), background.tabs.first { it.id == id }.current)
+        assertEquals(two.active, background.active)
+        assertSame(m, reduce(m, TabAction.ReplaceCurrent(TabId(99), folder("X"))))
+    }
+
+    @Test
     fun upGoesToTheParentFolder() {
         val volumes = listOf(root, Paths.get("/storage/1A2B-3C4D"))
         assertEquals(
