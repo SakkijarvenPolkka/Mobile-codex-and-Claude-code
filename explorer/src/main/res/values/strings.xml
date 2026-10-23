@@ -204,4 +204,7 @@
     <string name="encoding_utf8">UTF-8</string>
     <string name="encoding_korean">Korean (CP949)</string>
     <string name="encoding_utf16">UTF-16</string>
+
+    <!-- The image viewer -->
+    <string name="image_error">The image can\'t be displayed</string>
 </resources>

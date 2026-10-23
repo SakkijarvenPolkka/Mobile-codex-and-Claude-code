@@ -1,7 +1,7 @@
 /*
  * Files — Application: owns the process-wide services of the file manager, and does what the file
  * operations need around them: the foreground service, the media scans, and stopping those on a
- * volume that goes.
+ * volume that goes (and forgetting its thumbnails).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -27,7 +27,10 @@ import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import io.github.sakkijarvenpolkka.explorer.ops.scanTargets
 import io.github.sakkijarvenpolkka.explorer.platform.AndroidMediaScan
+import io.github.sakkijarvenpolkka.explorer.platform.AndroidThumbnailPort
 import io.github.sakkijarvenpolkka.explorer.platform.MediaScan
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeRegistry
 import kotlinx.coroutines.CoroutineScope
@@ -78,6 +81,14 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     /** Tells the media store of what the operations made, on the volumes it indexes. */
     val mediaScan: MediaScan by lazy {
         AndroidMediaScan(this, volumes) { root -> volumes.volumes.value.any { it.root == root && it.fuseBacked } }
+    }
+
+    /** How the thumbnails are made; a test puts its own before [thumbnails] is first used. */
+    internal var thumbnailPort: ThumbnailPort = AndroidThumbnailPort()
+
+    /** The thumbnails of the tiles and large icons views, for the whole app, in up to an eighth of the heap. */
+    val thumbnails: Thumbnails by lazy {
+        Thumbnails(thumbnailPort, Dispatchers.IO, (Runtime.getRuntime().maxMemory() / 8).toInt())
     }
 
     /** Whether the user was asked to allow notifications since the process started (main thread only). */
@@ -181,8 +192,10 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
 
     /**
      * Stops the operations on a volume that goes as soon as it does ([OperationRunner.cancelTouching]):
-     * vold kills the processes that still hold its files open a few seconds later. Both run on the main
-     * thread, where the registry changes, so a volume's root is noted before an event needs it.
+     * vold kills the processes that still hold its files open a few seconds later. Its thumbnails go
+     * too ([Thumbnails.evictUnder]): one that could not be made while it went is made again when it is
+     * back. Both run on the main thread, where the registry changes, so a volume's root is noted before
+     * an event needs it.
      */
     private fun stopOperationsOnEject() {
         appScope.launch(Dispatchers.Main.immediate) {
@@ -193,7 +206,10 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         appScope.launch(Dispatchers.Main.immediate) {
             volumes.events.collect { event ->
                 if (event is VolumeEvent.Ejecting) {
-                    lastRoots[event.uuid]?.let { runner.cancelTouching(it, FsError.VolumeRemoved) }
+                    lastRoots[event.uuid]?.let { root ->
+                        runner.cancelTouching(root, FsError.VolumeRemoved)
+                        thumbnails.evictUnder(root)
+                    }
                 }
             }
         }

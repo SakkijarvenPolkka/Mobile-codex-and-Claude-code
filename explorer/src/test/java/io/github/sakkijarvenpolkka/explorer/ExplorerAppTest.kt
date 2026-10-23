@@ -4,12 +4,16 @@ package io.github.sakkijarvenpolkka.explorer
 import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.os.CancellationSignal
 import android.os.Looper
 import android.os.Process
 import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
 import androidx.test.core.app.ApplicationProvider
+import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
+import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
@@ -21,6 +25,8 @@ import io.github.sakkijarvenpolkka.explorer.ops.InterruptedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbKind
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -39,6 +45,7 @@ import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
 import java.nio.file.Files
 import java.nio.file.Path
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** The app's one runner, file operations, journal and Recycle Bin, as the app puts them together. */
 @RunWith(RobolectricTestRunner::class)
@@ -221,27 +228,25 @@ class ExplorerAppTest {
         cancel("t1", "t2")
     }
 
-    @Test
-    fun ejectingAVolumeStopsTheOperationsOnIt() {
-        val dir = folder.root.toPath().toRealPath()
-        val card = Files.createDirectory(dir.resolve("card"))
-        val storage = shadowOf(app.getSystemService(StorageManager::class.java))
-        fun cardIn(state: String): StorageVolume =
-            StorageVolumeBuilder("public:1A2B-3C4D", card.toFile(), "SD card", Process.myUserHandle(), state)
-                .setIsPrimary(false)
-                .setIsRemovable(true)
-                .setFsUuid("1A2B-3C4D")
-                .build()
-        storage.addStorageVolume(cardIn("mounted"))
-        app.volumes.refresh()
-        // A copy to the card, waiting for an answer.
-        val a = write(dir, "a.txt", "new")
-        write(card, "a.txt", "old")
-        app.runner.submit(OperationSpec("t1", OpKind.COPY, listOf(a.toString()), card.toString()))
-        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+    /** The SD card "1A2B-3C4D" mounted at [card] in [state]. */
+    private fun cardIn(card: Path, state: String): StorageVolume =
+        StorageVolumeBuilder("public:1A2B-3C4D", card.toFile(), "SD card", Process.myUserHandle(), state)
+            .setIsPrimary(false)
+            .setIsRemovable(true)
+            .setFsUuid("1A2B-3C4D")
+            .build()
 
-        // The card goes: its root is gone from the volumes before the event comes.
-        val ejecting = cardIn("ejecting")
+    private val storage get() = shadowOf(app.getSystemService(StorageManager::class.java))
+
+    /** Mounts the SD card at [card]. */
+    private fun mount(card: Path) {
+        storage.addStorageVolume(cardIn(card, "mounted"))
+        app.volumes.refresh()
+    }
+
+    /** The card at [card] goes: its root is gone from the volumes before the event comes. */
+    private fun eject(card: Path) {
+        val ejecting = cardIn(card, "ejecting")
         storage.resetStorageVolumeList()
         storage.addStorageVolume(ejecting)
         app.sendBroadcast(
@@ -249,11 +254,49 @@ class ExplorerAppTest {
                 .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, ejecting),
         )
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun ejectingAVolumeStopsTheOperationsOnIt() {
+        val dir = folder.root.toPath().toRealPath()
+        val card = Files.createDirectory(dir.resolve("card"))
+        mount(card)
+        // A copy to the card, waiting for an answer.
+        val a = write(dir, "a.txt", "new")
+        write(card, "a.txt", "old")
+        app.runner.submit(OperationSpec("t1", OpKind.COPY, listOf(a.toString()), card.toString()))
+        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+
+        eject(card)
 
         val finished = runBlocking {
             withTimeout(10_000) { app.runner.state.first { it.finished.isNotEmpty() } }
         }.finished.single()
         assertEquals(OpResult.Failed(FsError.VolumeRemoved, 0, 1), finished.result)
         assertEquals("old", String(Files.readAllBytes(card.resolve("a.txt"))))
+    }
+
+    @Test
+    fun ejectingAVolumeDropsItsThumbnails() {
+        val dir = folder.root.toPath().toRealPath()
+        val card = Files.createDirectory(dir.resolve("card"))
+        mount(card)
+        val loads = CopyOnWriteArrayList<Path>()
+        app.thumbnailPort = object : ThumbnailPort {
+            override fun load(file: Path, kind: ThumbKind, sizePx: Int, signal: CancellationSignal): Bitmap {
+                loads.add(file)
+                return Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            }
+        }
+        fun photo(path: Path) = FileEntry(path, path.fileName.toString(), EntryKind.FILE, 1, 1, "image/jpeg", false, null)
+        val onCard = photo(card.resolve("a.jpg"))
+        val onPhone = photo(dir.resolve("b.jpg"))
+        runBlocking { listOf(onCard, onPhone).forEach { app.thumbnails.get(it, 96) } }
+
+        eject(card)
+
+        assertNull(app.thumbnails.cached(onCard, 96))
+        runBlocking { listOf(onCard, onPhone).forEach { app.thumbnails.get(it, 96) } }
+        assertEquals(listOf(onCard.path, onPhone.path, onCard.path), loads.toList())
     }
 }

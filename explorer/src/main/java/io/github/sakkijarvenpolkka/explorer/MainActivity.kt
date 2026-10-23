@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
                     fileOps = app.fileOps, bin = app.bin, runner = app.runner,
-                    opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice,
+                    opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice, thumbnails = app.thumbnails,
                 )
                 ExplorerViewModel(app, deps)
             }

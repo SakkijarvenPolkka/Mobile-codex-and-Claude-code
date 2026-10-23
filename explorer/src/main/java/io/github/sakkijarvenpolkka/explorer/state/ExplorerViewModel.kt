@@ -31,6 +31,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
+import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
@@ -76,6 +77,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val host = Host()
     private val handOver = HandOver(app, deps, viewModelScope, host)
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
+
+    /** The app's thumbnails, for the list to draw ([ExplorerDeps.thumbnails]). */
+    val thumbnails: Thumbnails? = deps.thumbnails
 
     /** What the app's file operations are doing: the one running, its conflict, the queue. */
     val runner: StateFlow<RunnerState> = ops.runner

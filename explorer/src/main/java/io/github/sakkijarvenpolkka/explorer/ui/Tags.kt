@@ -75,6 +75,9 @@ object Tags {
     /** The column header that sorts by [key] (details view). */
     fun header(key: SortKey): String = "header_${key.name.lowercase(Locale.ROOT)}"
 
+    /** The thumbnail drawn for the item [name] in the tiles and large icons views. */
+    fun thumbnail(name: String): String = "thumbnail_$name"
+
     /** The list or grid of the folder's items in [mode]. */
     fun fileList(mode: ViewMode): String = "file_list_${mode.name.lowercase(Locale.ROOT)}"
 

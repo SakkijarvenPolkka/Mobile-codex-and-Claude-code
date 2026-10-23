@@ -202,4 +202,7 @@
     <string name="encoding_utf8">UTF-8</string>
     <string name="encoding_korean">한국어(CP949)</string>
     <string name="encoding_utf16">UTF-16</string>
+
+    <!-- The image viewer -->
+    <string name="image_error">이미지를 표시할 수 없습니다</string>
 </resources>

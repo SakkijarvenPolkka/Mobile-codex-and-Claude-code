@@ -128,8 +128,9 @@ private sealed interface ViewState {
     data object Failed : ViewState
 }
 
+/** The title row of a viewer: the name of [file] and a close button ([onClose]). */
 @Composable
-private fun TitleRow(file: Path, onClose: () -> Unit) {
+internal fun TitleRow(file: Path, onClose: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         BasicText(
             DisplayName.of(file.fileName?.toString() ?: file.toString()),

@@ -7,6 +7,7 @@
 package io.github.sakkijarvenpolkka.explorer.ui
 
 import android.content.res.Resources
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -43,6 +44,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
@@ -50,8 +52,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.testTag
@@ -69,6 +74,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.SortKey
 import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
+import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.HistoryEntry
 import io.github.sakkijarvenpolkka.explorer.state.Location
@@ -130,7 +136,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
 /**
  * The active tab's rows in its folder's view. Details shows the name, date modified, type and
  * size columns under headers that sort (on [WidthClass.COMPACT], the date and size on a second
- * line); list shows names only; tiles and large icons are grids. In selection mode the check
+ * line); list shows names only; tiles and large icons are grids, which show the thumbnails of
+ * pictures, videos and songs from [thumbnails] (icons without). In selection mode the check
  * column (inset by the system gesture area) toggles a row when tapped and selects from the
  * anchor when dragged along. [contextMenu] is placed with the row of
  * [ExplorerUiState.contextMenuFor], so that it opens next to it. The item being renamed
@@ -149,6 +156,7 @@ fun FileList(
     onScrolled: (Location, Int, Int) -> Unit,
     contextMenu: @Composable () -> Unit,
     modifier: Modifier = Modifier,
+    thumbnails: Thumbnails? = null,
 ) {
     val tab = ui.tabs.active
     val mode = ui.viewSetting.mode
@@ -171,7 +179,7 @@ fun FileList(
         Box {
             val selected = row.entry.path in selection.items
             if (mode == ViewMode.DETAILS || mode == ViewMode.LIST) EntryRow(row.entry, selected, look)
-            else EntryTile(row.entry, selected, look)
+            else EntryTile(row.entry, selected, look, thumbnails)
             if (ui.contextMenuFor?.path == row.entry.path) contextMenu()
         }
     }
@@ -337,8 +345,9 @@ private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look) {
     }
 }
 
+/** An item of the tiles or large icons grid, with its thumbnail from [thumbnails] where it has one. */
 @Composable
-private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look) {
+private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnails: Thumbnails?) {
     ListRow(
         selected = selected,
         selectionMode = look.selectionMode,
@@ -351,7 +360,7 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look) {
             Spacer(Modifier.width(8.dp))
         }
         if (look.mode == ViewMode.TILES) {
-            EntryIcon(entry, Modifier.size(40.dp))
+            EntryPicture(entry, thumbnails, 40.dp)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 Name(look.name(entry))
@@ -364,7 +373,7 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look) {
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                EntryIcon(entry, Modifier.size(48.dp))
+                EntryPicture(entry, thumbnails, 48.dp)
                 BasicText(
                     look.name(entry),
                     style = FluentTheme.type.body.copy(color = FluentTheme.colors.text, textAlign = TextAlign.Center),
@@ -373,6 +382,29 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look) {
                 )
             }
         }
+    }
+}
+
+/**
+ * The thumbnail of [entry], [size] a side, while [thumbnails] has one for it: a cached one at once,
+ * else loaded while the item is shown (an item scrolled away stops its load). Its icon otherwise.
+ */
+@Composable
+private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp) {
+    val sizePx = with(LocalDensity.current) { size.roundToPx() }
+    val thumbnail by produceState(thumbnails?.cached(entry, sizePx), thumbnails, entry, sizePx) {
+        value = thumbnails?.get(entry, sizePx)
+    }
+    val bitmap = thumbnail
+    if (bitmap == null) {
+        EntryIcon(entry, Modifier.size(size))
+    } else {
+        Image(
+            remember(bitmap) { bitmap.asImageBitmap() },
+            contentDescription = null,
+            modifier = Modifier.size(size).testTag(Tags.thumbnail(entry.name)),
+            contentScale = ContentScale.Fit,
+        )
     }
 }
 

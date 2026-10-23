@@ -6,6 +6,8 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.graphics.Bitmap
+import android.os.CancellationSignal
 import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
@@ -75,6 +77,9 @@ import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.SortKey
 import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbKind
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
@@ -107,6 +112,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.Locale
+import java.util.concurrent.CopyOnWriteArrayList
 
 /** The shell on a phone-wide window (every primary command fits the command bar at 600 dp). */
 @RunWith(RobolectricTestRunner::class)
@@ -150,10 +156,11 @@ class ShellTest {
         fs: FsBackend = NioFsBackend,
         extra: List<Volume> = emptyList(),
         restoration: StateRestorationTester? = null,
+        thumbnails: Thumbnails? = null,
         probe: @Composable () -> Unit = {},
     ) {
         volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
-        val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined)
+        val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined, thumbnails = thumbnails)
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         val content: @Composable () -> Unit = {
             val global by settings.global.collectAsState()
@@ -355,6 +362,47 @@ class ShellTest {
         rule.onNodeWithTag(Tags.STATUS_DETAILS).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(Tags.fileList(ViewMode.DETAILS)).assertExists()
+    }
+
+    @Test
+    fun tilesAndLargeIconsShowThumbnails() {
+        file("photo.jpg", 10)
+        file("broken.png", 10)
+        file("notes.txt", 10)
+        dir("Pictures")
+        val loads = CopyOnWriteArrayList<String>()
+        val port = object : ThumbnailPort {
+            override fun load(file: Path, kind: ThumbKind, sizePx: Int, signal: CancellationSignal): Bitmap? {
+                loads += "${file.fileName} $sizePx"
+                return if (file.fileName.toString() == "photo.jpg") Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888) else null
+            }
+        }
+        show(thumbnails = Thumbnails(port, Dispatchers.IO, maxBytes = 1 shl 20))
+        fun thumbnailShown(name: String) =
+            rule.onAllNodes(hasTestTag(Tags.thumbnail(name)), useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+        for ((mode, sizeDp) in listOf(ViewMode.TILES to 40, ViewMode.LARGE_ICONS to 48)) {
+            rule.onNodeWithTag(Tags.CMD_VIEW).performClick()
+            rule.onNodeWithTag(Tags.view(mode)).performClick()
+            // The two pictures load side by side: wait for both.
+            rule.waitUntil(10_000) {
+                rule.waitForIdle()
+                thumbnailShown("photo.jpg") && "broken.png $sizeDp" in loads
+            }
+            assertFalse(thumbnailShown("broken.png"))
+            assertFalse(thumbnailShown("notes.txt"))
+            assertFalse(thumbnailShown("Pictures"))
+            // As big as the icon it stands for (the test screen is mdpi), and loaded once for each size.
+            assertEquals(1, loads.count { it == "photo.jpg $sizeDp" })
+            assertEquals(1, loads.count { it == "broken.png $sizeDp" })
+        }
+        assertTrue(loads.none { it.startsWith("notes.txt") || it.startsWith("Pictures") })
+
+        // Lists draw icons only.
+        rule.onNodeWithTag(Tags.CMD_VIEW).performClick()
+        rule.onNodeWithTag(Tags.view(ViewMode.DETAILS)).performClick()
+        rule.waitForIdle()
+        assertFalse(thumbnailShown("photo.jpg"))
     }
 
     @Test

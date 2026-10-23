@@ -312,6 +312,7 @@ private fun Contents(
                     onSort = { key -> vm.setView(ui.viewSetting.copy(sort = nextSort(ui.viewSetting.sort, key))) },
                     onScrolled = vm::onScrolled,
                     contextMenu = { EntryMenu(ui, onCommand = vm::command, onDismiss = vm::closeOverlay) },
+                    thumbnails = vm.thumbnails,
                 )
                 if (listing is ListingState.Loaded && listing.refreshing) LoadingBar()
             }

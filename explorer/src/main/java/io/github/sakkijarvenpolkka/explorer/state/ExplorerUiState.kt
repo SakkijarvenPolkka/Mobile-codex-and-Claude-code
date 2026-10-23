@@ -22,6 +22,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
+import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
@@ -37,7 +38,8 @@ import java.nio.file.Path
  * [runner], the app's one operation runner, runs the other file operations: without both, files
  * are not changed. [bin] is the app's one Recycle Bin, shared with the file operations; without
  * it, there is none. [opsNotice] is what the file operations tell from outside any activity,
- * which the app keeps until it leaves the screen here ([clearOpsNotice]).
+ * which the app keeps until it leaves the screen here ([clearOpsNotice]). [thumbnails] are the app's
+ * cached thumbnails, for the tiles and large icons views; without them, those show icons only.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -52,6 +54,7 @@ data class ExplorerDeps(
     val runner: OperationRunner? = null,
     val opsNotice: StateFlow<OpsNotice?> = MutableStateFlow(null),
     val clearOpsNotice: () -> Unit = {},
+    val thumbnails: Thumbnails? = null,
 )
 
 /**
