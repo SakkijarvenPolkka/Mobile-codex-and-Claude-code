@@ -77,13 +77,19 @@ internal class Searches(
     /** The walk of each tab's search running now. */
     private val walks = HashMap<TabId, Job>()
 
-    /** Searches for [query], in the tab active now, once nothing else is asked for in [SEARCH_DELAY_MS]. */
+    /**
+     * Searches for [query], in the tab active now, once nothing else is asked for in [SEARCH_DELAY_MS]; not
+     * when that tab is no longer active by then, or has gone elsewhere (Back, a folder opened).
+     */
     fun search(query: String, includeSubfolders: Boolean) {
-        val tab = host.searchedTab()?.id
+        val tab = host.searchedTab()
         waiting?.cancel()
         waiting = scope.launch {
             delay(SEARCH_DELAY_MS)
-            if (tab != null && host.searchedTab()?.id == tab) start(query, includeSubfolders, again = false)
+            val now = host.searchedTab()
+            if (tab != null && now?.id == tab.id && now.current.location == tab.current.location) {
+                start(query, includeSubfolders, again = false)
+            }
         }
     }
 

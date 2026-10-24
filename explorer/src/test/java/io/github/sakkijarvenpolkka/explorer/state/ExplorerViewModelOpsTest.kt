@@ -396,6 +396,8 @@ class ExplorerViewModelOpsTest {
         vm.delete(permanent = false)
         drain()
         assertEquals(listOf("plan.md"), names())
+        // What was selected is gone with it: the tab is out of selection mode.
+        assertFalse(ui.tabs.active.selection.active)
         // A result renamed: found again under its new name, which is selected.
         vm.startRename(entry("plan.md"))
         vm.commitRename(entry("plan.md"), "plan-2.md")

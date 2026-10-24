@@ -425,6 +425,40 @@ class SearchUiTest {
     }
 
     @Test
+    fun leavingDropsWaitingSearch() {
+        val docs = dir("docs")
+        file("docs/abc.md")
+        file("ab.txt")
+        file("abc.txt")
+        show()
+        searchFor("ab")
+        assertEquals(Location.SearchResults(root, "ab"), location())
+
+        // Back before the typing's pause is over: the tab stays at the folder, what was typed is not searched.
+        val typingFrom = SystemClock.uptimeMillis()
+        keyboard().commitText("c", 1)
+        settleMain()
+        vm.back()
+        settleMain()
+        assertTrue(SystemClock.uptimeMillis() - typingFrom < SEARCH_DELAY_MS)
+        idleFor(1_000)
+        assertEquals(Location.Folder(root), location())
+        assertEquals(listOf("docs", "ab.txt", "abc.txt"), names())
+        assertEquals(listOf(Location.SearchResults(root, "ab")), ui.tabs.active.forward.map { it.location })
+
+        // Nor is a folder gone into meanwhile searched.
+        val goingFrom = SystemClock.uptimeMillis()
+        keyboard().commitText("abc", 1)
+        settleMain()
+        vm.open(ui.rows.first { it.entry.name == "docs" }.entry)
+        settleMain()
+        assertTrue(SystemClock.uptimeMillis() - goingFrom < SEARCH_DELAY_MS)
+        idleFor(1_000)
+        assertEquals(Location.Folder(docs), location())
+        assertEquals(listOf("abc.md"), names())
+    }
+
+    @Test
     fun pasteDisabledInResults() {
         dir("docs")
         file("docs/a.txt")

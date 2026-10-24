@@ -485,16 +485,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private fun onListing(id: TabId, state: ListingState) {
         if (id != tabs.value.activeId) return
-        when (state) {
-            is ListingState.Loaded -> if (!state.refreshing) {
-                reduce(TabAction.Prune(state.rows.map { it.entry.path }))
-                // The menu of an item that is gone would stay open unseen.
-                val menu = shell.value.overlay as? Overlay.ContextMenu
-                if (menu != null && menu.entry.path !in tabs.value.active.selection.items) closeOverlay()
-            }
-            is ListingState.Error -> if (state.error == FsError.AccessDenied && onRawMount()) offerRestart()
-            else -> Unit
-        }
+        if (state is ListingState.Error && state.error == FsError.AccessDenied && onRawMount()) offerRestart()
+        // All there is here, read or found: what is gone is no longer selected, and its menu not left open unseen.
+        val complete = state is ListingState.Loaded && !state.refreshing || state is ListingState.Streaming && state.done
+        if (!complete) return
+        reduce(TabAction.Prune(state.rows().map { it.entry.path }))
+        val menu = shell.value.overlay as? Overlay.ContextMenu
+        if (menu != null && menu.entry.path !in tabs.value.active.selection.items) closeOverlay()
     }
 
     /** Whether the active tab's folder is on a USB drive this process may not read ([isOnRawMount]). */
