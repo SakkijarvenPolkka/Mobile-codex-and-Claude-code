@@ -128,6 +128,13 @@ native/scripts/build-host.sh --test        # 리눅스 호스트에서 네이티
   재생·녹음, MediaCodec 코덱, Android에서의 엔진 초기화는 기기에서 확인이 필요합니다.
   문제가 있으면 앱의 *도움말 ▸ 진단 ▸ 로그 보기* 화면 내용을 함께 알려 주세요.
 
+## 같은 저장소의 다른 앱: 파일 탐색기
+
+이 저장소에는 Audacity 포팅과 코드·빌드 의존이 없는 두 번째 앱 [`explorer/`](explorer/README.md)("파일 탐색기",
+영어 "Files")도 들어 있습니다. Windows 11 파일 탐색기의 모습과 동작을 참고해 만든 비공식 Android 파일 관리자(탭, 홈,
+즐겨찾기, 휴지통, 미리보기, 검색, 한국어 ZIP 지원)이며 MIT 라이선스입니다. 기능, 설치, 빌드, 실기기 확인 목록은
+[`explorer/README.md`](explorer/README.md)를 참고하세요.
+
 ## 라이선스
 
 Audacity는 GNU GPL(대부분 GPLv2 이상, 전체로는 GPLv3)로 배포되며, 이 포팅도 같은 조건을 따릅니다
