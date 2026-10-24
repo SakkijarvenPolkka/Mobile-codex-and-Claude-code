@@ -1,7 +1,7 @@
 /*
- * Files — the shell: address bar, command bar, navigation pane, folder contents and status
- * bar, laid out for the window width, with the dialogs of the file operations; and the app theme
- * from the settings.
+ * Files — the shell: tab strip, address bar, command bar, navigation pane, folder contents and
+ * status bar, laid out for the window width, with the dialogs of the file operations; and the app
+ * theme from the settings.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -109,12 +110,12 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
  * The file manager for [vm]: on [WidthClass.EXPANDED] the navigation pane is pinned at the
  * start, and the preview pane, when on, at the end; otherwise the navigation pane is a drawer
  * behind ☰. A file open in its viewer takes the whole window ([ViewerScreen]), with the app's
- * notice of the file operations and the view model's message over it. The bars keep clear of the
- * system bars and the display cutout; Back is handled only while the state has something for it
- * to do. The keyboard shortcuts ([shortcutFor]) are read here first, so the shell takes the focus
- * back whenever the list shows with nothing open over it; the intents the view model asks for are
- * started from here, from the activity. The file operations show from the runner's state
- * ([OperationsDialogs]), which outlives the activity.
+ * notice of the file operations and the view model's message over it. The tab strip is on top; it
+ * and the bars keep clear of the system bars and the display cutout. Back is handled only while the
+ * state has something for it to do. The keyboard shortcuts ([shortcutFor]) are read here first, so
+ * the shell takes the focus back whenever the list shows with nothing open over it; the intents the
+ * view model asks for are started from here, from the activity. The file operations show from the
+ * runner's state ([OperationsDialogs]), which outlives the activity.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
@@ -124,6 +125,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     BackHandler(enabled = ui.backTarget != null, onBack = vm::systemBack)
     LaunchedEffect(expanded) { vm.setExpanded(expanded) }
     val positions = remember(vm) { ListPositions(vm::scrollOf) }
+    // A closed tab's list is never shown again.
+    SideEffect { positions.retain(ui.tabs.tabs.mapTo(HashSet()) { it.id }) }
     val context = LocalContext.current
     val pending = ui.launch
     LaunchedEffect(pending) { if (pending != null) vm.launched(pending, launch(context, pending)) }
@@ -152,15 +155,15 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .focusTarget()
             .testTag(Tags.SHELL),
     ) {
-        val viewers = vm.viewers
+        val viewers = vm.viewing.viewerDeps
         val viewer = ui.viewer
         if (viewer != null && viewers != null) {
             ViewerScreen(
                 viewer,
                 viewers,
-                onClose = vm::closeViewer,
-                onShare = vm::share,
-                onOpenWith = vm::openWith,
+                onClose = vm.viewing::close,
+                onShare = vm.viewing::share,
+                onOpenWith = vm.viewing::openWith,
                 onProperties = vm::showProperties,
             )
             val bottom = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
@@ -171,7 +174,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
         } else {
             val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             Column(Modifier.fillMaxSize().then(sides)) {
-                // The tab strip goes above the address bar once tabs are shown.
+                TabsBar(ui, vm, Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)))
                 AddressBar(
                     ui = ui,
                     showMenuButton = !expanded,
@@ -184,14 +187,13 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                     onEdit = vm::editAddress,
                     onSubmit = vm::typedPath,
                     onCloseOverlay = vm::closeOverlay,
-                    modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
                 )
                 CommandsUi(
                     ui,
                     onCommand = vm::command,
                     onSetView = vm::setView,
                     onSetGlobal = vm::setGlobal,
-                    onTogglePreviewPane = if (expanded && viewers != null) vm::togglePreviewPane else null,
+                    onTogglePreviewPane = if (expanded && viewers != null) vm.viewing::togglePane else null,
                 )
                 Row(Modifier.weight(1f)) {
                     if (expanded) {
@@ -203,7 +205,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                     }
                     if (expanded && ui.previewPane && viewers != null) {
                         val pane = Modifier.width(PREVIEW_WIDTH).fillMaxHeight()
-                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm::openWith, onOpen = vm::openFullScreen)
+                        val open = vm.viewing::openFullScreen
+                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm.viewing::openWith, onOpen = open)
                     }
                 }
                 StatusBar(
@@ -269,8 +272,10 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
  * Does what the shortcut [action] asks for in [ui]: false when it does nothing there (a command
  * not offered, nowhere to go), so that the key goes on to what has the focus. Enter opens the
  * one selected item only while the shell itself is [shellFocused]: a focused button, crumb or
- * row gets it first. The preview pane opens and closes on an [expanded] window. Over a file open
- * in its viewer, Back is the only shortcut: the commands would act on the hidden list.
+ * row gets it first. The preview pane opens and closes on an [expanded] window. Ctrl+T opens a tab
+ * at Home, Ctrl+W closes the active one and Ctrl+Tab goes to the next (with one tab, the key goes
+ * on). Over a file open in its viewer, Back is the only shortcut: the commands would act on the
+ * hidden list.
  */
 private fun ExplorerViewModel.onShortcut(
     action: ShortcutAction,
@@ -280,6 +285,7 @@ private fun ExplorerViewModel.onShortcut(
 ): Boolean {
     fun offered(c: Command): Boolean = (c in ui.commands).also { if (it) command(c) }
     fun can(possible: Boolean, act: () -> Unit): Boolean = possible.also { if (it) act() }
+    val viewers = viewing.viewerDeps
     if (ui.viewer != null && viewers != null && action != ShortcutAction.BACK) return false
     return when (action) {
         ShortcutAction.COPY -> offered(Command.COPY)
@@ -295,9 +301,10 @@ private fun ExplorerViewModel.onShortcut(
         ShortcutAction.BACK -> can(ui.backTarget != null) { systemBack() }
         ShortcutAction.FORWARD -> can(ui.tabs.active.forward.isNotEmpty()) { forward() }
         ShortcutAction.UP -> can(ui.up != null) { up() }
-        ShortcutAction.PREVIEW_PANE -> can(expanded && viewers != null) { togglePreviewPane() }
-        // The tab strip comes later.
-        ShortcutAction.NEW_TAB, ShortcutAction.CLOSE_TAB, ShortcutAction.NEXT_TAB -> false
+        ShortcutAction.PREVIEW_PANE -> can(expanded && viewers != null) { viewing.togglePane() }
+        ShortcutAction.NEW_TAB -> can(true) { newTab() }
+        ShortcutAction.CLOSE_TAB -> can(true) { closeTab(ui.tabs.activeId) }
+        ShortcutAction.NEXT_TAB -> can(ui.tabs.tabs.size > 1) { nextTab() }
     }
 }
 
@@ -347,6 +354,10 @@ private fun Contents(
                 LoadingBar()
             } else {
                 RecycleBinView(ui, widthClass, onTap = vm::onTap, onLongPress = vm::onLongPress)
+            }
+            // Until Home has views of its own: the drives and the Recycle Bin.
+            ui.location == Location.Home -> {
+                NavContent(ui.volumes, ui.location, vm::navigate, Modifier.fillMaxSize(), tag = Tags.HOME)
             }
             ui.location !is Location.Folder -> Unit
             listing is ListingState.Loading -> LoadingBar()

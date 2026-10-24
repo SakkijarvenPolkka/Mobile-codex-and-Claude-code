@@ -265,7 +265,7 @@ class ViewerRoutingTest {
         assertNull(ui.launch)
 
         // Another kind of file opens by itself.
-        vm.closeViewer()
+        vm.viewing.close()
         assertNull(ui.viewer)
         vm.onTap(entry("b.txt"))
         settle()
@@ -306,7 +306,7 @@ class ViewerRoutingTest {
         assertEquals(listOf(Recent("primary", "Docs/notes.txt", OPENED_AT)), settings.recents.value)
 
         // Handed to another app, it is a recent file too, the newest: once an app has it.
-        vm.closeViewer()
+        vm.viewing.close()
         vm.open(entryAt(data, null))
         settle()
         vm.launched(checkNotNull(ui.launch), OpenResult.NoApp)
@@ -338,7 +338,7 @@ class ViewerRoutingTest {
         assertEquals("notes.txt", ui.viewer?.entry?.name)
 
         mount(sd)
-        vm.closeViewer()
+        vm.viewing.close()
         vm.navigate(Location.Folder(dcim))
         settle()
         vm.onTap(entry("photo.jpg"))
@@ -350,7 +350,7 @@ class ViewerRoutingTest {
         // So does the file of the preview pane.
         mount(sd)
         vm.setExpanded(true)
-        vm.togglePreviewPane()
+        vm.viewing.togglePane()
         vm.onTap(entry("photo.jpg"))
         settle()
         assertNull(ui.viewer)
@@ -467,7 +467,7 @@ class ViewerRoutingTest {
         listOf("a.jpg", "b.jpg", "c.zip").forEach(::file)
         start()
         show(WidthClass.EXPANDED)
-        vm.togglePreviewPane()
+        vm.viewing.togglePane()
         row("b.jpg").performClick()
         rule.waitForIdle()
         assertNull(ui.viewer)
@@ -479,7 +479,7 @@ class ViewerRoutingTest {
         rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
 
         // A file no viewer shows has nothing to open there.
-        vm.closeViewer()
+        vm.viewing.close()
         rule.waitForIdle()
         row("c.zip").performTouchInput { longClick() }
         rule.waitForIdle()
@@ -525,7 +525,7 @@ class ViewerRoutingTest {
         row("notes.txt").performKeyInput { pressKey(Key.Enter) }
         rule.waitForIdle()
         rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
-        vm.closeViewer()
+        vm.viewing.close()
         rule.waitForIdle()
 
         // Back on the list, the shell has the keys again.

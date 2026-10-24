@@ -5,8 +5,10 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import io.github.sakkijarvenpolkka.explorer.data.Favorite
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.state.Command.COMPRESS
 import io.github.sakkijarvenpolkka.explorer.state.Command.COPY
 import io.github.sakkijarvenpolkka.explorer.state.Command.CUT
@@ -30,6 +32,7 @@ import io.github.sakkijarvenpolkka.explorer.state.Command.SELECT_ALL
 import io.github.sakkijarvenpolkka.explorer.state.Command.SELECT_NONE
 import io.github.sakkijarvenpolkka.explorer.state.Command.SHARE
 import io.github.sakkijarvenpolkka.explorer.state.Command.UNPIN
+import java.nio.file.Path
 
 /** The kind of [Location] the active tab shows. */
 enum class LocationKind { HOME, FOLDER, BIN, SEARCH }
@@ -134,3 +137,21 @@ private fun folderCommands(c: CommandContext): Set<Command> = buildSet {
 }
 
 private fun pinOrUnpin(pinned: Boolean): Command = if (pinned) UNPIN else PIN
+
+/**
+ * Whether the folders Pin and Unpin act on, the [selected] items, else [folder], are all [favorites]
+ * (by their volume in [lookup] and their path on it), for [CommandContext.pinned].
+ */
+internal fun allPinned(
+    selected: List<FileEntry>,
+    folder: Path?,
+    favorites: List<Favorite>,
+    lookup: VolumeLookup,
+): Boolean {
+    val targets = if (selected.isEmpty()) listOfNotNull(folder) else selected.map { it.path }
+    return targets.isNotEmpty() && targets.all { path ->
+        val volume = lookup.volumeOf(path)
+        val rel = volume?.root?.relativize(path)?.toString()
+        volume != null && favorites.any { it.uuid == volume.uuid && it.rel == rel }
+    }
+}

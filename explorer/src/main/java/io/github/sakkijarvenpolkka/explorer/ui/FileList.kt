@@ -104,7 +104,8 @@ internal val FolderTint = Color(0xFFFFC83D)
  * Each tab's list and grid positions for the location it shows. A tab keeps its position while
  * it stays at that location; a list built for a location starts where [start] puts the tab's
  * history entry: where the view model last saw it scrolled there (so that recreating the
- * activity keeps it), else where the entry was left.
+ * activity keeps it), else where the entry was left. The positions of closed tabs are dropped
+ * ([retain]).
  */
 @Stable
 class ListPositions(private val start: (TabId, HistoryEntry) -> HistoryEntry) {
@@ -115,6 +116,11 @@ class ListPositions(private val start: (TabId, HistoryEntry) -> HistoryEntry) {
     fun list(tab: TabId, entry: HistoryEntry): LazyListState = spot(tab, entry).list
 
     fun grid(tab: TabId, entry: HistoryEntry): LazyGridState = spot(tab, entry).grid
+
+    /** Forgets the positions of the tabs not in [open], the tabs that closed. */
+    fun retain(open: Set<TabId>) {
+        spots.keys.retainAll(open)
+    }
 
     private fun spot(tab: TabId, entry: HistoryEntry): Spot {
         spots[tab]?.takeIf { it.location == entry.location }?.let { return it }

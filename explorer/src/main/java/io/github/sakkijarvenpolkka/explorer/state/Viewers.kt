@@ -14,6 +14,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.isPresent
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -34,14 +35,16 @@ internal fun ExplorerDeps.addRecent(file: Path) {
 /**
  * Opens the files of the view model [shell]: in the built-in viewers of [ExplorerDeps.viewers] those they
  * show ([previewKindFor]), any other in another app with [handOver]. It keeps what is open: the file
- * shown full screen, whether the preview pane is on, and the file last opened into it. Main thread only,
- * in [scope].
+ * shown full screen, whether the preview pane is on, and the file last opened into it. [rows] are the
+ * active tab's rows as listed now. The shell calls it directly for what the viewers' buttons do. Main
+ * thread only, in [scope].
  */
 internal class Viewers(
     private val deps: ExplorerDeps,
     private val scope: CoroutineScope,
     private val shell: ShellHost,
     private val handOver: HandOver,
+    private val rows: () -> List<Row>,
 ) {
     /**
      * [viewer] is the file shown full screen; [pane] whether the preview pane is on, which shows while the
@@ -59,6 +62,9 @@ internal class Viewers(
 
     private val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState.asStateFlow()
+
+    /** What the viewers read files with ([ExplorerDeps.viewers]); without it, every file opens in another app. */
+    val viewerDeps: ViewerDeps? = deps.viewers
 
     /** The volumes (by uuid) of the file shown full screen and of the one picked for the pane. */
     private var viewerVolume: String? = null
@@ -93,13 +99,22 @@ internal class Viewers(
         }
     }
 
+    /** Opens the file [entry] full screen in its viewer, even while the preview pane shows (its "Open"). */
+    fun openFullScreen(entry: FileEntry) = open(entry, rows(), fullScreen = true)
+
+    // The top bar of the viewer and the preview pane act on the file they show.
+
+    fun share(entry: FileEntry) = handOver.share(listOf(entry.path))
+
+    fun openWith(entry: FileEntry) = handOver.openWith(entry)
+
     /** Closes the file shown full screen. */
     fun close() {
         viewerVolume = null
         mutableState.update { it.copy(viewer = null) }
     }
 
-    /** Turns the preview pane on or off; off, it forgets the file picked for it. */
+    /** Turns the preview pane of wide windows on or off (⋯ ▸ Preview pane, Alt+P); off, it forgets its file. */
     fun togglePane() {
         pickedVolume = null
         mutableState.update { it.copy(pane = !it.pane, picked = null) }

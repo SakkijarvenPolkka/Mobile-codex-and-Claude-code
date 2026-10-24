@@ -23,7 +23,7 @@ import java.nio.file.Path
 /**
  * The navigation pane: every volume under This PC, an unmounted one dimmed with "The drive
  * isn't available", then the Recycle Bin. The volume of the current folder, or the Recycle Bin,
- * is selected; choosing a volume goes to its root.
+ * is selected; choosing a volume goes to its root. It is tagged [tag].
  */
 @Composable
 fun NavContent(
@@ -31,6 +31,7 @@ fun NavContent(
     location: Location,
     onNavigate: (Location) -> Unit,
     modifier: Modifier = Modifier,
+    tag: String = Tags.NAV_PANE,
 ) {
     val internal = stringResource(R.string.volume_internal)
     val unavailable = stringResource(R.string.volume_unavailable)
@@ -57,7 +58,7 @@ fun NavContent(
             if (item.key == Location.RecycleBin) return@NavPane onNavigate(Location.RecycleBin)
             volumes.firstOrNull { it.uuid == item.key }?.root?.let { onNavigate(Location.Folder(it)) }
         },
-        modifier = modifier.testTag(Tags.NAV_PANE),
+        modifier = modifier.testTag(tag),
     )
 }
 

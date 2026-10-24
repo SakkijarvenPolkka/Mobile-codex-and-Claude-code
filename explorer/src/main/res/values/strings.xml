@@ -221,4 +221,11 @@
     <string name="preview_none">Select a file to preview</string>
     <string name="preview_unavailable">No preview available</string>
     <string name="preview_open">Open</string>
+
+    <!-- The tab strip -->
+    <string name="tab_new">New tab</string>
+    <string name="tab_close">Close tab</string>
+    <string name="tab_close_others">Close other tabs</string>
+    <string name="tab_duplicate">Duplicate tab</string>
+    <string name="tab_search_results">Search results for “%s”</string>
 </resources>

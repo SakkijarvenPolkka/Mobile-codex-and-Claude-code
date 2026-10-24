@@ -219,4 +219,11 @@
     <string name="preview_none">미리 볼 파일을 선택하세요</string>
     <string name="preview_unavailable">미리보기를 사용할 수 없습니다</string>
     <string name="preview_open">열기</string>
+
+    <!-- The tab strip -->
+    <string name="tab_new">새 탭</string>
+    <string name="tab_close">탭 닫기</string>
+    <string name="tab_close_others">다른 탭 닫기</string>
+    <string name="tab_duplicate">탭 복제</string>
+    <string name="tab_search_results">‘%s’ 검색 결과</string>
 </resources>

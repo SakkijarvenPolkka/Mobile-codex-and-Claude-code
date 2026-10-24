@@ -112,6 +112,9 @@ sealed interface Overlay {
 
     /** The properties of [entries]: the selection in listing order, or the current folder. */
     data class Properties(val entries: List<FileEntry>) : Overlay
+
+    /** The menu of the tab [id]: Close, Close other tabs, Duplicate. */
+    data class TabMenu(val id: TabId) : Overlay
 }
 
 /**

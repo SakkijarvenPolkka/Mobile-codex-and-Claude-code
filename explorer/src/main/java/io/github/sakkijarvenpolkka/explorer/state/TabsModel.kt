@@ -55,4 +55,7 @@ data class TabsModel(val tabs: List<TabState>, val activeId: TabId, val nextId: 
 
     /** Where the tab [id] is, or null when it is not open. */
     fun locationOf(id: TabId): Location? = tabs.firstOrNull { it.id == id }?.current?.location
+
+    /** The tab after the active one in strip order, the first after the last. */
+    fun afterActive(): TabId = tabs[(tabs.indexOfFirst { it.id == activeId } + 1) % tabs.size].id
 }

@@ -35,7 +35,6 @@ import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
-import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
@@ -77,13 +76,12 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val host = Host()
     private val handOver = HandOver(app, deps, viewModelScope, host)
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
-    private val viewing = Viewers(deps, viewModelScope, host, handOver)
+
+    /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
+    internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
 
     /** The app's thumbnails, for the list to draw ([ExplorerDeps.thumbnails]). */
     val thumbnails: Thumbnails? = deps.thumbnails
-
-    /** What the viewers read files with ([ExplorerDeps.viewers]); without it, every file opens in another app. */
-    val viewers: ViewerDeps? = deps.viewers
 
     /** What the app's file operations are doing: the one running, its conflict, the queue. */
     val runner: StateFlow<RunnerState> = ops.runner
@@ -207,6 +205,23 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun dispatch(a: TabAction) = reduce(a)
 
+    // The tab strip and its menu (spec §2.1); a new tab opens at Home.
+
+    fun newTab() = reduce(TabAction.NewTab(Location.Home))
+
+    fun activate(id: TabId) = reduce(TabAction.Activate(id))
+
+    /** Activates the next tab, the first after the last (Ctrl+Tab). */
+    fun nextTab() = activate(tabs.value.afterActive())
+
+    fun closeTab(id: TabId) = reduce(TabAction.Close(id))
+
+    fun closeOthers(id: TabId) = reduce(TabAction.CloseOthers(id))
+
+    fun duplicate(id: TabId) = reduce(TabAction.Duplicate(id))
+
+    fun openTabMenu(id: TabId) = shell.update { it.copy(overlay = Overlay.TabMenu(id)) }
+
     /** Sets the view of the active tab's folder; folders without a view of their own take it from now on. */
     fun setView(v: ViewSetting) {
         val key = codec.encode(tabs.value.active.current.location) ?: return
@@ -245,26 +260,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun dismissOpsNotice() = ops.dismissNotice()
 
-    fun closeViewer() = viewing.close()
-
-    /** Opens the file [entry] full screen in its viewer, even while the preview pane shows (its "Open"). */
-    fun openFullScreen(entry: FileEntry) = viewing.open(entry, listedRows(), fullScreen = true)
-
-    /** Turns the preview pane of wide windows on or off (⋯ ▸ Preview pane, Alt+P). */
-    fun togglePreviewPane() = viewing.togglePane()
-
     /** The window is [expanded] (840 dp wide or more): the navigation pane is pinned, the preview pane may show. */
     fun setExpanded(expanded: Boolean) {
         viewing.setExpanded(expanded)
         if (expanded) setDrawerOpen(false)
     }
 
-    // The top bar of the viewer acts on the file it shows.
-
-    fun share(entry: FileEntry) = handOver.share(listOf(entry.path))
-
-    fun openWith(entry: FileEntry) = handOver.openWith(entry)
-
+    /** The properties of [entry], such as the file a viewer shows. */
     fun showProperties(entry: FileEntry) = shell.update { it.copy(overlay = Overlay.Properties(listOf(entry))) }
 
     // The file operations, as OperationsUi describes them.
@@ -632,7 +634,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     // The Recycle Bin is on every volume; an item on a read-only one fails by itself.
                     volumeWritable = inBin || volume != null &&
                         env.volumes.none { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY },
-                    pinned = pinned(selected, folder, env.favorites),
+                    pinned = allPinned(selected, folder, env.favorites, deps.lookup),
                     binEmpty = !inBin || rows.isEmpty(),
                     hasEntries = rows.isNotEmpty(),
                 ),
@@ -676,16 +678,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         canGoBack = tab.back.isNotEmpty(),
     )
 
-    /** Whether the folders Pin and Unpin act on (the selection, else [folder]) are all favorites. */
-    private fun pinned(selected: List<FileEntry>, folder: Path?, favorites: List<Favorite>): Boolean {
-        val targets = if (selected.isEmpty()) listOfNotNull(folder) else selected.map { it.path }
-        return targets.isNotEmpty() && targets.all { path ->
-            val volume = deps.lookup.volumeOf(path)
-            val rel = volume?.root?.relativize(path)?.toString()
-            volume != null && favorites.any { it.uuid == volume.uuid && it.rel == rel }
-        }
-    }
-
     /** What [handOver] and [ops] need of the view model. */
     private inner class Host : ShellHost {
         override fun here(): Location = this@ExplorerViewModel.here()
@@ -712,25 +704,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
 
         override fun setLaunch(launch: PendingLaunch) = shell.update { it.copy(launch = launch) }
-    }
-
-    /**
-     * What is open over the shell, the message and the location it is about ([messageAt], null
-     * for one that stays until dismissed), a counter that moves whenever a folder's view changes,
-     * the intent for the shell to start, and whether `Android/obb` is open to the app.
-     */
-    private data class ShellState(
-        val overlay: Overlay? = null,
-        val drawerOpen: Boolean = false,
-        val message: UiMessage? = null,
-        val messageAt: Location? = null,
-        val viewRevision: Int = 0,
-        val launch: PendingLaunch? = null,
-        val obbAllowed: Boolean = false,
-    ) {
-        /** This state with the active tab at [location]: without a message about another place. */
-        fun at(location: Location): ShellState =
-            if (messageAt == null || messageAt == location) this else copy(message = null, messageAt = null)
     }
 
     private data class Core(

@@ -31,6 +31,7 @@ object Tags {
     const val UNAVAILABLE = "unavailable"
     const val LISTING_ERROR = "listing_error"
     const val CHECK_STRIP = "check_strip"
+    const val HOME = "home"
 
     const val STATUS_ITEMS = "status_items"
     const val STATUS_SELECTION = "status_selection"
@@ -60,6 +61,10 @@ object Tags {
     const val PROGRESS_CHIP = "progress_chip"
     const val FAILURES = "failures"
     const val RECYCLE_BIN = "recycle_bin"
+
+    const val TAB_MENU_CLOSE = "tab_menu_close"
+    const val TAB_MENU_CLOSE_OTHERS = "tab_menu_close_others"
+    const val TAB_MENU_DUPLICATE = "tab_menu_duplicate"
 
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"
