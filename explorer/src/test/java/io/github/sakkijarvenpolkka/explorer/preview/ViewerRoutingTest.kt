@@ -57,7 +57,11 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.PreviewKind
 import io.github.sakkijarvenpolkka.explorer.state.TabAction
+import io.github.sakkijarvenpolkka.explorer.state.ViewerRequest
+import io.github.sakkijarvenpolkka.explorer.state.previewKindFor
+import io.github.sakkijarvenpolkka.explorer.state.siblingsOrSelf
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerShell
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerTheme
 import io.github.sakkijarvenpolkka.explorer.ui.Tags

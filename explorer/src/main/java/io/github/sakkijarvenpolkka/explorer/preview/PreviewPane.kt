@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.state.previewKindFor
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme

@@ -26,7 +26,6 @@ import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
-import io.github.sakkijarvenpolkka.explorer.preview.ViewerRequest
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
