@@ -7,6 +7,7 @@
 package io.github.sakkijarvenpolkka.explorer.preview
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -146,6 +147,25 @@ internal fun TitleRow(file: Path, onClose: () -> Unit) {
             style = ButtonStyle.SUBTLE,
             contentDescription = stringResource(R.string.close),
         )
+    }
+}
+
+/**
+ * [message] in the middle of a viewer that cannot show its file, with an "Open with" button when
+ * [onOpenWith] is given.
+ */
+@Composable
+internal fun ViewerNotice(message: String, onOpenWith: (() -> Unit)?) {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        BasicText(
+            message,
+            style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
+        )
+        if (onOpenWith != null) FluentButton(stringResource(R.string.cmd_open_with), onClick = onOpenWith)
     }
 }
 

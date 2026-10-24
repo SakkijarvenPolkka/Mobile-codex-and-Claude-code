@@ -118,6 +118,29 @@ class PdfViewerTest {
     }
 
     @Test
+    fun veryTallPageLaysOut() {
+        // As wide as the view (320 pixels) the page would be 460,800 pixels tall, more than Compose can measure.
+        showVeryTallPage()
+    }
+
+    @Test
+    @Config(qualifiers = "+w9000dp")
+    fun veryTallPageLaysOutInWideWindow() {
+        // Over 8190 pixels wide, Compose measures no more than 65,534 pixels of height.
+        showVeryTallPage()
+    }
+
+    /** Shows a page of 10 × 14,400 points, as long as a PDF page may be: it is shown 60,000 pixels tall at most. */
+    private fun showVeryTallPage() {
+        val pdf = FakePdf(listOf(IntSize(10, 14_400)))
+        show({ pdf })
+        waitFor { pdf.rendered.isNotEmpty() }
+
+        val page = rule.onNodeWithTag(PdfViewerTags.PAGE).fetchSemanticsNode().size
+        assertTrue("page $page", page.height in 1..60_000)
+    }
+
+    @Test
     fun encryptedShowsNoticeAndOpenWith() {
         var openedWith = 0
         show({ throw FsException(FsError.Encrypted) }, onOpenWith = { openedWith++ })

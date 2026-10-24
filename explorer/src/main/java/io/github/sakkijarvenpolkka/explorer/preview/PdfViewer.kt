@@ -58,7 +58,6 @@ import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.FsException
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -79,17 +78,24 @@ object PdfViewerTags {
 /** The proportions (width / height) of a page until its size is known: A4 portrait. */
 private const val PLACEHOLDER_RATIO = 210f / 297f
 
+/**
+ * The tallest a page is shown, in pixels: Compose cannot measure a box 65,535 pixels tall or more
+ * once it is over 8190 pixels wide (nor 262,143 when narrower). A taller page is shown this tall,
+ * drawn narrower in the middle; it is rendered no more than 4096 pixels tall anyway.
+ */
+private const val MAX_PAGE_HEIGHT_PX = 60_000
+
 /** The most the pages are enlarged by pinching. */
 private const val MAX_ZOOM = 3f
 
 /**
  * [file] opened by [opener] (on [io]: it blocks), its pages one under another in a list, each
  * rendered as wide as the list ([pdfRenderWidth]) and as tall as its proportions make it (A4 until
- * its size is known); two fingers zoom the list (up to three times) and move it. A password
- * protected document, or one that cannot be read, says so, with an "Open with" button when
- * [onOpenWith] is given. The document is closed when the viewer leaves. The title row has the name
- * and a close button ([onClose]); a host that draws its own top bar sets [showTitle] false (no title
- * row, nor window insets).
+ * its size is known, 60,000 pixels at most); two fingers zoom the list (up to three times) and move
+ * it. A password protected document, or one that cannot be read, says so, with an "Open with"
+ * button when [onOpenWith] is given. The document is closed when the viewer leaves. The title row
+ * has the name and a close button ([onClose]); a host that draws its own top bar sets [showTitle]
+ * false (no title row, nor window insets).
  */
 @Composable
 fun PdfViewer(
@@ -172,7 +178,8 @@ private fun Pages(file: Path, pdf: PdfPort) {
 
 /**
  * Page [index] of [pdf], [widthPx] wide: white in the proportions of its size (in [sizes], measured
- * there first), with the page drawn once it is rendered.
+ * there first; no taller than [MAX_PAGE_HEIGHT_PX]), with the page drawn in its own proportions once
+ * it is rendered.
  */
 @Composable
 private fun Page(pdf: PdfPort, index: Int, widthPx: Int, sizes: SnapshotStateMap<Int, IntSize>) {
@@ -190,14 +197,18 @@ private fun Page(pdf: PdfPort, index: Int, widthPx: Int, sizes: SnapshotStateMap
         }
     }
     val size = sizes[index]
-    val ratio = if (size != null && size.width > 0 && size.height > 0) size.width.toFloat() / size.height else PLACEHOLDER_RATIO
+    val ratio = if (size != null && size.width > 0 && size.height > 0) {
+        (size.width.toFloat() / size.height).coerceAtLeast(widthPx.toFloat() / MAX_PAGE_HEIGHT_PX)
+    } else {
+        PLACEHOLDER_RATIO
+    }
     Box(
         Modifier.fillMaxWidth().aspectRatio(ratio).background(Color.White).testTag(PdfViewerTags.PAGE),
         contentAlignment = Alignment.Center,
     ) {
         val shown = bitmap
         when {
-            shown != null -> Image(shown, contentDescription = null, Modifier.fillMaxSize(), contentScale = ContentScale.FillBounds)
+            shown != null -> Image(shown, contentDescription = null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             failed -> BasicText(
                 stringResource(R.string.pdf_corrupt),
                 Modifier.padding(16.dp),
@@ -244,24 +255,5 @@ private fun Modifier.pinchToZoom(zoom: PagesZoom): Modifier = pointerInput(zoom)
                 event.changes.forEach { if (it.positionChanged()) it.consume() }
             }
         } while (event.changes.any { it.pressed })
-    }
-}
-
-/**
- * [message] in the middle of a viewer that cannot show its file, with an "Open with" button when
- * [onOpenWith] is given.
- */
-@Composable
-internal fun ViewerNotice(message: String, onOpenWith: (() -> Unit)?) {
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        BasicText(
-            message,
-            style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
-        )
-        if (onOpenWith != null) FluentButton(stringResource(R.string.cmd_open_with), onClick = onOpenWith)
     }
 }

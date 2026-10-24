@@ -209,10 +209,15 @@ private fun pdfRenderHeight(pageW: Int, pageH: Int, widthPx: Int): Int =
 private const val PDF_CACHED_SCREENS = 3
 
 /**
- * [PdfOpener] on [PdfRenderer], one for each document: every call to it, closing included, runs on
- * a view of [io] that runs one thing at a time ([CoroutineDispatcher.limitedParallelism]), since a
- * renderer may not be used by two threads at once. Pages are rendered on white into ARGB_8888 bitmaps,
- * the latest kept in a cache of about three screens of [context]'s display in bytes.
+ * [PdfOpener] on [PdfRenderer], one for each document. A renderer may not be used by two threads at
+ * once, so every call to it once it is made, closing included, runs on a view of [io] that runs one
+ * thing at a time ([CoroutineDispatcher.limitedParallelism]). Pages are rendered on white into
+ * ARGB_8888 bitmaps, the latest kept in a cache of about three screens of [context]'s display in bytes.
+ *
+ * The renderer is made, and its page count read, on the thread that calls [open], before it is
+ * handed to that view: no other thread can reach it yet, and the dispatch to the view publishes it
+ * safely. [open] does not suspend, so waiting in it for the view would block a second thread, and
+ * would never end if [io] had only the caller's thread.
  */
 class AndroidPdfOpener(context: Context, private val io: CoroutineDispatcher) : PdfOpener {
 
@@ -417,8 +422,12 @@ class AndroidMediaPort(private val context: Context) : MediaPort {
         if (video) videoView().start() else player?.start()
     }
 
+    /**
+     * Pauses the file if it plays: [MediaPlayer.pause] on a player prepared but never started puts
+     * it in its error state ([VideoView.pause] checks the same).
+     */
     override fun pause() {
-        if (video) videoView?.pause() else if (playerReady) player?.pause()
+        if (video) videoView?.pause() else if (isPlaying) player?.pause()
         stopListening()
     }
 

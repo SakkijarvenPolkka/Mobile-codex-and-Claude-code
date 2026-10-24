@@ -16,20 +16,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -61,12 +58,9 @@ import androidx.compose.ui.semantics.SemanticsPropertyReceiver
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import kotlinx.coroutines.CancellationException
@@ -181,7 +175,7 @@ private fun ImagePage(entry: FileEntry, decoder: ImageDecoderPort, zoom: ZoomSta
         }
         when (val shown = page) {
             Page.Loading -> Unit
-            Page.Failed -> DecodeError(onOpenWith)
+            Page.Failed -> ViewerNotice(stringResource(R.string.image_error), onOpenWith)
             is Page.Shown -> ZoomableImage(entry, shown, viewport, zoom)
         }
     }
@@ -301,21 +295,5 @@ private fun Animation(drawable: AnimatedImageDrawable, modifier: Modifier) {
         frame
         drawable.setBounds(0, 0, size.width.toInt(), size.height.toInt())
         drawIntoCanvas { drawable.draw(it.nativeCanvas) }
-    }
-}
-
-/** "The image can't be displayed", with an "Open with" button when [onOpenWith] is given. */
-@Composable
-private fun DecodeError(onOpenWith: (() -> Unit)?) {
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        BasicText(
-            stringResource(R.string.image_error),
-            style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
-        )
-        if (onOpenWith != null) FluentButton(stringResource(R.string.cmd_open_with), onClick = onOpenWith)
     }
 }
