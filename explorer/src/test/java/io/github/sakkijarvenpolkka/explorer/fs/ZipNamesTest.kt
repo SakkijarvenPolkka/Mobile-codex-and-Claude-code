@@ -29,10 +29,18 @@ class ZipNamesTest {
     }
 
     @Test
-    fun namesTheAppRefusesAnywhereAreUnsafe() {
-        // DEL, a C1 control, a line separator and a bidirectional override, as NameValidator refuses them.
-        for (raw in listOf("a\u007F", "a\u0085b", "a\u2028b", "invoice\u202Etxt.exe")) {
+    fun c0AndC1ControlsAreUnsafe() {
+        for (raw in listOf("a\u0001", "a\u001Fb", "a\u0080", "a\u0085b", "d/a\u009F.txt")) {
             assertNull(raw, ZipNames.sanitize(raw))
+        }
+    }
+
+    @Test
+    fun otherCharactersAreKept() {
+        // Spec §6.2 refuses NUL and the C0 and C1 controls only: DEL, line separators and bidirectional
+        // controls are names a volume stores, shown as the list shows any such name.
+        for (raw in listOf("a\u007F", "a\u2028b", "a\u2029b", "invoice\u202Etxt.exe", "a\u200Eb", "d/\u200F.txt")) {
+            assertEquals(raw, raw, ZipNames.sanitize(raw))
         }
     }
 

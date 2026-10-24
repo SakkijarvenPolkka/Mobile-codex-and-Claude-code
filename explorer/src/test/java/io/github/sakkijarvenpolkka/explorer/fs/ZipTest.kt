@@ -333,6 +333,33 @@ class ZipTest {
     }
 
     @Test
+    fun extractFlushesEachFileOnlyOnRemovableMedia() {
+        val zip = putZip(src, "x.zip", zipOf("a.txt" to "a", "d/" to null, "d/b.txt" to "b", "empty.txt" to ""))
+        val internal = FaultyFs()
+
+        zipOps(internal).extractNow(zip)
+
+        // Internal storage: renaming the temporary files is enough (spec §4.3).
+        assertEquals(emptyList<FaultyFs.Call>(), internal.calls.filter { it.op == FaultyFs.Op.FORCE })
+
+        val card = folder.newFolder("card").toPath()
+        val fs = FaultyFs()
+        val asked = ArrayList<Path>()
+        val ops = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS, removable = { asked.add(it); it == card })
+
+        ops.extractNow(zip, into = card)
+
+        // Removable media: every file, the empty one too, is flushed before it gets its name.
+        val temp = card.resolve(tempNameFor("x", OP_ID))
+        val forced = fs.calls.filter { it.op == FaultyFs.Op.FORCE }.map { it.path }
+        assertEquals(
+            listOf(".a.txt", "d/.b.txt", ".empty.txt").map { temp.resolve("$it.$OP_ID.xpart") },
+            forced,
+        )
+        assertEquals(setOf(card), asked.toSet())
+    }
+
+    @Test
     fun symlinkEntryBecomesRegularFile() {
         val bytes = zipOf("target.txt" to "t", "link" to "target.txt")
         val central = centralHeaders(bytes)[1]

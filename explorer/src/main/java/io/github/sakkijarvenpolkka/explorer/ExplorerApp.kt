@@ -79,7 +79,10 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
             newTextDocument = getString(R.string.label_new_text),
             copySuffix = getString(R.string.label_copy_suffix),
         )
-        val zip = ZipOps(NioFsBackend, WriteProtocol(NioFsBackend, journal), labels)
+        val zip = ZipOps(
+            NioFsBackend, WriteProtocol(NioFsBackend, journal), labels,
+            removable = { path -> volumes.volumeOf(path)?.removable == true },
+        )
         FileOps(NioFsBackend, volumes, labels, journal, ids = ::newId, bin = bin, zip = zip)
     }
 

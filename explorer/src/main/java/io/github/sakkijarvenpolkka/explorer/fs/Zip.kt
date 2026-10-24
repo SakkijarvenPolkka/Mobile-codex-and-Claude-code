@@ -46,11 +46,17 @@ data class ExtractResult(val folder: Path, val renamedDuplicates: Int)
  * ZIP archives on [fs] (spec §6.2): [compress] writes items into a new one, [extract] puts the entries of
  * one into a new folder. Files are written through [write]: the archive under a temporary name, renamed
  * once whole, and each extracted file the same way, in a temporary folder that [write]'s journal records
- * and that gets its name once everything is in it. [labels] number the names that are taken. Archives
- * are read with `java.util.zip.ZipFile`, which reads the file itself, not through [fs]. Nothing here
- * switches threads: the caller runs it where blocking calls belong.
+ * and that gets its name once everything is in it. [labels] number the names that are taken.
+ * [removable] says whether a folder is on removable media, where each extracted file is flushed to the
+ * device. Archives are read with `java.util.zip.ZipFile`, which reads the file itself, not through [fs].
+ * Nothing here switches threads: the caller runs it where blocking calls belong.
  */
-class ZipOps(private val fs: FsBackend, private val write: WriteProtocol, private val labels: NameLabels) {
+class ZipOps(
+    private val fs: FsBackend,
+    private val write: WriteProtocol,
+    private val labels: NameLabels,
+    private val removable: (Path) -> Boolean = { false },
+) {
 
     /** Writes the extracted files, into the temporary folder: the journal records that, which holds them. */
     private val inner = WriteProtocol(fs, NoJournal)
@@ -124,8 +130,9 @@ class ZipOps(private val fs: FsBackend, private val write: WriteProtocol, privat
      * counted in [ExtractResult.renamedDuplicates]; so does a folder whose name a file has. Folders the
      * archive names get their times once all files are in. A link stored in the archive becomes a file
      * holding its target's path; nothing is followed. Once all is in, the temporary folder is renamed in
-     * one step to the new folder's name. The files are not flushed to the device one by one: as for a
-     * copy to internal storage (spec §4.3), the temporary folder is what a dying process leaves.
+     * one step to the new folder's name. When [removable] says [targetDir] is on removable media, each
+     * file is flushed to the device before it gets its name, as a copy there is (spec §4.3); elsewhere
+     * renaming it is enough, and the temporary folder is what a dying process leaves.
      *
      * [onProgress] gets the totals first (the entries and their declared sizes), then at most one report
      * each 100 ms, then a final one. An entry that holds more bytes than it declares is stopped there; one
@@ -318,6 +325,9 @@ class ZipOps(private val fs: FsBackend, private val write: WriteProtocol, privat
     ) {
         private val temp = targetDir.resolve(tempNameFor(stem, opId))
 
+        /** Whether each file is flushed to the device before it gets its name: on removable media. */
+        private val sync = removable(targetDir)
+
         /** The folders made in [temp], by the archive's path of them (`a/b`), in as many cases as it has. */
         private val folders = HashMap<String, Path>()
 
@@ -404,7 +414,7 @@ class ZipOps(private val fs: FsBackend, private val write: WriteProtocol, privat
                 val data = archive.getInputStream(entry) ?: throw FsException(FsError.Corrupt)
                 data.use { input ->
                     val checked = Checked(input, entry.size, entry.crc)
-                    inner.write(candidate, opId, false, false, timeOf(entry), checked, entry.size) { bytes ->
+                    inner.write(candidate, opId, sync, false, timeOf(entry), checked, entry.size) { bytes ->
                         read += bytes
                         progress.doneBytes = startBytes + minOf(read, entry.size)
                         progress.report()
