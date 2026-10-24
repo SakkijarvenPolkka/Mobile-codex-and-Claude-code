@@ -66,6 +66,10 @@ object Tags {
     const val TAB_MENU_CLOSE_OTHERS = "tab_menu_close_others"
     const val TAB_MENU_DUPLICATE = "tab_menu_duplicate"
 
+    const val HOME_BIN = "home_bin"
+    const val FAVORITE_UP = "favorite_up"
+    const val FAVORITE_DOWN = "favorite_down"
+
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"
 
@@ -95,6 +99,15 @@ object Tags {
 
     /** The subfolder [name] in the menu of a breadcrumb chevron. */
     fun crumbChild(name: String): String = "crumb_child:$name"
+
+    /** The folder [name] in Home's quick access. */
+    fun quickItem(name: String): String = "quick:$name"
+
+    /** The volume [uuid] in Home's drives. */
+    fun drive(uuid: String): String = "drive:$uuid"
+
+    /** The file [name] in Home's recent files. */
+    fun recent(name: String): String = "recent:$name"
 
     /** The theme [choice] in the options dialog. */
     fun theme(choice: ThemeChoice): String = "theme_${choice.name.lowercase(Locale.ROOT)}"

@@ -11,14 +11,12 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import java.nio.file.Paths
 
 /**
  * What to tell of an operation that ended ([tellingOf]): a [message] about no place (one of
- * [InfoSeverity.SUCCESS] only over nothing that matters more), a [question] to ask once no other is
+ * [MessageSeverity.SUCCESS] only over nothing that matters more), a [question] to ask once no other is
  * open, and the operation whose failures to list ([listed]), with only those.
  */
 internal data class Telling(
@@ -52,11 +50,11 @@ internal fun tellingOf(op: FinishedOp, freeable: Long = 0): Telling {
                 spec.kind == OpKind.DELETE_TO_BIN && result.error == FsError.BinUnavailable ->
                     Telling(question = ConfirmRequest.BinUnavailable(spec.sources.map { Paths.get(it) }))
                 result.done == 0 && result.total == 0 ->
-                    Telling(UiMessage(errorText(result.error), InfoSeverity.ERROR, hint = hint))
+                    Telling(UiMessage(errorText(result.error), MessageSeverity.ERROR, hint = hint))
                 else -> {
                     val name = UiText.res(nameOf(spec.kind))
                     val stopped = UiText.res(R.string.op_fatal, result.done, result.total, name)
-                    Telling(UiMessage(stopped, InfoSeverity.ERROR, detail = errorText(result.error), hint = hint))
+                    Telling(UiMessage(stopped, MessageSeverity.ERROR, detail = errorText(result.error), hint = hint))
                 }
             }
         }
@@ -68,8 +66,8 @@ internal fun tellingOf(op: FinishedOp, freeable: Long = 0): Telling {
 private fun tellingOfDone(op: FinishedOp, result: OpResult.Done): Telling {
     val message = when {
         result.leftInSource > 0 ->
-            UiMessage(UiText.res(R.string.left_in_source, result.leftInSource), InfoSeverity.WARNING)
-        result.failed.isEmpty() -> UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), InfoSeverity.SUCCESS)
+            UiMessage(UiText.res(R.string.left_in_source, result.leftInSource), MessageSeverity.WARNING)
+        result.failed.isEmpty() -> UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), MessageSeverity.SUCCESS)
         else -> null
     }
     if (op.spec.kind != OpKind.DELETE_TO_BIN) return Telling(message, listed = op.takeIf { result.failed.isNotEmpty() })

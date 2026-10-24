@@ -17,8 +17,6 @@ import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.platform.APK_MIME
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -115,7 +113,7 @@ internal class HandOver(
                     shell.dismissMessage()
                     shell.setLaunch(PendingLaunch(openWith.installPermissionIntent(), at))
                 }
-                shell.showAt(at, UiMessage(UiText.res(R.string.install_permission), InfoSeverity.WARNING, allow))
+                shell.showAt(at, UiMessage(UiText.res(R.string.install_permission), MessageSeverity.WARNING, allow))
             }
         }
     }

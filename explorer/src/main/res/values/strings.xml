@@ -228,4 +228,19 @@
     <string name="tab_close_others">Close other tabs</string>
     <string name="tab_duplicate">Duplicate tab</string>
     <string name="tab_search_results">Search results for “%s”</string>
+
+    <!-- Home -->
+    <string name="home_quick_access">Quick access</string>
+    <string name="home_drives">Drives</string>
+    <string name="home_recent">Recent</string>
+    <string name="drive_free">%1$s free of %2$s</string>
+    <string name="bin_size">Recycle Bin: %s</string>
+    <string name="folder_download">Downloads</string>
+    <string name="folder_dcim">Camera (DCIM)</string>
+    <string name="folder_pictures">Pictures</string>
+    <string name="folder_documents">Documents</string>
+    <string name="folder_music">Music</string>
+    <string name="folder_movies">Videos</string>
+    <string name="favorite_move_up">Move up</string>
+    <string name="favorite_move_down">Move down</string>
 </resources>

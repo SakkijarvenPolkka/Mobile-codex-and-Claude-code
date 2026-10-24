@@ -10,11 +10,18 @@ import java.io.File
 class LayeringTest {
 
     @Test
-    fun nothingBelowPreviewUsesIt() {
+    fun nothingBelowPreviewUsesIt() = assertUnused(PREVIEW)
+
+    /** `ui/` and `ui/fluent/` are above `preview/`: what is below it uses neither (spec §1.2). */
+    @Test
+    fun nothingBelowPreviewUsesUi() = assertUnused(UI)
+
+    /** The sources of the packages below `preview/` that mention [pkg] (any of its subpackages too): none. */
+    private fun assertUnused(pkg: String) {
         val root = sourceRoot()
-        val sources = BELOW_PREVIEW.flatMap { pkg -> File(root, pkg).walkTopDown().filter { it.extension == "kt" } }
+        val sources = BELOW_PREVIEW.flatMap { below -> File(root, below).walkTopDown().filter { it.extension == "kt" } }
         assertTrue("no sources under $root", sources.isNotEmpty())
-        val users = sources.filter { PREVIEW in it.readText() }.map { it.relativeTo(root).path }
+        val users = sources.filter { pkg in it.readText() }.map { it.relativeTo(root).path }
         assertEquals(emptyList<String>(), users)
     }
 
@@ -28,6 +35,7 @@ class LayeringTest {
 
     private companion object {
         const val PREVIEW = "io.github.sakkijarvenpolkka.explorer.preview"
+        const val UI = "io.github.sakkijarvenpolkka.explorer.ui"
 
         /** The packages under `preview/`, in the order of spec §1.2. */
         val BELOW_PREVIEW = listOf("state", "ops", "data", "platform", "fs", "util")

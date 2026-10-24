@@ -34,7 +34,7 @@ sealed interface DecodedLocation {
          * Where the folder is when the volume is mounted at its usual place (`/storage/<uuid>`, the
          * primary volume at `/storage/emulated/0`), so a tab can keep it instead of going Home.
          */
-        val location: Location get() = Location.Folder(usualRoot(uuid).resolve(rel))
+        val location: Location.Folder get() = Location.Folder(usualRoot(uuid).resolve(rel))
     }
 
     /** Not a tag, or one that leaves its volume (`..`, an absolute path). */
@@ -66,12 +66,19 @@ class VolumeLocationCodec(private val volumes: () -> List<Volume>) : LocationCod
         val rest = s.substring(FOLDER.length)
         val colon = rest.indexOf(':')
         if (colon < 0) return DecodedLocation.Invalid
-        val uuid = rest.substring(0, colon)
+        return decodeFolder(rest.substring(0, colon), rest.substring(colon + 1))
+    }
+
+    /**
+     * [rel] on the volume [uuid], as [decode] reads the tag `folder:<uuid>:<rel>`: where a favorite or a
+     * recent file is (a file, too, comes back as a [Location.Folder] of its path).
+     */
+    fun decodeFolder(uuid: String, rel: String): DecodedLocation {
         if (!isTaggable(uuid)) return DecodedLocation.Invalid
-        val rel = relativePath(rest.substring(colon + 1)) ?: return DecodedLocation.Invalid
+        val relative = relativePath(rel) ?: return DecodedLocation.Invalid
         val root = volumes().firstOrNull { it.uuid == uuid && it.root != null }?.root
-            ?: return DecodedLocation.Unavailable(uuid, rel.toString())
-        return DecodedLocation.Ok(Location.Folder(root.resolve(rel)))
+            ?: return DecodedLocation.Unavailable(uuid, relative.toString())
+        return DecodedLocation.Ok(Location.Folder(root.resolve(relative)))
     }
 
     private fun folderTag(path: Path): String? {

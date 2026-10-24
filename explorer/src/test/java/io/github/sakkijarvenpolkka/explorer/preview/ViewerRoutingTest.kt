@@ -62,6 +62,7 @@ import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.ViewerRequest
 import io.github.sakkijarvenpolkka.explorer.state.previewKindFor
 import io.github.sakkijarvenpolkka.explorer.state.siblingsOrSelf
+import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerShell
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerTheme
 import io.github.sakkijarvenpolkka.explorer.ui.Tags
@@ -152,6 +153,7 @@ class ViewerRoutingTest {
         notice: StateFlow<OpsNotice?> = MutableStateFlow(null),
     ) {
         volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
+        settings.startAt(root, volumes)
         val mime = MimeResolver()
         val deps = ExplorerDeps(
             fs, settings, volumes, volumes, mime, Dispatchers.Unconfined, openWith = OpenWith(app, mime),

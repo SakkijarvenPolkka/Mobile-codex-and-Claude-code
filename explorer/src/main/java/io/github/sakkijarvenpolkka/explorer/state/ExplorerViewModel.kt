@@ -8,7 +8,6 @@ package io.github.sakkijarvenpolkka.explorer.state
 
 import android.app.Application
 import android.content.Intent
-import android.os.Process
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.sakkijarvenpolkka.explorer.R
@@ -35,8 +34,6 @@ import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -46,6 +43,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
@@ -55,10 +53,6 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
-import java.nio.file.Paths
-
-/** Where Android mounts a USB drive for itself, outside `/storage`. */
-private val MEDIA_RW: Path = Paths.get("/mnt/media_rw")
 
 /**
  * The single entry point of the shell. It keeps no Compose state: the tabs go through
@@ -76,6 +70,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val host = Host()
     private val handOver = HandOver(app, deps, viewModelScope, host)
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
+    private val home = HomeLoader(deps, codec, viewModelScope)
 
     /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
     internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
@@ -103,7 +98,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     init {
         val restored = settings.loadSession(codec)
-        tabs = MutableStateFlow(restored?.model ?: TabsReducer.initial(startLocation()))
+        tabs = MutableStateFlow(restored?.model ?: TabsReducer.initial(Location.Home))
         volumeTracking = VolumeTracking(deps.volumes, codec, restored?.unavailable.orEmpty())
     }
 
@@ -119,6 +114,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         },
         ops.state,
         viewing.state,
+        home.state,
         ::build,
     ).stateIn(
         viewModelScope,
@@ -130,6 +126,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, settings.favorites.value),
             ops.state.value,
             viewing.state.value,
+            home.state.value,
         ),
     )
 
@@ -138,6 +135,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         viewModelScope.launch { deps.volumes.events.collect(::onVolumeEvent) }
         viewModelScope.launch { ops.follow(shell.map { it.message }.distinctUntilChanged()) }
         viewModelScope.launch { activeListing.collect { (id, state) -> onListing(id, state) } }
+        viewModelScope.launch { home.follow { here() == Location.Home } }
         viewModelScope.launch {
             val viewRevision = shell.map { it.viewRevision }.distinctUntilChanged()
             val unavailable = volumeTracking.unavailable
@@ -152,7 +150,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun forward() = reduce(TabAction.Forward)
 
-    /** Goes to the parent folder; nothing from a volume root or a folder on no mounted volume. */
+    /** Goes to the parent folder, from a volume root Home; nothing from Home or a folder on no mounted volume. */
     fun up() {
         val tab = tabs.value.active
         val roots = deps.volumes.volumes.value.mapNotNull { it.root }
@@ -221,6 +219,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun duplicate(id: TabId) = reduce(TabAction.Duplicate(id))
 
     fun openTabMenu(id: TabId) = shell.update { it.copy(overlay = Overlay.TabMenu(id)) }
+
+    // The favorites (spec §3.5), in the user's order: HomeState.kt tells what each of these does.
+
+    fun pin(paths: List<Path>) = deps.pin(paths)
+
+    fun unpin(favorite: Favorite) = deps.unpin(favorite)
+
+    fun reorderFavorites(from: Int, to: Int) = deps.reorderFavorites(from, to)
 
     /** Sets the view of the active tab's folder; folders without a view of their own take it from now on. */
     fun setView(v: ViewSetting) {
@@ -327,6 +333,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Command.OPEN_WITH -> selectedEntries().singleOrNull()?.let(handOver::openWith)
             Command.SHARE -> handOver.share(selectedEntries().map { it.path })
             Command.PROPERTIES -> showProperties()
+            Command.PIN -> deps.pin(pinTargets(selectedEntries(), here()))
+            Command.UNPIN -> deps.unpin(pinTargets(selectedEntries(), here()))
             else -> Unit
         }
     }
@@ -442,12 +450,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun leavingEntry(): HistoryEntry = tabs.value.active.let { scrollOf(it.id, it.current) }
 
     /**
-     * Reads the active tab's folder, or the Recycle Bin, when it is not read for its current options
+     * Reads the active tab's folder, the Recycle Bin or Home, when it is not read for its current options
      * yet, or always with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
      */
     private fun ensureLoaded(refresh: Boolean = false) {
         val tab = tabs.value.active
         val location = tab.current.location
+        if (location == Location.Home) return loadHome(tab.id, refresh)
         val folder = (location as? Location.Folder)?.path
         if (folder == null && location != Location.RecycleBin) return
         if (tab.id in volumeTracking.unavailable.value) return
@@ -461,6 +470,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         loadedFor[tab.id] = key
         if (folder == null) return loader.setSource(tab.id, ops.binListing())
         loader.load(tab.id, folder, options, refresh = refresh || stale || previous?.location == location)
+    }
+
+    /** Reads Home for [tab], come there (or out of date) or reading it again; its list of where it was goes. */
+    private fun loadHome(tab: TabId, refresh: Boolean) {
+        if (!refresh && !loader.isStale(tab) && loadedFor[tab]?.location == Location.Home) return
+        loadedFor[tab] = LoadKey(Location.Home, ListOptions())
+        loader.setSource(tab, emptyFlow())
+        home.load()
     }
 
     private fun onListing(id: TabId, state: ListingState) {
@@ -477,27 +494,12 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
     }
 
-    /**
-     * Whether the active tab's folder is on a volume outside `/storage` (a USB drive at
-     * `/mnt/media_rw/<uuid>`), which this process cannot read when it started before it had
-     * all files access.
-     */
-    private fun onRawMount(): Boolean {
-        val folder = (tabs.value.active.current.location as? Location.Folder)?.path ?: return false
-        return deps.lookup.volumeOf(folder)?.root?.startsWith(MEDIA_RW) == true
-    }
+    /** Whether the active tab's folder is on a USB drive this process may not read ([isOnRawMount]). */
+    private fun onRawMount(): Boolean = (here() as? Location.Folder)?.path?.let(deps.lookup::isOnRawMount) == true
 
     private fun offerRestart() {
-        val restart = UiText.res(R.string.restart) to ::restartApp
-        showAt(here(), UiMessage(UiText.res(R.string.usb_restart), InfoSeverity.WARNING, restart))
-    }
-
-    /** Starts the app again in a new process, which has all files access from its start. */
-    private fun restartApp() {
-        val app = getApplication<Application>()
-        val component = app.packageManager.getLaunchIntentForPackage(app.packageName)?.component ?: return
-        app.startActivity(Intent.makeRestartActivityTask(component))
-        Process.killProcess(Process.myPid())
+        val restart = UiText.res(R.string.restart) to { restartApp(getApplication()) }
+        showAt(here(), UiMessage(UiText.res(R.string.usb_restart), MessageSeverity.WARNING, restart))
     }
 
     /**
@@ -595,20 +597,20 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun upFrom(location: Location, unavailable: Boolean, roots: List<Path>): Location? = when {
         unavailable -> null
         location is Location.Folder && deps.lookup.volumeOf(location.path) == null -> null
-        else -> upTarget(location, roots, homeEnabled = false)
-    }
-
-    private fun startLocation(): Location {
-        val mounted = deps.volumes.volumes.value.filter { it.root != null }
-        val root = (mounted.firstOrNull { it.isPrimary } ?: mounted.firstOrNull())?.root
-        return root?.let { Location.Folder(it) } ?: Location.Home
+        else -> upTarget(location, roots, homeEnabled = true)
     }
 
     /** The view of [location]'s folder, or the default one. */
     private fun viewFor(location: Location, global: GlobalSettings): ViewSetting =
         codec.encode(location)?.let(settings::viewFor) ?: global.defaultView
 
-    private fun build(core: Core, env: Env, opsState: OperationsUi.State, viewed: Viewers.State): ExplorerUiState {
+    private fun build(
+        core: Core,
+        env: Env,
+        opsState: OperationsUi.State,
+        viewed: Viewers.State,
+        homeData: HomeData?,
+    ): ExplorerUiState {
         val tab = core.tabs.active
         val location = tab.current.location
         val unavailable = core.unavailable[tab.id]
@@ -667,6 +669,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             viewer = viewed.viewer,
             previewPane = viewed.pane,
             previewed = viewing.previewed(viewed, rows, selected),
+            home = homeData,
+            favorites = pinnedFolders(env.favorites, codec),
+            unavailableTabs = core.unavailable,
         )
     }
 

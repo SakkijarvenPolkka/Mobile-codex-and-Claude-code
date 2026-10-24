@@ -32,8 +32,6 @@ import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.InterruptedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -427,7 +425,10 @@ internal class OperationsUi(
         if (spec.kind in TAKES_SOURCES) spec.sources.mapNotNullTo(folders) { Paths.get(it).parent }
         (result as? OpResult.Done)?.created?.mapNotNullTo(folders) { it.parent }
         val binChanged = spec.kind in CHANGES_BIN
-        shell.refreshShowing { it is Location.Folder && it.path in folders || binChanged && it == Location.RecycleBin }
+        // Home shows the Recycle Bin's size and the recent files, which any operation may have moved.
+        shell.refreshShowing {
+            it is Location.Folder && it.path in folders || binChanged && it == Location.RecycleBin || it == Location.Home
+        }
         val target = spec.target?.let { Paths.get(it) }
         if (result is OpResult.Done && target != null && (spec.kind == OpKind.COPY || spec.kind == OpKind.MOVE)) {
             val made = result.created.filter { it.parent == target }
@@ -456,7 +457,7 @@ internal class OperationsUi(
      */
     private suspend fun tell(op: FinishedOp) {
         val telling = tellingOf(op, freeableFor(op))
-        telling.message?.let { if (it.severity == InfoSeverity.SUCCESS) showSuccess(it) else shell.showUnbound(it) }
+        telling.message?.let { if (it.severity == MessageSeverity.SUCCESS) showSuccess(it) else shell.showUnbound(it) }
         telling.question?.let(::ask)
         telling.listed?.let { listed -> mutableState.update { it.copy(failures = it.failures + listed) } }
     }
@@ -486,7 +487,7 @@ internal class OperationsUi(
      */
     private fun showSuccess(success: UiMessage) {
         val shown = shell.shown()
-        if (shown != null && shown.severity != InfoSeverity.SUCCESS) return
+        if (shown != null && shown.severity != MessageSeverity.SUCCESS) return
         shell.showUnbound(success)
         scope.launch {
             delay(SUCCESS_SHOWN_FOR)
@@ -514,7 +515,7 @@ internal class OperationsUi(
         if (message != null) return
         val op = interrupted.firstOrNull() ?: return
         val retry = UiText.res(R.string.retry) to { deps.runner?.retry(op) ?: Unit }
-        val bar = UiMessage(UiText.res(R.string.op_interrupted, op.committed, op.spec.sources.size), InfoSeverity.WARNING, retry)
+        val bar = UiMessage(UiText.res(R.string.op_interrupted, op.committed, op.spec.sources.size), MessageSeverity.WARNING, retry)
         interruptedBar = op to bar
         shell.showUnbound(bar)
     }
@@ -573,7 +574,7 @@ internal class OperationsUi(
 
     private companion object {
         /** The message of [OpsNotice.ForegroundRefused]. */
-        val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING)
 
         /** How long the bar of an operation that did all it was asked shows. */
         val SUCCESS_SHOWN_FOR = 4.seconds

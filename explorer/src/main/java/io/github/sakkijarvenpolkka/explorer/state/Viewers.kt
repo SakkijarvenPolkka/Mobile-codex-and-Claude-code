@@ -14,7 +14,6 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.isPresent
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow

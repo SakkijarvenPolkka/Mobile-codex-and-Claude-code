@@ -65,6 +65,7 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.UiText
@@ -136,6 +137,7 @@ class FileOpsUiTest {
     /** The shell on [root], whose operations run on [fs] on their own threads, with the app's [notice] of them. */
     private fun showShell(fs: FsBackend = NioFsBackend, notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null)) {
         val volumes = FakeVolumes(FakeVolumes.primary(root))
+        settings.startAt(root, volumes)
         val journal = OperationJournal(folder.newFolder("ops"), NioFsBackend)
         val bin = RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId)
         val fileOps = FileOps(fs, volumes, LABELS, journal, ids = ::newId, bin = bin)

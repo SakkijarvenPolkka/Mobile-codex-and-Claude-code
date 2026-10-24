@@ -18,7 +18,6 @@ import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -65,7 +64,10 @@ class ExplorerViewModelTest {
         if (::vm.isInitialized) vm.viewModelScope.cancel()
     }
 
-    /** A view model on [root] as the primary volume, by default; folders are read on the main thread. */
+    /**
+     * A view model on [root] as the primary volume, by default, started there unless [settings] have a
+     * session; folders are read on the main thread.
+     */
     private fun start(
         settings: SettingsStore = SettingsStore(null),
         volumes: FakeVolumes = FakeVolumes(FakeVolumes.primary(root)),
@@ -74,6 +76,7 @@ class ExplorerViewModelTest {
         clearOpsNotice: () -> Unit = {},
     ): ExplorerViewModel {
         this.volumes = volumes
+        settings.startAt(root, volumes)
         val deps = ExplorerDeps(
             NioFsBackend, settings, volumes, volumes, MimeResolver(), io,
             opsNotice = opsNotice, clearOpsNotice = clearOpsNotice,
@@ -104,16 +107,6 @@ class ExplorerViewModelTest {
     private fun entry(name: String): FileEntry = ui.rows.first { it.entry.name == name }.entry
 
     private fun names(): List<String> = ui.rows.map { it.entry.name }
-
-    @Test
-    fun startsAtPrimaryRootWithoutSession() {
-        dir("Music")
-        file("a.txt")
-        start()
-        assertEquals(Location.Folder(root), location())
-        assertEquals(listOf("Music", "a.txt"), names())
-        assertNull(ui.unavailable)
-    }
 
     @Test
     fun tapFolderNavigates() {
@@ -358,7 +351,8 @@ class ExplorerViewModelTest {
         assertEquals(Location.Folder(usb), location())
         assertNull(ui.unavailable)
         assertEquals(listOf("docs"), names())
-        assertNull(ui.up)
+        // From the root of the drive, mounted, Up goes Home.
+        assertEquals(Location.Home, ui.up)
     }
 
     @Test
@@ -460,7 +454,7 @@ class ExplorerViewModelTest {
         notice.value = OpsNotice.ForegroundRefused
         settle()
 
-        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING)
         // In a bar of its own: the message slot stays free.
         assertEquals(keepOpen, ui.opsNotice)
         assertNull(ui.message)
@@ -480,7 +474,7 @@ class ExplorerViewModelTest {
         var cleared = 0
         start(opsNotice = notice, clearOpsNotice = { cleared++ })
 
-        assertEquals(UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING), ui.opsNotice)
+        assertEquals(UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING), ui.opsNotice)
         vm.dismissOpsNotice()
         settle()
 
@@ -493,7 +487,7 @@ class ExplorerViewModelTest {
     fun opsNoticeOutlivesOtherMessagesAndDismissedIsForgotten() {
         val notice = MutableStateFlow<OpsNotice?>(null)
         start(opsNotice = notice, clearOpsNotice = { notice.value = null })
-        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING)
         notice.value = OpsNotice.ForegroundRefused
         settle()
         assertEquals(keepOpen, ui.opsNotice)

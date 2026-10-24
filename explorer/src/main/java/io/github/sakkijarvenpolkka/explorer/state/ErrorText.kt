@@ -3,7 +3,7 @@
  *
  * SPDX-License-Identifier: MIT
  */
-package io.github.sakkijarvenpolkka.explorer.ui
+package io.github.sakkijarvenpolkka.explorer.state
 
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FsError

@@ -68,8 +68,10 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.ListingState
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.MessageSeverity
 import io.github.sakkijarvenpolkka.explorer.state.Overlay
 import io.github.sakkijarvenpolkka.explorer.state.UiMessage
+import io.github.sakkijarvenpolkka.explorer.state.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
@@ -199,7 +201,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
                 )
                 Row(Modifier.weight(1f)) {
                     if (expanded) {
-                        NavContent(ui.volumes, ui.location, vm::navigate, Modifier.width(NAV_WIDTH).fillMaxHeight())
+                        val pane = Modifier.width(NAV_WIDTH).fillMaxHeight()
+                        NavContent(ui.volumes, ui.favorites, ui.location, vm::navigate, pane)
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
                         Banners(ui, onDismiss = vm::dismissMessage, onDismissNotice = vm::dismissOpsNotice)
@@ -334,11 +337,19 @@ private fun MessageBar(message: UiMessage, onClose: () -> Unit, modifier: Modifi
     Box(modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
         val action = message.action?.let { (label, run) -> label.text() to run }
         val text = listOfNotNull(message.text, message.detail, message.hint).map { it.text() }.joinToString("\n")
-        InfoBar(message.severity, text, action, onClose = onClose)
+        InfoBar(message.severity.infoSeverity(), text, action, onClose = onClose)
     }
 }
 
-/** What the active tab's location shows: the unavailable drive, the listing error, or the list. */
+/** The kind of info bar a message of this severity shows in. */
+private fun MessageSeverity.infoSeverity(): InfoSeverity = when (this) {
+    MessageSeverity.INFO -> InfoSeverity.INFO
+    MessageSeverity.WARNING -> InfoSeverity.WARNING
+    MessageSeverity.ERROR -> InfoSeverity.ERROR
+    MessageSeverity.SUCCESS -> InfoSeverity.SUCCESS
+}
+
+/** What the active tab's location shows: the unavailable drive, the listing error, Home, or the list. */
 @Composable
 private fun Contents(
     ui: ExplorerUiState,
@@ -357,10 +368,14 @@ private fun Contents(
             } else {
                 RecycleBinView(ui, widthClass, onTap = vm::onTap, onLongPress = vm::onLongPress)
             }
-            // Until Home has views of its own: the drives and the Recycle Bin.
-            ui.location == Location.Home -> {
-                NavContent(ui.volumes, ui.location, vm::navigate, Modifier.fillMaxSize(), tag = Tags.HOME)
-            }
+            ui.location == Location.Home -> HomeView(
+                ui,
+                onNavigate = vm::navigate,
+                onOpen = vm::open,
+                onPin = { vm.pin(listOf(it)) },
+                onUnpin = vm::unpin,
+                onMoveFavorite = vm::reorderFavorites,
+            )
             ui.location !is Location.Folder -> Unit
             listing is ListingState.Loading -> LoadingBar()
             else -> {
@@ -434,7 +449,7 @@ private fun Drawer(ui: ExplorerUiState, onNavigate: (Location) -> Unit, onClose:
                 .semantics { paneTitle = title }
                 .testTag(Tags.DRAWER),
         ) {
-            NavContent(ui.volumes, ui.location, onNavigate = onNavigate, modifier = Modifier.fillMaxSize())
+            NavContent(ui.volumes, ui.favorites, ui.location, onNavigate, Modifier.fillMaxSize())
         }
     }
 }

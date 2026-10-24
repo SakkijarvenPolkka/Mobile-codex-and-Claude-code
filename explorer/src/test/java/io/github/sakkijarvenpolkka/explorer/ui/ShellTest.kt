@@ -89,6 +89,7 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.Formats
 import kotlinx.coroutines.Dispatchers
@@ -160,6 +161,7 @@ class ShellTest {
         probe: @Composable () -> Unit = {},
     ) {
         volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
+        settings.startAt(root, volumes)
         val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined, thumbnails = thumbnails)
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         val content: @Composable () -> Unit = {

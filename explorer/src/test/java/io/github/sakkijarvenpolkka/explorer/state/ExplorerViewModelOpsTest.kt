@@ -30,8 +30,6 @@ import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
-import io.github.sakkijarvenpolkka.explorer.ui.errorText
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -111,8 +109,9 @@ class ExplorerViewModelOpsTest {
         bin = RecycleBin(fs, binLookup(volumes), { 1_700_000_000_000L }, ::newId)
         val fileOps = FileOps(fs, volumes, LABELS, journal, ids = ::newId, bin = bin)
         runner = OperationRunner(runnerScope, fileOps, journal, io, host = null)
+        val settings = SettingsStore(null).apply { startAt(root, volumes) }
         val deps = ExplorerDeps(
-            fs, SettingsStore(null), volumes, volumes, MimeResolver(), io,
+            fs, settings, volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
             opsNotice = notice, clearOpsNotice = { notice.value = null },
         )
@@ -360,6 +359,27 @@ class ExplorerViewModelOpsTest {
     }
 
     @Test
+    fun finishedOpReadsHomeAgain() {
+        file("a.txt")
+        start()
+        val folderTab = ui.tabs.activeId
+        vm.newTab()
+        drain()
+        val homeTab = ui.tabs.activeId
+        assertEquals(0L, ui.home!!.binSize)
+
+        vm.activate(folderTab)
+        drain()
+        select("a.txt")
+        vm.delete(permanent = false)
+        // Back at Home, read before, while the file goes to the Recycle Bin: read again once it is there.
+        vm.activate(homeTab)
+        drain()
+        assertEquals(listOf("a.txt"), bin.list(listOf(root)).map { it.name })
+        assertEquals(5L, ui.home!!.binSize)
+    }
+
+    @Test
     fun interruptedOpShowsRetryBar() {
         val a = file("a.txt")
         val b = file("b.txt")
@@ -371,7 +391,7 @@ class ExplorerViewModelOpsTest {
 
         val message = checkNotNull(ui.message) { "No message" }
         assertEquals(UiText.res(R.string.op_interrupted, 1, 2), message.text)
-        assertEquals(InfoSeverity.WARNING, message.severity)
+        assertEquals(MessageSeverity.WARNING, message.severity)
         val (label, retry) = checkNotNull(message.action) { "No action" }
         assertEquals(UiText.res(R.string.retry), label)
 
@@ -442,7 +462,7 @@ class ExplorerViewModelOpsTest {
         drain()
 
         // Not "0 of 0 done": nothing was done.
-        assertEquals(UiMessage(UiText.res(R.string.err_into_self), InfoSeverity.ERROR), ui.message)
+        assertEquals(UiMessage(UiText.res(R.string.err_into_self), MessageSeverity.ERROR), ui.message)
     }
 
     @Test
@@ -549,7 +569,7 @@ class ExplorerViewModelOpsTest {
         assertFalse(Files.exists(b))
         // The stop is told, and stays told: nothing else reports it.
         val stopped = UiMessage(
-            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), MessageSeverity.ERROR,
             detail = UiText.res(R.string.err_no_space),
         )
         assertEquals(stopped, ui.message)
@@ -572,7 +592,7 @@ class ExplorerViewModelOpsTest {
         file("dst/a.txt", "old")
         val notice = MutableStateFlow<OpsNotice?>(null)
         start(notice = notice)
-        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), InfoSeverity.WARNING)
+        val keepOpen = UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING)
         notice.value = OpsNotice.ForegroundRefused
         drain()
         assertEquals(keepOpen, ui.opsNotice)
@@ -647,7 +667,7 @@ class ExplorerViewModelOpsTest {
         goTo(d)
         vm.paste()
         drain()
-        val refused = UiMessage(UiText.res(R.string.err_into_self), InfoSeverity.ERROR)
+        val refused = UiMessage(UiText.res(R.string.err_into_self), MessageSeverity.ERROR)
         assertEquals(refused, ui.message)
         idleFor(4_000)
         assertEquals(refused, ui.message)
@@ -806,7 +826,7 @@ class ExplorerViewModelOpsTest {
         failChecks = false
 
         // Told why, and nothing changed: the clipboard is as it was, for another try.
-        assertEquals(UiMessage(errorText(FsError.AccessDenied), InfoSeverity.ERROR), ui.message)
+        assertEquals(UiMessage(errorText(FsError.AccessDenied), MessageSeverity.ERROR), ui.message)
         assertEquals(Clipboard(listOf(a), ClipMode.CUT), ui.clipboard)
         assertTrue(Files.exists(a))
         assertEquals(emptyList<String>(), names())
@@ -914,7 +934,7 @@ class ExplorerViewModelOpsTest {
         runner.submit(OperationSpec(newId(), OpKind.COPY, listOf(a.toString()), full.toString()))
         drain()
         val stopped = UiMessage(
-            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            UiText.res(R.string.op_fatal, 0, 1, UiText.res(R.string.op_name_copy)), MessageSeverity.ERROR,
             detail = UiText.res(R.string.err_no_space),
             hint = UiText.res(R.string.hint_empty_bin, UiText.size(5)),
         )
@@ -931,7 +951,7 @@ class ExplorerViewModelOpsTest {
         drain()
 
         val stopped = UiMessage(
-            UiText.res(R.string.op_fatal, 1, 2, UiText.res(R.string.op_name_copy)), InfoSeverity.ERROR,
+            UiText.res(R.string.op_fatal, 1, 2, UiText.res(R.string.op_name_copy)), MessageSeverity.ERROR,
             detail = UiText.res(R.string.err_io),
         )
         assertEquals(stopped, ui.message)
@@ -957,7 +977,7 @@ class ExplorerViewModelOpsTest {
         drain()
 
         // x.txt was skipped: it stays in d, which stays too.
-        assertEquals(UiMessage(UiText.res(R.string.left_in_source, 1), InfoSeverity.WARNING), ui.message)
+        assertEquals(UiMessage(UiText.res(R.string.left_in_source, 1), MessageSeverity.WARNING), ui.message)
         assertTrue(Files.exists(root.resolve("d/x.txt")))
         assertNull(ui.failedOp)
     }
@@ -989,7 +1009,7 @@ class ExplorerViewModelOpsTest {
     }
 
     /** The bar that tells an operation on [count] items ended with no failures. */
-    private fun done(count: Int) = UiMessage(UiText.res(R.string.op_done, count), InfoSeverity.SUCCESS)
+    private fun done(count: Int) = UiMessage(UiText.res(R.string.op_done, count), MessageSeverity.SUCCESS)
 
     private companion object {
         val LABELS = NameLabels(newFolder = "New folder", newTextDocument = "New Text Document", copySuffix = " - Copy")

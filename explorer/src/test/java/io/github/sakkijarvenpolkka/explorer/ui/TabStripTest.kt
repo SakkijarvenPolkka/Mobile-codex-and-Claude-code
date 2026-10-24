@@ -41,14 +41,20 @@ import io.github.sakkijarvenpolkka.explorer.MainActivity
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewMode
+import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.Volume
+import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.HistoryEntry
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.TabId
+import io.github.sakkijarvenpolkka.explorer.state.TabsReducer
+import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.TabStripTags
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
@@ -98,10 +104,16 @@ class TabStripTest {
         if (::vm.isInitialized) vm.viewModelScope.cancel()
     }
 
-    /** The shell on [root] as the primary volume, which the first tab shows; folders are read at once. */
-    private fun show() {
-        val volumes = FakeVolumes(FakeVolumes.primary(root))
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined)
+    /**
+     * The shell on [root] as the primary volume (1 GB, half free) and [extra] volumes; the first tab shows
+     * [root] unless a session is saved. Folders are read at once.
+     */
+    private fun show(extra: List<Volume> = emptyList()) {
+        val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
+        settings.startAt(root, volumes)
+        val usage = { _: Path -> 1_073_741_824L to 536_870_912L }
+        val io = Dispatchers.Unconfined
+        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, usage = usage)
         vm = ExplorerViewModel(app, deps)
         scenario = ActivityScenario.launch(ComponentActivity::class.java).onActivity { activity ->
             activity.setContent {
@@ -186,7 +198,7 @@ class TabStripTest {
         // The first tab stays where it was.
         assertEquals(Location.Folder(root.resolve("Music")), vm.ui.value.tabs.locationOf(first))
 
-        // Until Home has views of its own, it lists the drives.
+        // Home lists the drives.
         rule.onNode(hasText(str(R.string.volume_internal)) and hasAnyAncestor(hasTestTag(Tags.HOME))).performClick()
         rule.waitForIdle()
         assertEquals(Location.Folder(root), location())
@@ -209,6 +221,23 @@ class TabStripTest {
         rule.waitForIdle()
         tab(id).assert(hasText("Search results for “⁨song⁩”"))
         rule.onNodeWithTag(TabStripTags.close(id)).assert(hasContentDescription(str(R.string.tab_close)))
+    }
+
+    @Test
+    fun tabAtTheRootOfAnUnmountedVolumeIsNamedAfterIt() {
+        val usb = folder.newFolder("usb").toPath().toRealPath()
+        Files.createDirectory(usb.resolve("docs"))
+        val mounted = FakeVolumes(FakeVolumes.primary(root), FakeVolumes.removable("USB1", "USB drive", usb))
+        val saved = TabsReducer.initial(Location.Folder(usb)).let {
+            TabsReducer.reduce(it, TabAction.NewTab(Location.Folder(usb.resolve("docs"))))
+        }
+        settings.saveSession(saved, VolumeLocationCodec { mounted.volumes.value })
+
+        // Started while the drive is out: its root keeps the drive's name, a folder on it its own.
+        show(extra = listOf(FakeVolumes.removable("USB1", "USB drive", null, VolumeState.UNMOUNTED)))
+        val (atRoot, inDocs) = ids()
+        tab(atRoot).assert(hasText("USB drive"))
+        tab(inDocs).assertIsSelected().assert(hasText("docs"))
     }
 
     @Test

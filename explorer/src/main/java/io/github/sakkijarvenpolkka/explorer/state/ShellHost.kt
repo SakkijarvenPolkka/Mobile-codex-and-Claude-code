@@ -6,7 +6,6 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import java.nio.file.Path
 
@@ -43,4 +42,4 @@ internal interface ShellHost {
 }
 
 /** Shows [text] as an error about [at] ([ShellHost.showAt]). */
-internal fun ShellHost.showError(at: Location, text: UiText) = showAt(at, UiMessage(text, InfoSeverity.ERROR))
+internal fun ShellHost.showError(at: Location, text: UiText) = showAt(at, UiMessage(text, MessageSeverity.ERROR))

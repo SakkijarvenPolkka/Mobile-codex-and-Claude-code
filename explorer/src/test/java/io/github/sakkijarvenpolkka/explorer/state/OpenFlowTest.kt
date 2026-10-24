@@ -70,6 +70,7 @@ class OpenFlowTest {
     /** A view model on [root] as the primary volume and an SD card at [SD]; folders are read on the main thread. */
     private fun start(fs: FsBackend = NioFsBackend, io: CoroutineDispatcher = Dispatchers.Unconfined) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), FakeVolumes.removable("1A2B-3C4D", "SD card", SD))
+        settings.startAt(root, volumes)
         val mime = MimeResolver()
         val deps = ExplorerDeps(fs, settings, volumes, volumes, mime, io, openWith = OpenWith(app, mime))
         vm = ExplorerViewModel(app, deps)

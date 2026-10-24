@@ -31,6 +31,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.OpProgress
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.RunningOp
+import io.github.sakkijarvenpolkka.explorer.state.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ContentDialog
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.MinTouchTarget

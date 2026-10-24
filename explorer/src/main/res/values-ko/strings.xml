@@ -226,4 +226,19 @@
     <string name="tab_close_others">다른 탭 닫기</string>
     <string name="tab_duplicate">탭 복제</string>
     <string name="tab_search_results">‘%s’ 검색 결과</string>
+
+    <!-- Home -->
+    <string name="home_quick_access">빠른 액세스</string>
+    <string name="home_drives">드라이브</string>
+    <string name="home_recent">최근 항목</string>
+    <string name="drive_free">%2$s 중 %1$s 사용 가능</string>
+    <string name="bin_size">휴지통: %s</string>
+    <string name="folder_download">다운로드</string>
+    <string name="folder_dcim">카메라(DCIM)</string>
+    <string name="folder_pictures">사진</string>
+    <string name="folder_documents">문서</string>
+    <string name="folder_music">음악</string>
+    <string name="folder_movies">동영상</string>
+    <string name="favorite_move_up">위로 이동</string>
+    <string name="favorite_move_down">아래로 이동</string>
 </resources>

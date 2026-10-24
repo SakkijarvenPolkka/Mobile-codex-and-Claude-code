@@ -25,7 +25,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
-import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
+import io.github.sakkijarvenpolkka.explorer.platform.storageUsage
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,7 +42,8 @@ import java.nio.file.Path
  * cached thumbnails, for the tiles and large icons views; without them, those show icons only. With
  * [builtInViewers], the files the built-in viewers show open in them (the shell is given what they read
  * files with); without, every file opens in another app. [clock] is when a file is opened, for the
- * recent files.
+ * recent files. [usage] is how full the volume at a root is, (total, free) bytes, for the drives on Home:
+ * null when that is not known.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -60,7 +61,11 @@ data class ExplorerDeps(
     val thumbnails: Thumbnails? = null,
     val builtInViewers: Boolean = false,
     val clock: () -> Long = System::currentTimeMillis,
+    val usage: (Path) -> Pair<Long, Long>? = ::storageUsage,
 )
+
+/** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */
+enum class MessageSeverity { INFO, WARNING, ERROR, SUCCESS }
 
 /**
  * A message shown in an info bar: [text], [severity], an optional [action], as its label and
@@ -70,7 +75,7 @@ data class ExplorerDeps(
  */
 data class UiMessage(
     val text: UiText,
-    val severity: InfoSeverity,
+    val severity: MessageSeverity,
     val action: Pair<UiText, () -> Unit>? = null,
     val detail: UiText? = null,
     val hint: UiText? = null,
@@ -131,7 +136,9 @@ sealed interface Overlay {
  * operations tell from outside any activity (keep the app open), in a bar of its own above [message].
  * [renamePending] is set while the rename asked for in the dialog runs. [viewer] is the file shown full
  * screen; [previewPane] whether the preview pane is on (a wide window shows it), and [previewed] the file
- * it shows: the one item selected, else the file last opened into it.
+ * it shows: the one item selected, else the file last opened into it. [home] is what Home shows (null
+ * until it is read), [favorites] the pinned folders, in the user's order, and [unavailableTabs] every tab
+ * whose folder is on a volume that is not mounted, with where on it.
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -160,6 +167,9 @@ data class ExplorerUiState(
     val viewer: ViewerRequest? = null,
     val previewPane: Boolean = false,
     val previewed: FileEntry? = null,
+    val home: HomeData? = null,
+    val favorites: List<PinnedFolder> = emptyList(),
+    val unavailableTabs: Map<TabId, DecodedLocation.Unavailable> = emptyMap(),
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location
