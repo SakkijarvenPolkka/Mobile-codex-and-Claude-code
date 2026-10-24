@@ -41,8 +41,8 @@ import androidx.compose.ui.window.DialogProperties
  * dialog. Back calls [onDismiss]; touching outside does not, so typed input is not lost by
  * accident. The dialog is as wide as its content and buttons need, from 280 to 548 dp (longer
  * text wraps); with [fullWidth] it is always as wide as it gets, for content that changes while
- * it is shown (a progress, a name being typed), so the dialog does not resize with it. It keeps
- * clear of the system bars and of the keyboard.
+ * it is shown (a progress, a name being typed, a count), so the dialog does not resize with it. It
+ * keeps clear of the system bars and of the keyboard.
  */
 @Composable
 fun ContentDialog(

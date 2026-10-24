@@ -74,6 +74,8 @@ fun PropertiesDialog(
         onDismiss = onDismiss,
         primary = null,
         close = stringResource(R.string.close) to onDismiss,
+        // The counts grow while it is shown.
+        fullWidth = true,
     ) {
         Column(Modifier.testTag(Tags.PROPERTIES), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (single != null) {

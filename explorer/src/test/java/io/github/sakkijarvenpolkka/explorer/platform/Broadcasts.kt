@@ -8,9 +8,10 @@ import org.robolectric.Shadows.shadowOf
 
 /**
  * Delivers [intent] to every receiver registered in the process whose filter matches it (action and
- * data scheme), as `Context.sendBroadcast` would. Robolectric's `sendBroadcast` prints each broadcast
- * and its receivers to stderr; this keeps the test output quiet. Main thread; the receivers run at once
- * rather than on the next turn of the main looper.
+ * data scheme). Robolectric's `sendBroadcast` prints each broadcast and its receivers to stderr; this
+ * keeps the test output quiet. Unlike `Context.sendBroadcast`, it ignores receiver permissions and
+ * export flags, and runs the receivers synchronously on the calling (main) thread instead of posting
+ * them to the main looper; a test of either needs the real `sendBroadcast`.
  */
 internal fun deliverBroadcast(context: Context, intent: Intent) {
     val app = context.applicationContext as Application

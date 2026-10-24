@@ -2,14 +2,18 @@
 package io.github.sakkijarvenpolkka.explorer.ui
 
 import androidx.compose.runtime.remember
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.unit.width
 import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
@@ -22,6 +26,7 @@ import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.Formats
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.last
@@ -33,6 +38,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.ZoneId
@@ -127,6 +133,29 @@ class PropertiesDialogTest {
         rule.waitUntil(5_000) { shown("파일 2개, 폴더 1개") }
         rule.onNodeWithText("300바이트").assertExists()
         rule.onNodeWithTag(Tags.PROP_HIDDEN).assertIsOn()
+    }
+
+    // Native graphics for real font metrics: the default ones measure about 1 dp a character, so no
+    // count is wide enough to widen the dialog past its 280 dp minimum.
+    @Config(qualifiers = "+w800dp-h600dp")
+    @GraphicsMode(GraphicsMode.Mode.NATIVE)
+    @Test
+    fun dialogKeepsItsWidthAsTheCountGrows() {
+        val root = folder.newFolder("0").toPath()
+        val drive = listOf(FakeVolumes.primary(root))
+        val contents = MutableStateFlow(ContentCount())
+        rule.setContent {
+            FluentTheme(dark = false, accent = null) {
+                PropertiesDialog(listOf(entry(root)), contents, onDismiss = {}, volumes = drive)
+            }
+        }
+        val dialog = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle))
+        val width = dialog.getUnclippedBoundsInRoot().width
+
+        // A dialog that sized to its content would widen as the drive is counted.
+        contents.value = ContentCount(files = 123_456, folders = 7_890, bytes = 98_765_432_100)
+        rule.waitUntil(5_000) { shown("파일 123456개, 폴더 7890개") }
+        assertEquals(width, dialog.getUnclippedBoundsInRoot().width)
     }
 
     @Test
