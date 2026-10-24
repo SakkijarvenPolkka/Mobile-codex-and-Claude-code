@@ -360,7 +360,8 @@ private fun Banners(
     if (searched != null) {
         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.SEARCH_AGAIN)) {
             val text = stringResource(R.string.tab_search_results, DisplayName.inSentence(searched))
-            InfoBar(InfoSeverity.INFO, text, action = stringResource(R.string.search_again) to { onSearchAgain(searched) })
+            val again = stringResource(R.string.search_again)
+            InfoBar(InfoSeverity.INFO, text, action = again to { onSearchAgain(searched) })
         }
     }
 }
