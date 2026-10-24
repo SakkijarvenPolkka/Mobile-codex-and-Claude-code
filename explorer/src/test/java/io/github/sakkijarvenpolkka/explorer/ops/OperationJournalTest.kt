@@ -254,4 +254,38 @@ class OperationJournalTest {
         }
         assertTrue(log.warnings.toString(), log.warnings.any { it.startsWith("Cannot read") })
     }
+
+    @Test
+    fun sweepDeletesARecordedTempFolderWithItsContent() {
+        // An extraction the process died in: its temporary folder, with what it had written.
+        val temp = write(volume, ".x.op1.xpart/d/a.txt", "a").parent.parent
+        write(volume, ".x.op1.xpart/d/.b.txt.op1.xpart", "part")
+        Files.createDirectory(temp.resolve("empty"))
+        write(volume, "kept.txt", "kept")
+        val journal = OperationJournal(dir, NioFsBackend)
+        journal.begin(spec)
+        journal.add(temp)
+
+        val interrupted = restarted().sweep()
+
+        assertEquals(listOf(InterruptedOp(spec, 0)), interrupted)
+        assertEquals(mapOf("kept.txt" to "kept"), tree(volume))
+        assertEquals(setOf("op1.json"), files())
+    }
+
+    @Test
+    fun sweepNeverEmptiesAFolderNotNamedAsTemporary() {
+        val other = write(volume, "photos/a.jpg", "a").parent
+        val journal = OperationJournal(dir, NioFsBackend)
+        journal.begin(spec)
+        journal.add(other)
+        journal.end(OP_ID)
+
+        assertEquals(emptyList<InterruptedOp>(), restarted().sweep())
+
+        // Only a temporary name (`.xpart`) is deleted with what it holds; this one is kept, and recorded.
+        assertEquals(mapOf("photos/" to "", "photos/a.jpg" to "a"), tree(volume))
+        assertEquals(1, files().size)
+        assertTrue(log.warnings.isEmpty())
+    }
 }

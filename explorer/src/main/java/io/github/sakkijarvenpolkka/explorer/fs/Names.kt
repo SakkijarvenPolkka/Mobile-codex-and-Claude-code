@@ -51,7 +51,7 @@ object NameValidator {
         if (name.isEmpty()) return NameProblem.Empty
         if (name == "." || name == "..") return NameProblem.DotOrDotDot
         if ('/' in name) return NameProblem.Slash
-        if (name.any { isControl(it) || isLineSeparator(it.code) }) return NameProblem.ControlChar
+        if (name.any { isControlChar(it) || isLineSeparator(it.code) }) return NameProblem.ControlChar
         if (name.any { isBidiControl(it.code) }) return NameProblem.BidiControl
         // FAT's own limit, 255 UTF-16 units, is never reached first: a char is as many bytes as units, or more.
         if (utf8Length(name) > MAX_NAME_BYTES) return NameProblem.TooLong
@@ -62,10 +62,10 @@ object NameValidator {
         }
         return null
     }
-
-    /** C0 (U+0000–U+001F), DEL and C1 (U+0080–U+009F) controls. */
-    private fun isControl(c: Char): Boolean = c.code <= 0x1F || c.code in 0x7F..0x9F
 }
+
+/** Whether [c] is a C0 (U+0000–U+001F), DEL or C1 (U+0080–U+009F) control. */
+internal fun isControlChar(c: Char): Boolean = c.code <= 0x1F || c.code in 0x7F..0x9F
 
 /**
  * Splits [name] into its stem and its extension with the dot (`report.pdf` → `report`, `.pdf`;

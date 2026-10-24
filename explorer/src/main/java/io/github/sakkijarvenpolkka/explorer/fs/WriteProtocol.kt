@@ -21,7 +21,8 @@ import java.nio.file.Path
 
 /**
  * Where the temporary files being written are recorded, so that those a crash leaves behind can be
- * found and deleted. [add] comes before a temporary file is created, [remove] once it is gone.
+ * found and deleted. [add] comes before a temporary file is created, [remove] once it is gone. A
+ * temporary folder (an extraction's) is recorded the same way, and deleted with all it holds.
  */
 interface TempJournal {
     fun add(temp: Path)
@@ -60,11 +61,11 @@ private const val MIN_BUFFER = 8 shl 10
  * Writes files so that, whenever the process dies, a final name holds either what it held before or
  * the complete new file, never a cut one; all that can be left behind is a temporary file recorded in
  * [journal]. Copies, moves across volumes, replacements, ZIP compression and extraction and restores
- * by copying all write through this.
+ * by copying all write through this. An extraction records its temporary folder in the same [journal].
  */
 class WriteProtocol(
     private val fs: FsBackend,
-    private val journal: TempJournal,
+    internal val journal: TempJournal,
     private val bufferSize: Int = 1 shl 20,
 ) {
     init {

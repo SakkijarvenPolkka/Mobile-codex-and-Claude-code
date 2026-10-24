@@ -31,6 +31,9 @@ fun errorText(e: FsError): UiText = UiText.res(
         FsError.Unsupported -> R.string.err_unsupported_item
         FsError.Busy -> R.string.err_busy
         FsError.AlreadyExists -> R.string.err_already_exists
+        FsError.UnsafeArchive -> R.string.zip_unsafe
+        FsError.Corrupt, FsError.Encrypted -> R.string.zip_corrupt
+        FsError.UnsupportedEncoding -> R.string.zip_encoding
         else -> R.string.error_generic
     },
 )

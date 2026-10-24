@@ -65,9 +65,10 @@ private data class Record(
  * two steps has a record of its own ([addRename]). Each file is written to a temporary file next to it,
  * which is then renamed over it: a crash leaves the old version or the new.
  *
- * At the app's start and before each operation, [sweep] deletes the temporary files recorded and gives
- * the files a rename left halfway their new names; it returns the operations that never ended, whose
- * journals stay until they are run again or dismissed ([discard]).
+ * At the app's start and before each operation, [sweep] deletes the temporary files recorded (and the
+ * temporary folders of extractions, with all they hold) and gives the files a rename left halfway their
+ * new names; it returns the operations that never ended, whose journals stay until they are run again or
+ * dismissed ([discard]).
  *
  * [fs] reaches the journal and the temporary files alike. A journal file that cannot be written or read
  * is logged and stops nothing: the operation goes on without it. One instance serves the whole app,
@@ -245,14 +246,47 @@ class OperationJournal(private val dir: File, private val fs: FsBackend) : TempJ
         renames = record.renames.filterNot { (temp, final) -> renamed(Paths.get(temp), Paths.get(final)) },
     )
 
-    /** Deletes [temp]; whether it is gone. One not found is not, while its folder is not there either. */
+    /**
+     * Deletes [temp]; whether it is gone. One not found is not, while its folder is not there either. A
+     * temporary folder (an extraction's: named `….xpart`, as every temporary name is) goes with all it
+     * holds; anything else is deleted only if it is a file, a link or an empty folder.
+     */
     private fun deleted(temp: Path): Boolean = try {
+        if (temp.fileName?.toString()?.endsWith(HiddenNames.PART_SUFFIX) == true) deleteContentOf(temp)
         fs.delete(temp)
         true
     } catch (e: NoSuchFileException) {
         exists(temp.parent)
     } catch (e: IOException) {
         false
+    }
+
+    /**
+     * Deletes everything in [folder], if it is a folder (links are deleted, never followed), one item at a
+     * time: the files of each folder as it is listed, then the folders, each after those in it. Throws
+     * what keeps an item from being read or deleted, unless it is gone already.
+     */
+    private fun deleteContentOf(folder: Path) {
+        if (!fs.attributes(folder).isDirectory) return
+        // In the order they are listed, so that each comes after the folder it is in.
+        val folders = arrayListOf(folder)
+        var next = 0
+        while (next < folders.size) {
+            for (child in fs.list(folders[next++])) {
+                try {
+                    if (fs.attributes(child).isDirectory) folders.add(child) else fs.delete(child)
+                } catch (e: NoSuchFileException) {
+                    // Gone already.
+                }
+            }
+        }
+        for (empty in folders.drop(1).asReversed()) {
+            try {
+                fs.delete(empty)
+            } catch (e: NoSuchFileException) {
+                // Gone already.
+            }
+        }
     }
 
     /**

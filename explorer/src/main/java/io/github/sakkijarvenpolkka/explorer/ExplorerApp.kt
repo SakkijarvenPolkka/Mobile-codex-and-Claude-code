@@ -16,6 +16,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
+import io.github.sakkijarvenpolkka.explorer.fs.WriteProtocol
+import io.github.sakkijarvenpolkka.explorer.fs.ZipOps
 import io.github.sakkijarvenpolkka.explorer.ops.FileOpsHost
 import io.github.sakkijarvenpolkka.explorer.ops.FileOpsService
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
@@ -70,14 +72,15 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     /** The journal of the file operations, in `files/ops`. */
     val journal: OperationJournal by lazy { OperationJournal(File(filesDir, "ops"), NioFsBackend) }
 
-    /** The file operations, journaled, with the Recycle Bin and the names of the app's language. */
+    /** The file operations, journaled, with the Recycle Bin, ZIP archives and the names of the app's language. */
     val fileOps: FileOps by lazy {
         val labels = NameLabels(
             newFolder = getString(R.string.label_new_folder),
             newTextDocument = getString(R.string.label_new_text),
             copySuffix = getString(R.string.label_copy_suffix),
         )
-        FileOps(NioFsBackend, volumes, labels, journal, ids = ::newId, bin = bin)
+        val zip = ZipOps(NioFsBackend, WriteProtocol(NioFsBackend, journal), labels)
+        FileOps(NioFsBackend, volumes, labels, journal, ids = ::newId, bin = bin, zip = zip)
     }
 
     /** Runs the file operations, one at a time, outside any activity; the app hears of them ([RunnerHost]). */

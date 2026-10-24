@@ -85,12 +85,18 @@ data class ItemFailure(
 /** How an operation ended. */
 sealed interface OpResult {
     /**
-     * It ran to the end: the top-level items it [created], the items that [failed], and, for a move,
-     * how many items (files and folders) were left inside the source folders it had to keep, because
+     * It ran to the end: the top-level items it [created], the items that [failed], for a move, how
+     * many items (files and folders) were left inside the source folders it had to keep, because
      * something in them was skipped or failed ([leftInSource]; the kept folders themselves are not
-     * counted, unless they are inside another).
+     * counted, unless they are inside another), and, for an extraction, how many entries were given a
+     * ` (2)` name because theirs was taken ([renamedDuplicates], [ExtractResult.renamedDuplicates]).
      */
-    data class Done(val created: List<Path>, val failed: List<ItemFailure>, val leftInSource: Int = 0) : OpResult
+    data class Done(
+        val created: List<Path>,
+        val failed: List<ItemFailure>,
+        val leftInSource: Int = 0,
+        val renamedDuplicates: Int = 0,
+    ) : OpResult
 
     /** It stopped at a failure that ends the whole operation, after [done] of [total] items. */
     data class Failed(val error: FsError, val done: Int, val total: Int) : OpResult

@@ -173,6 +173,12 @@
     <string name="err_already_exists">같은 이름의 항목이 이미 있습니다</string>
     <string name="hint_empty_bin">휴지통을 비우면 %s를 확보할 수 있습니다</string>
 
+    <!-- ZIP -->
+    <string name="zip_unsafe">안전하지 않은 경로가 있어 압축을 풀 수 없습니다</string>
+    <string name="zip_corrupt">손상되었거나 암호로 보호된 ZIP입니다</string>
+    <string name="zip_encoding">지원하지 않는 파일 이름 인코딩입니다</string>
+    <string name="zip_duplicates">이름이 겹친 항목 %d개를 ‘둘 다 유지’로 풀었습니다</string>
+
     <!-- Names, renaming -->
     <string name="name_fat_chars">파일 이름에는 다음 문자를 사용할 수 없습니다: \\ / : * ? \" &lt; &gt; |</string>
     <string name="name_empty">이름을 입력하세요</string>

@@ -34,8 +34,17 @@ class ErrorTextTest {
     }
 
     @Test
+    fun archiveErrorsHaveTheirOwnText() {
+        assertEquals(UiText.res(R.string.zip_unsafe), errorText(FsError.UnsafeArchive))
+        // Damaged or password protected: one text for both, as spec §6.2 words it.
+        assertEquals(UiText.res(R.string.zip_corrupt), errorText(FsError.Corrupt))
+        assertEquals(UiText.res(R.string.zip_corrupt), errorText(FsError.Encrypted))
+        assertEquals(UiText.res(R.string.zip_encoding), errorText(FsError.UnsupportedEncoding))
+    }
+
+    @Test
     fun otherErrorsAreGenericNotAccessDeniedOrNotFound() {
-        assertEquals(UiText.res(R.string.error_generic), errorText(FsError.Corrupt))
+        assertEquals(UiText.res(R.string.error_generic), errorText(FsError.BinUnavailable))
         assertEquals(UiText.res(R.string.error_generic), errorText(FsError.Unknown("EINVAL")))
         assertEquals(UiText.res(R.string.error_generic), errorText(FsError.Unknown(null)))
     }

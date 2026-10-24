@@ -1,6 +1,6 @@
 /*
- * Files — copying and moving with their conflicts, renaming, creating new items (spec §4.5), and deleting,
- * to the Recycle Bin or for good, restoring from it and emptying it (§4.6).
+ * Files — copying and moving with their conflicts, renaming, creating new items (spec §4.5), deleting,
+ * to the Recycle Bin or for good, restoring from it and emptying it (§4.6), and ZIP archives (§6.2).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -15,8 +15,8 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.time.TimeSource
 
-/** What a copy leaves free on the target's volume, besides what it writes. */
-private const val SPACE_MARGIN = 64L shl 20
+/** What a copy or an extraction leaves free on the target's volume, besides what it writes. */
+internal const val SPACE_MARGIN = 64L shl 20
 
 /** The prefix of the name a file has between the two steps of a case-only rename. */
 private const val RENAME_TEMP_PREFIX = ".~ren-"
@@ -32,10 +32,10 @@ data class Precheck(val unstorable: List<ItemFailure>, val copyBytes: Long, val 
 
 /**
  * Copies and moves (spec §4.5), writing through the [WriteProtocol] with [journal], renames and creates
- * items, and deletes them, to the Recycle Bin [bin] or for good (§4.6). [volumes] says which volume a
- * path is on, [labels] name new items and copies, [time] paces the progress reports, [clock] is the
- * wall clock, and [ids] makes the temporary names of renames. Nothing here switches threads: the caller
- * runs it where blocking calls belong.
+ * items, deletes them, to the Recycle Bin [bin] or for good (§4.6), and compresses and extracts ZIP
+ * archives with [zip] (§6.2). [volumes] says which volume a path is on, [labels] name new items and
+ * copies, [time] paces the progress reports, [clock] is the wall clock, and [ids] makes the temporary
+ * names of renames. Nothing here switches threads: the caller runs it where blocking calls belong.
  */
 class FileOps(
     private val fs: FsBackend,
@@ -46,6 +46,7 @@ class FileOps(
     private val clock: () -> Long = System::currentTimeMillis,
     private val ids: () -> String,
     private val bin: RecycleBin? = null,
+    private val zip: ZipOps? = null,
 ) {
     private val writer = WriteProtocol(fs, journal)
 
@@ -76,9 +77,18 @@ class FileOps(
      *   the bin, with its record;
      * - [EMPTY_BIN][OpKind.EMPTY_BIN] deletes every item in the Recycle Bins of the volumes its sources
      *   are on (the bin folders, [RecycleBin.binDir]) for good ([RecycleBin.purge]);
-     * - the ZIP kinds are [FsError.Unsupported], after 0 of 0 items.
+     * - [COMPRESS][OpKind.COMPRESS] writes its sources into one new archive in its target folder
+     *   ([ZipOps.compress]), and [EXTRACT][OpKind.EXTRACT] each of its sources, an archive, into a new
+     *   folder there ([ZipOps.extract]), its names read in the character set [OpOptions.zipCharset] names
+     *   (detected when null; one this runtime does not know is [FsError.UnsupportedEncoding] after 0 of 0
+     *   items). [OpResult.Done.created] holds the archive, or the folders, and
+     *   [OpResult.Done.renamedDuplicates] how many entries had to take a ` (2)` name. Any failure of an
+     *   archive ends the run with [OpResult.Failed]: none of its items is kept, out of the items it had
+     *   counted, or of 0 when it was refused before (unsafe, encrypted or damaged, names in no character
+     *   set it knows, no room).
      *
-     * The kinds that use the Recycle Bin are [FsError.BinUnavailable], after 0 of 0 items, without [bin].
+     * The kinds that use the Recycle Bin are [FsError.BinUnavailable], after 0 of 0 items, without [bin],
+     * and the ZIP kinds are [FsError.Unsupported], after 0 of 0 items, without [zip].
      * A failure that ends everything ([isFatal]: no space, I/O error, read-only, volume gone) stops at once
      * with [OpResult.Failed] after the items done so far. Cancelling throws [CancellationException]; anything
      * else [resolver], [onProgress] or [onCommitted] throws ends the run with it. [onProgress] gets the
@@ -129,12 +139,17 @@ class FileOps(
         OpKind.DELETE_TO_BIN -> withBin { binRuns.deleteToBin(it, spec, onProgress, onCommitted) }
         OpKind.RESTORE -> withBin { binRuns.restore(it, spec, resolver, onProgress, onCommitted) }
         OpKind.EMPTY_BIN -> withBin { binRuns.emptyBin(it, spec, onProgress, onCommitted) }
-        OpKind.COMPRESS, OpKind.EXTRACT -> OpResult.Failed(FsError.Unsupported, 0, 0)
+        OpKind.COMPRESS -> withZip { it.compressRun(spec, onProgress, onCommitted) }
+        OpKind.EXTRACT -> withZip { it.extractRun(spec, onProgress, onCommitted) }
     }
 
     /** What [block] makes of the Recycle Bin, or [FsError.BinUnavailable] after 0 of 0 items without one. */
     private inline fun withBin(block: (RecycleBin) -> OpResult): OpResult =
         bin?.let(block) ?: OpResult.Failed(FsError.BinUnavailable, 0, 0)
+
+    /** What [block] makes of [zip], or [FsError.Unsupported] after 0 of 0 items without it. */
+    private inline fun withZip(block: (ZipOps) -> OpResult): OpResult =
+        zip?.let(block) ?: OpResult.Failed(FsError.Unsupported, 0, 0)
 
     /**
      * What [run] would find before writing anything for a copy or a move: what the target cannot store,

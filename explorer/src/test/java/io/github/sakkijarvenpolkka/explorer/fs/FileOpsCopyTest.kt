@@ -142,8 +142,9 @@ class FileOpsCopyTest {
     }
 
     @Test
-    fun zipKindsAreNotSupportedYet() {
+    fun zipKindsWithoutZipOpsAreUnsupported() {
         val a = write(src, "a.txt")
+        // ops() has no ZipOps; ZipTest runs them with one.
         for (kind in listOf(OpKind.COMPRESS, OpKind.EXTRACT)) {
             val result = ops().runToEnd(spec(kind, listOf(a), dst))
             assertEquals("$kind", OpResult.Failed(FsError.Unsupported, 0, 0), result)
