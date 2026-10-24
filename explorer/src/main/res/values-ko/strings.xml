@@ -205,4 +205,13 @@
 
     <!-- The image viewer -->
     <string name="image_error">이미지를 표시할 수 없습니다</string>
+
+    <!-- The media viewer -->
+    <string name="media_error">재생할 수 없는 파일입니다</string>
+    <string name="play">재생</string>
+    <string name="pause">일시정지</string>
+
+    <!-- The PDF viewer -->
+    <string name="pdf_encrypted">암호로 보호된 PDF입니다</string>
+    <string name="pdf_corrupt">손상된 파일입니다</string>
 </resources>

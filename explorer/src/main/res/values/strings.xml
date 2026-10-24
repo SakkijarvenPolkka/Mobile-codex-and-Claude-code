@@ -207,4 +207,13 @@
 
     <!-- The image viewer -->
     <string name="image_error">The image can\'t be displayed</string>
+
+    <!-- The media viewer -->
+    <string name="media_error">This file can\'t be played</string>
+    <string name="play">Play</string>
+    <string name="pause">Pause</string>
+
+    <!-- The PDF viewer -->
+    <string name="pdf_encrypted">This PDF is password protected</string>
+    <string name="pdf_corrupt">The file is damaged</string>
 </resources>
