@@ -179,8 +179,8 @@ private fun ExplorerDeps.unpinWhere(gone: (Favorite) -> Boolean) {
 /**
  * Home's content ([state]), the same for every tab at Home: read when a tab comes to Home or reads it
  * again ([load]), and while one shows it, whenever the favorites, the recent files or the volumes change
- * ([follow]). A load cancels the one before; until it is done, what was read before stays. Main thread
- * only, in [scope].
+ * ([follow]); a change while none shows it makes it [stale]. A load cancels the one before; until it is
+ * done, what was read before stays. Main thread only, in [scope].
  */
 internal class HomeLoader(
     private val deps: ExplorerDeps,
@@ -194,7 +194,12 @@ internal class HomeLoader(
 
     private var job: Job? = null
 
+    /** Whether what was read is out of date: what Home shows changed since, while no tab showed it. */
+    var stale = false
+        private set
+
     fun load() {
+        stale = false
         job?.cancel()
         job = scope.launch {
             try {
@@ -207,12 +212,15 @@ internal class HomeLoader(
         }
     }
 
-    /** Reads Home again whenever the favorites, the recent files or the volumes change while [atHome]. */
+    /**
+     * Reads Home again whenever the favorites, the recent files or the volumes change while [atHome];
+     * else what was read is [stale], to be read again when a tab shows Home.
+     */
     suspend fun follow(atHome: () -> Boolean) {
         val settings = deps.settings
         combine(settings.favorites, settings.recents, deps.volumes.volumes) { _, _, _ -> }
             .drop(1)
-            .collect { if (atHome()) load() }
+            .collect { if (atHome()) load() else stale = true }
     }
 
     private companion object {

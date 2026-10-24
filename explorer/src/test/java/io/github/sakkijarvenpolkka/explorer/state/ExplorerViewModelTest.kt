@@ -18,6 +18,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
+import io.github.sakkijarvenpolkka.explorer.platform.storageUsage
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -74,12 +75,14 @@ class ExplorerViewModelTest {
         io: CoroutineDispatcher = Dispatchers.Unconfined,
         opsNotice: StateFlow<OpsNotice?> = MutableStateFlow(null),
         clearOpsNotice: () -> Unit = {},
+        builtInViewers: Boolean = false,
+        usage: (Path) -> Pair<Long, Long>? = ::storageUsage,
     ): ExplorerViewModel {
         this.volumes = volumes
         settings.startAt(root, volumes)
         val deps = ExplorerDeps(
             NioFsBackend, settings, volumes, volumes, MimeResolver(), io,
-            opsNotice = opsNotice, clearOpsNotice = clearOpsNotice,
+            opsNotice = opsNotice, clearOpsNotice = clearOpsNotice, builtInViewers = builtInViewers, usage = usage,
         )
         vm = ExplorerViewModel(ApplicationProvider.getApplicationContext<Application>(), deps)
         settle()
@@ -353,6 +356,44 @@ class ExplorerViewModelTest {
         assertEquals(listOf("docs"), names())
         // From the root of the drive, mounted, Up goes Home.
         assertEquals(Location.Home, ui.up)
+    }
+
+    @Test
+    fun homeTabShowsWhatChangedWhileAnotherTabWasActive() {
+        dir("a")
+        file("a/notes.txt")
+        val usb = folder.newFolder("usb").toPath().toRealPath()
+        val out = FakeVolumes.removable("USB1", "USB drive", null, VolumeState.UNMOUNTED)
+        start(
+            volumes = FakeVolumes(FakeVolumes.primary(root), out),
+            builtInViewers = true,
+            usage = { if (it == usb) 8L to 2L else null },
+        )
+        vm.navigate(Location.Home)
+        settle()
+        val homeTab = ui.tabs.activeId
+        assertEquals(HomeData(emptyList(), emptyList(), emptyList(), 0L), ui.home)
+
+        // In a folder tab meanwhile: a folder pinned, a file opened, a drive mounted.
+        vm.newTab()
+        vm.navigate(Location.Folder(root.resolve("a")))
+        settle()
+        vm.pin(listOf(root.resolve("a")))
+        vm.onTap(entry("notes.txt"))
+        settle()
+        assertEquals(root.resolve("a/notes.txt"), ui.viewer?.entry?.path)
+        vm.viewing.close()
+        volumes.update("USB1") { it.copy(root = usb, state = VolumeState.MOUNTED) }
+        volumes.events.tryEmit(VolumeEvent.Mounted("USB1"))
+        settle()
+
+        // Back in the tab at Home, read before: it shows all of that.
+        vm.activate(homeTab)
+        settle()
+        val home = ui.home!!
+        assertEquals(listOf(QuickItem(root.resolve("a"), "a", pinned = true)), home.quickAccess)
+        assertEquals(listOf(root.resolve("a/notes.txt")), home.recents.map { it.path })
+        assertEquals(listOf(DriveUsage(volumes.volumes.value[1], 8L, 2L)), home.drives)
     }
 
     @Test

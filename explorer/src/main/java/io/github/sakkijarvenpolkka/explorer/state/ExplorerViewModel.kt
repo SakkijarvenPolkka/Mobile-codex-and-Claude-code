@@ -474,7 +474,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /** Reads Home for [tab], come there (or out of date) or reading it again; its list of where it was goes. */
     private fun loadHome(tab: TabId, refresh: Boolean) {
-        if (!refresh && !loader.isStale(tab) && loadedFor[tab]?.location == Location.Home) return
+        if (!refresh && !loader.isStale(tab) && !home.stale && loadedFor[tab]?.location == Location.Home) return
         loadedFor[tab] = LoadKey(Location.Home, ListOptions())
         loader.setSource(tab, emptyFlow())
         home.load()
