@@ -36,6 +36,7 @@ import io.github.sakkijarvenpolkka.explorer.preview.AndroidMediaPort
 import io.github.sakkijarvenpolkka.explorer.preview.AndroidPdfOpener
 import io.github.sakkijarvenpolkka.explorer.preview.FsTextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
+import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerShell
@@ -59,14 +60,14 @@ class MainActivity : ComponentActivity() {
                 val app = application as ExplorerApp
                 val mime = MimeResolver()
                 // The view model outlives this activity, so these hold none of it: each player gets the
-                // context of the shell that shows it.
+                // context of the shell that shows it. The app closes what they hold on a volume that goes.
                 val viewers = ViewerDeps(
                     text = FsTextLoader(NioFsBackend, Dispatchers.IO),
                     images = AndroidImageDecoder(Dispatchers.IO),
                     pdf = AndroidPdfOpener(app, Dispatchers.IO),
                     media = ::AndroidMediaPort,
                     io = Dispatchers.IO,
-                )
+                ).trackedIn(app.viewerFiles)
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
                     fileOps = app.fileOps, bin = app.bin, runner = app.runner,

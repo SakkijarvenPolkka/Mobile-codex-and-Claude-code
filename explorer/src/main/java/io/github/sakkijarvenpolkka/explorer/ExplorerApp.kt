@@ -1,7 +1,7 @@
 /*
  * Files — Application: owns the process-wide services of the file manager, and does what the file
  * operations need around them: the foreground service, the media scans, and stopping those on a
- * volume that goes (and forgetting its thumbnails).
+ * volume that goes (and forgetting its thumbnails, and closing the files the viewers hold on it).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -33,6 +33,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
 import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeRegistry
+import io.github.sakkijarvenpolkka.explorer.preview.OpenFiles
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -90,6 +91,9 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     val thumbnails: Thumbnails by lazy {
         Thumbnails(thumbnailPort, Dispatchers.IO, (Runtime.getRuntime().maxMemory() / 8).toInt())
     }
+
+    /** The files the viewers hold open, for the whole app: those on a volume that goes are closed with it. */
+    val viewerFiles = OpenFiles()
 
     /** Whether the user was asked to allow notifications since the process started (main thread only). */
     internal var notificationsAsked = false
@@ -194,8 +198,9 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
      * Stops the operations on a volume that goes as soon as it does ([OperationRunner.cancelTouching]):
      * vold kills the processes that still hold its files open a few seconds later. Its thumbnails go
      * too ([Thumbnails.evictUnder]): one that could not be made while it went is made again when it is
-     * back. Both run on the main thread, where the registry changes, so a volume's root is noted before
-     * an event needs it.
+     * back. The files the viewers hold on it are closed ([OpenFiles.closeUnder]), as nothing else closes
+     * them while the app is in the background. All run on the main thread, where the registry changes,
+     * so a volume's root is noted before an event needs it.
      */
     private fun stopOperationsOnEject() {
         appScope.launch(Dispatchers.Main.immediate) {
@@ -209,6 +214,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
                     lastRoots[event.uuid]?.let { root ->
                         runner.cancelTouching(root, FsError.VolumeRemoved)
                         thumbnails.evictUnder(root)
+                        viewerFiles.closeUnder(root)
                     }
                 }
             }

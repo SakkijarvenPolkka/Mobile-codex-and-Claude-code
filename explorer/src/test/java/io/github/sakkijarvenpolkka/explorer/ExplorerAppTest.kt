@@ -11,6 +11,18 @@ import android.os.Looper
 import android.os.Process
 import android.os.storage.StorageManager
 import android.os.storage.StorageVolume
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
+import androidx.lifecycle.Lifecycle
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
@@ -19,6 +31,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
+import io.github.sakkijarvenpolkka.explorer.fs.TextEncoding
 import io.github.sakkijarvenpolkka.explorer.fs.write
 import io.github.sakkijarvenpolkka.explorer.ops.FileOpsService
 import io.github.sakkijarvenpolkka.explorer.ops.InterruptedOp
@@ -27,6 +40,17 @@ import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbKind
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.preview.ImageDecoderPort
+import io.github.sakkijarvenpolkka.explorer.preview.MediaPort
+import io.github.sakkijarvenpolkka.explorer.preview.MediaViewer
+import io.github.sakkijarvenpolkka.explorer.preview.PdfOpener
+import io.github.sakkijarvenpolkka.explorer.preview.PdfPort
+import io.github.sakkijarvenpolkka.explorer.preview.PdfViewer
+import io.github.sakkijarvenpolkka.explorer.preview.TextDocument
+import io.github.sakkijarvenpolkka.explorer.preview.TextLoader
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
+import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -298,5 +322,84 @@ class ExplorerAppTest {
         assertNull(app.thumbnails.cached(onCard, 96))
         runBlocking { listOf(onCard, onPhone).forEach { app.thumbnails.get(it, 96) } }
         assertEquals(listOf(onCard.path, onPhone.path, onCard.path), loads.toList())
+    }
+
+    @Test
+    fun ejectWhileInTheBackgroundClosesWhatTheViewersHoldOnThatVolume() {
+        val dir = folder.root.toPath().toRealPath()
+        val card = Files.createDirectory(dir.resolve("card"))
+        mount(card)
+        // The names of the files let go of.
+        val closed = CopyOnWriteArrayList<String>()
+        val viewers = ViewerDeps(
+            text = object : TextLoader {
+                override suspend fun load(file: Path, forced: TextEncoding?): TextDocument = TextDocument.Binary
+            },
+            images = object : ImageDecoderPort {
+                override suspend fun decode(file: Path, maxWidth: Int, maxHeight: Int): ImageBitmap =
+                    error("No pictures here")
+                override suspend fun sizeOf(file: Path): IntSize = IntSize(1, 1)
+            },
+            pdf = PdfOpener { file ->
+                object : PdfPort {
+                    override val pageCount: Int = 0
+                    override suspend fun pageSize(index: Int): IntSize = IntSize(1, 1)
+                    override suspend fun render(index: Int, widthPx: Int): Bitmap = error("No pages")
+                    override fun close() {
+                        closed += file.fileName.toString()
+                    }
+                }
+            },
+            media = {
+                object : MediaPort {
+                    private var file: Path? = null
+                    override fun prepare(file: Path, video: Boolean, onReady: (Int) -> Unit, onError: () -> Unit) {
+                        this.file = file
+                    }
+                    override fun play() = Unit
+                    override fun pause() = Unit
+                    override fun seekTo(ms: Int) = Unit
+                    override val positionMs: Int = 0
+                    override val isPlaying: Boolean = false
+                    override fun release() {
+                        file?.let { closed += it.fileName.toString() }
+                    }
+                }
+            },
+            io = Dispatchers.Unconfined,
+        ).trackedIn(app.viewerFiles)
+
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    Column {
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            PdfViewer(card.resolve("a.pdf"), viewers.pdf, onClose = {}, io = viewers.io)
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            val context = LocalContext.current
+                            val port = remember { viewers.media(context) }
+                            MediaViewer(card.resolve("song.mp3"), video = false, port, onClose = {})
+                        }
+                        Box(Modifier.weight(1f).fillMaxWidth()) {
+                            PdfViewer(dir.resolve("b.pdf"), viewers.pdf, onClose = {}, io = viewers.io)
+                        }
+                    }
+                }
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertEquals(emptyList<String>(), closed.toList())
+
+            // The user ejects the card from the system's settings: the app is in the background, where its
+            // viewers stay as they were, drawn by nothing.
+            scenario.moveToState(Lifecycle.State.CREATED)
+            eject(card)
+
+            assertEquals(Lifecycle.State.CREATED, scenario.state)
+            assertEquals(listOf("a.pdf", "song.mp3"), closed.sorted())
+        }
+        // The viewers leave with the activity: the file on the phone closes then, those on the card not again.
+        shadowOf(Looper.getMainLooper()).idle()
+        assertEquals(listOf("a.pdf", "b.pdf", "song.mp3"), closed.sorted())
     }
 }

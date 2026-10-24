@@ -47,6 +47,8 @@ import kotlinx.coroutines.withContext
 import java.io.Closeable
 import java.io.FileInputStream
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.math.max
 import kotlin.math.min
@@ -110,9 +112,14 @@ interface ImageDecoderPort {
     suspend fun decodeAnimation(file: Path, maxWidth: Int, maxHeight: Int): AnimatedImageDrawable? = null
 }
 
+/** The largest animated image played, in bytes (32 MiB): it is read into memory whole. */
+private const val ANIMATION_MAX_BYTES = 32L * 1024 * 1024
+
 /**
  * [ImageDecoderPort] on [ImageDecoder], on [io]: the image is decoded at the size it is shown at
- * ([ImageDecoder.setTargetSize]), which keeps big photos small in memory.
+ * ([ImageDecoder.setTargetSize]), which keeps big photos small in memory. A still image is read from
+ * the file while it is decoded; an animation is played from the file read into memory, as one played
+ * from the file would hold it open for as long as it is shown.
  */
 class AndroidImageDecoder(private val io: CoroutineDispatcher) : ImageDecoderPort {
 
@@ -135,10 +142,17 @@ class AndroidImageDecoder(private val io: CoroutineDispatcher) : ImageDecoderPor
         size ?: throw IOException("No image header in $file")
     }
 
+    /**
+     * The animation is decoded from the bytes of [file], read into memory: an [AnimatedImageDrawable]
+     * reads its frames from its source for as long as it plays and cannot be closed, so one decoded from
+     * the file would keep it open past its volume going. A file larger than 32 MiB is shown still.
+     */
     override suspend fun decodeAnimation(file: Path, maxWidth: Int, maxHeight: Int): AnimatedImageDrawable? =
         withContext(io) {
+            if (Files.size(file) > ANIMATION_MAX_BYTES) return@withContext null
+            val source = ImageDecoder.createSource(ByteBuffer.wrap(Files.readAllBytes(file)))
             try {
-                ImageDecoder.decodeDrawable(ImageDecoder.createSource(file.toFile())) { decoder, info, _ ->
+                ImageDecoder.decodeDrawable(source) { decoder, info, _ ->
                     if (!info.isAnimated) throw HeaderRead()
                     fit(decoder, info, maxWidth, maxHeight)
                 } as? AnimatedImageDrawable
