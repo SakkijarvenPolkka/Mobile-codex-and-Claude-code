@@ -7,12 +7,12 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import android.util.Log
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.BinItem
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
-import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
@@ -25,6 +25,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
+import io.github.sakkijarvenpolkka.explorer.fs.isPresent
 import io.github.sakkijarvenpolkka.explorer.fs.splitName
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
@@ -74,13 +75,15 @@ internal class OperationsUi(
     private val shell: ShellHost,
 ) {
     /**
-     * What the shell shows of the operations: the item the rename dialog is open for ([renaming]) and why
-     * the name typed there could not be given to it ([renameError]), the question to answer ([confirm]),
-     * whether the progress shows as a chip ([inBackground]), the operations whose failures to list, the
-     * first one first ([failures]), and the app's notice of them ([notice]).
+     * What the shell shows of the operations: the item the rename dialog is open for ([renaming]), whether
+     * its rename is under way ([renamePending]) and why the name typed there could not be given to it
+     * ([renameError]), the question to answer ([confirm]), whether the progress shows as a chip
+     * ([inBackground]), the operations whose failures to list, the first one first ([failures]), and the
+     * app's notice of them ([notice]).
      */
     data class State(
         val renaming: FileEntry? = null,
+        val renamePending: Boolean = false,
         val renameError: RenameError? = null,
         val confirm: ConfirmRequest? = null,
         val inBackground: Boolean = false,
@@ -112,6 +115,9 @@ internal class OperationsUi(
 
     /** What emptying the Recycle Bin asked about ([emptyBin]): the folders of those items in the bin. */
     private var emptying: List<Path> = emptyList()
+
+    /** The item a rename is under way for ([commitRename]). */
+    private var renamingNow: Path? = null
 
     /**
      * Follows the runner, the app's notice ([ExplorerDeps.opsNotice]) and the shell's [messages] while
@@ -208,12 +214,6 @@ internal class OperationsUi(
         }
     }
 
-    /** Deletes [paths] for good, the user having confirmed it: the question open is closed. */
-    fun confirmPermanent(paths: List<Path>) {
-        closeQuestion()
-        deletePermanently(paths)
-    }
-
     /** Opens the rename dialog for [entry], unless the operation running uses it ([isBusy]). */
     fun startRename(entry: FileEntry) {
         if (isBusy(entry.path)) return shell.showError(shell.here(), errorText(FsError.Busy))
@@ -225,10 +225,12 @@ internal class OperationsUi(
      * new name. The name it has, as typed or once trimmed ([NameValidator]), only closes the dialog.
      * Changing a file's extension is asked about first ([ConfirmRequest.ExtensionChange]) unless
      * [extensionConfirmed]. An item the operation running uses is not renamed, nor one the rename fails
-     * for: the dialog stays open, and says why ([State.renameError]; a message, when it is not open).
+     * for: the dialog stays open, and says why ([State.renameError]; a message, when it is not open). While
+     * its rename is under way ([State.renamePending]), a second commit for it (OK tapped twice) is ignored.
      */
     fun commitRename(entry: FileEntry, newName: String, extensionConfirmed: Boolean = false) {
         val fileOps = deps.fileOps ?: return
+        if (renamingNow == entry.path) return
         val at = shell.here()
         val name = checkedName(entry, newName)
         if (newName == entry.name || name == entry.name) return cancelRename()
@@ -236,15 +238,18 @@ internal class OperationsUi(
             return ask(ConfirmRequest.ExtensionChange(entry, newName))
         }
         if (isBusy(entry.path)) return renameFailed(entry, newName, at, FsError.Busy)
-        mutableState.update { it.copy(renameError = null) }
+        renamingNow = entry.path
+        mutableState.update { it.copy(renameError = null, renamePending = true) }
         scope.launch {
             val renamed = try {
                 withContext(deps.io) { fileOps.rename(entry.path, newName) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                renameEnded()
                 return@launch renameFailed(entry, newName, at, e.toFsError())
             }
+            renameEnded()
             // Its dialog closes, unless it was closed meanwhile (and opened for another item).
             mutableState.update {
                 if (it.renaming?.path == entry.path) it.copy(renaming = null, renameError = null) else it
@@ -439,6 +444,7 @@ internal class OperationsUi(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
+            Log.w(TAG, "Could not tell which moved items are gone; the clipboard stays as it is", e)
             return
         }
         clipboard.afterPaste(sources.filterNot { it in left }.toSet())
@@ -525,20 +531,17 @@ internal class OperationsUi(
     }
 
     /**
-     * The items of [paths] that are there, looked for off the main thread; throws when that cannot be told.
-     * Their attributes are read: [FsBackend.exists] also says no when it cannot tell (an item the app may
-     * not look at), and only an item not found is gone.
+     * The items of [paths] that are there ([isPresent]), looked for off the main thread; throws when that
+     * cannot be told: only an item not found is gone.
      */
     private suspend fun present(paths: List<Path>): List<Path> = withContext(deps.io) {
-        paths.filter { path ->
-            try {
-                deps.fs.attributes(path)
-                true
-            } catch (e: IOException) {
-                if (e.toFsError() != FsError.NotFound) throw e
-                false
-            }
-        }
+        paths.filter(deps.fs::isPresent)
+    }
+
+    /** The rename under way ended, done or not. */
+    private fun renameEnded() {
+        renamingNow = null
+        mutableState.update { it.copy(renamePending = false) }
     }
 
     /** The name [typed] for [entry] comes to, as the rename checks it ([NameValidator]): as typed when invalid. */
@@ -574,5 +577,7 @@ internal class OperationsUi(
 
         /** How long the bar of an operation that did all it was asked shows. */
         val SUCCESS_SHOWN_FOR = 4.seconds
+
+        const val TAG = "OperationsUi"
     }
 }

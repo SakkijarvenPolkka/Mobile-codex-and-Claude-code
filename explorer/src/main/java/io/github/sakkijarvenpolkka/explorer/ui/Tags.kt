@@ -43,6 +43,7 @@ object Tags {
     const val CMD_VIEW = "cmd_view"
     const val CMD_HIDDEN = "cmd_hidden"
     const val CMD_EXTENSIONS = "cmd_extensions"
+    const val CMD_PREVIEW_PANE = "cmd_preview_pane"
     val CMD_DELETE = command(Command.DELETE)
 
     const val SORT_ASCENDING = "sort_ascending"

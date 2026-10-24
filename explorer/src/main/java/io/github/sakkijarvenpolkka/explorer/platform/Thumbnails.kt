@@ -13,13 +13,13 @@ import android.util.LruCache
 import android.util.Size
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 /** What a thumbnail is made from: a picture, a video's frame, or the art a song embeds. */
@@ -43,7 +43,7 @@ data class ThumbKey(val path: String, val modified: Long, val sizePx: Int)
  */
 fun thumbKindFor(entry: FileEntry): ThumbKind? {
     if (entry.kind != EntryKind.FILE) return null
-    val mime = entry.mime?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT) ?: return null
+    val mime = baseMimeType(entry.mime) ?: return null
     return when {
         mime.startsWith("image/") -> ThumbKind.IMAGE
         mime.startsWith("video/") -> ThumbKind.VIDEO

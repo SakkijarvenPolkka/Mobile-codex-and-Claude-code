@@ -197,6 +197,8 @@
 
     <!-- The text viewer -->
     <string name="text_truncated">처음 1MB만 표시합니다</string>
+    <string name="preview_none">미리 볼 파일을 선택하세요</string>
+    <string name="preview_unavailable">미리 보기를 사용할 수 없습니다</string>
     <string name="text_binary">이 파일은 텍스트 파일이 아닙니다</string>
     <string name="encoding_auto">자동</string>
     <string name="encoding_utf8">UTF-8</string>

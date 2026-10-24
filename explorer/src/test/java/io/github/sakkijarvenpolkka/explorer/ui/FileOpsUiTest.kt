@@ -27,6 +27,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextRange
@@ -245,6 +246,28 @@ class FileOpsUiTest {
         rule.onNodeWithText(str(R.string.name_fat_chars)).assertDoesNotExist()
         button(str(R.string.ok)).assertIsEnabled().performClick()
         assertEquals(listOf("ab.txt"), committed)
+    }
+
+    @Test
+    fun renameOkDisabledWhilePending() {
+        val a = entry(file("a.txt"))
+        val committed = mutableListOf<String>()
+        val pending = mutableStateOf(false)
+        showAlone {
+            RenameDialog(a, VolumeTraits(), onCommit = { committed += it }, onDismiss = {}, pending = pending.value)
+        }
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("b.txt")
+        pending.value = true
+        rule.waitForIdle()
+        // Under way: neither OK nor Done renames it again.
+        button(str(R.string.ok)).assertIsNotEnabled()
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performImeAction()
+        assertEquals(emptyList<String>(), committed)
+
+        pending.value = false
+        rule.waitForIdle()
+        button(str(R.string.ok)).assertIsEnabled().performClick()
+        assertEquals(listOf("b.txt"), committed)
     }
 
     @Test

@@ -34,9 +34,10 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.MenuFlyout
 /**
  * New ▾, Cut, Copy, Paste, Rename, Share, Delete, Sort ▾ and View ▾, then "⋯" with the
  * selection commands, Delete permanently, Compress, Extract, Pin or Unpin, Properties,
- * Refresh, the hidden items and file name extensions switches and Options; in the Recycle Bin,
- * Restore, Delete permanently and Empty Recycle Bin, then "⋯" with the selection commands,
- * Refresh and Options. A command not in [ExplorerUiState.commands] is shown disabled; the
+ * Refresh, the hidden items and file name extensions switches, the preview pane switch (with
+ * [onTogglePreviewPane], wide windows) and Options; in the Recycle Bin, Restore, Delete
+ * permanently and Empty Recycle Bin, then "⋯" with the selection commands, Refresh, the preview
+ * pane switch and Options. A command not in [ExplorerUiState.commands] is shown disabled; the
  * commands the window has no room for move into "⋯".
  */
 @Composable
@@ -46,6 +47,7 @@ fun CommandsUi(
     onSetView: (ViewSetting) -> Unit,
     onSetGlobal: ((GlobalSettings) -> GlobalSettings) -> Unit,
     modifier: Modifier = Modifier,
+    onTogglePreviewPane: (() -> Unit)? = null,
 ) {
     val res = LocalResources.current
     var menu by remember { mutableStateOf<BarMenu?>(null) }
@@ -71,8 +73,13 @@ fun CommandsUi(
     val global = ui.global
     val pin = if (Command.UNPIN in offered) Command.UNPIN else Command.PIN
     val extensionsLabel = res.getString(R.string.cmd_extensions)
+    val previewPane = onTogglePreviewPane?.let { toggle ->
+        CommandItem(Tags.CMD_PREVIEW_PANE, res.getString(R.string.cmd_preview_pane), checkIf(ui.previewPane), true) {
+            toggle()
+        }
+    }
     val overflow = if (inBin) {
-        (BIN_OVERFLOW + Command.OPTIONS).map(::item)
+        BIN_OVERFLOW.map(::item) + listOfNotNull(previewPane) + item(Command.OPTIONS)
     } else {
         OVERFLOW_COMMANDS.map { item(if (it == Command.PIN) pin else it) } + listOf(
             CommandItem(Tags.CMD_HIDDEN, res.getString(R.string.cmd_hidden), checkIf(global.showHidden), true) {
@@ -81,8 +88,7 @@ fun CommandsUi(
             CommandItem(Tags.CMD_EXTENSIONS, extensionsLabel, checkIf(global.showExtensions), true) {
                 onSetGlobal { it.copy(showExtensions = !it.showExtensions) }
             },
-            item(Command.OPTIONS),
-        )
+        ) + listOfNotNull(previewPane) + item(Command.OPTIONS)
     }
     Box(modifier) {
         CommandBar(primary, overflow, res.getString(R.string.more), Modifier.fillMaxWidth().testTag(Tags.COMMAND_BAR))

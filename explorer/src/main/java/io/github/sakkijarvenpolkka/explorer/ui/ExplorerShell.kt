@@ -59,6 +59,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.platform.launch
+import io.github.sakkijarvenpolkka.explorer.preview.PreviewPane
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerScreen
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
@@ -105,12 +107,13 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
 
 /**
  * The file manager for [vm]: on [WidthClass.EXPANDED] the navigation pane is pinned at the
- * start, otherwise it is a drawer behind ☰. The bars keep clear of the system bars and the
- * display cutout; Back is handled only while the state has something for it to do. The
- * keyboard shortcuts ([shortcutFor]) are read here first, so the shell keeps the focus while
- * nothing is open over it; the intents the view model asks for are started from here, from
- * the activity. The file operations show from the runner's state ([OperationsDialogs]), which
- * outlives the activity.
+ * start, and the preview pane, when on, at the end; otherwise the navigation pane is a drawer
+ * behind ☰. A file open in its viewer takes the whole window ([ViewerScreen]), with the view
+ * model's message over it. The bars keep clear of the system bars and the display cutout; Back
+ * is handled only while the state has something for it to do. The keyboard shortcuts
+ * ([shortcutFor]) are read here first, so the shell keeps the focus while nothing is open over
+ * it; the intents the view model asks for are started from here, from the activity. The file
+ * operations show from the runner's state ([OperationsDialogs]), which outlives the activity.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
@@ -118,7 +121,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     val runner by vm.runner.collectAsStateWithLifecycle()
     val expanded = widthClass == WidthClass.EXPANDED
     BackHandler(enabled = ui.backTarget != null, onBack = vm::systemBack)
-    LaunchedEffect(expanded) { if (expanded) vm.setDrawerOpen(false) }
+    LaunchedEffect(expanded) { vm.setExpanded(expanded) }
     val positions = remember(vm) { ListPositions(vm::scrollOf) }
     val context = LocalContext.current
     val pending = ui.launch
@@ -137,7 +140,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .onPreviewKeyEvent { event ->
                 // The address box is the shell's only text field.
                 val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit)
-                action != null && vm.onShortcut(action, ui, shellFocused = focused)
+                action != null && vm.onShortcut(action, ui, shellFocused = focused, expanded = expanded)
             }
             .onFocusChanged {
                 hasFocus = it.hasFocus
@@ -147,43 +150,72 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .focusTarget()
             .testTag(Tags.SHELL),
     ) {
-        val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
-        Column(Modifier.fillMaxSize().then(sides)) {
-            // The tab strip goes above the address bar once tabs are shown.
-            AddressBar(
-                ui = ui,
-                showMenuButton = !expanded,
-                onMenu = { vm.setDrawerOpen(true) },
-                onBack = vm::back,
-                onForward = vm::forward,
-                onUp = vm::up,
-                onNavigate = vm::navigate,
-                onSubfolders = vm::showSubfolders,
-                onEdit = vm::editAddress,
-                onSubmit = vm::typedPath,
-                onCloseOverlay = vm::closeOverlay,
-                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+        val viewers = vm.viewers
+        val viewer = ui.viewer
+        if (viewer != null && viewers != null) {
+            ViewerScreen(
+                viewer,
+                viewers,
+                onClose = vm::closeViewer,
+                onShare = vm::share,
+                onOpenWith = vm::openWith,
+                onProperties = vm::showProperties,
             )
-            CommandsUi(ui, onCommand = vm::command, onSetView = vm::setView, onSetGlobal = vm::setGlobal)
-            Row(Modifier.weight(1f)) {
-                if (expanded) {
-                    NavContent(ui.volumes, ui.location, vm::navigate, Modifier.width(NAV_WIDTH).fillMaxHeight())
-                }
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Banners(ui, onDismiss = vm::dismissMessage, onDismissNotice = vm::dismissOpsNotice)
-                    Contents(ui, widthClass, positions, vm, Modifier.weight(1f))
-                }
+            ui.message?.let { message ->
+                val bottom = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+                val place = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(bottom)
+                MessageBar(message, vm::dismissMessage, place.testTag(Tags.MESSAGE))
             }
-            StatusBar(
-                ui,
-                onSetMode = { mode -> vm.setView(ui.viewSetting.copy(mode = mode)) },
-                modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
-                running = runner.running,
-                onShowProgress = vm::showProgress,
-            )
-        }
-        if (!expanded && ui.drawerOpen) {
-            Drawer(ui, onNavigate = { vm.navigate(it); vm.setDrawerOpen(false) }, onClose = { vm.setDrawerOpen(false) })
+        } else {
+            val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
+            Column(Modifier.fillMaxSize().then(sides)) {
+                // The tab strip goes above the address bar once tabs are shown.
+                AddressBar(
+                    ui = ui,
+                    showMenuButton = !expanded,
+                    onMenu = { vm.setDrawerOpen(true) },
+                    onBack = vm::back,
+                    onForward = vm::forward,
+                    onUp = vm::up,
+                    onNavigate = vm::navigate,
+                    onSubfolders = vm::showSubfolders,
+                    onEdit = vm::editAddress,
+                    onSubmit = vm::typedPath,
+                    onCloseOverlay = vm::closeOverlay,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)),
+                )
+                CommandsUi(
+                    ui,
+                    onCommand = vm::command,
+                    onSetView = vm::setView,
+                    onSetGlobal = vm::setGlobal,
+                    onTogglePreviewPane = if (expanded && viewers != null) vm::togglePreviewPane else null,
+                )
+                Row(Modifier.weight(1f)) {
+                    if (expanded) {
+                        NavContent(ui.volumes, ui.location, vm::navigate, Modifier.width(NAV_WIDTH).fillMaxHeight())
+                    }
+                    Column(Modifier.weight(1f).fillMaxHeight()) {
+                        Banners(ui, onDismiss = vm::dismissMessage, onDismissNotice = vm::dismissOpsNotice)
+                        Contents(ui, widthClass, positions, vm, Modifier.weight(1f))
+                    }
+                    if (expanded && ui.previewPane && viewers != null) {
+                        val pane = Modifier.width(PREVIEW_WIDTH).fillMaxHeight()
+                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm::openWith)
+                    }
+                }
+                StatusBar(
+                    ui,
+                    onSetMode = { mode -> vm.setView(ui.viewSetting.copy(mode = mode)) },
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom)),
+                    running = runner.running,
+                    onShowProgress = vm::showProgress,
+                )
+            }
+            if (!expanded && ui.drawerOpen) {
+                val close = { vm.setDrawerOpen(false) }
+                Drawer(ui, onNavigate = { vm.navigate(it); close() }, onClose = close)
+            }
         }
     }
     when (val overlay = ui.overlay) {
@@ -219,7 +251,14 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
     ui.renaming?.let { entry ->
         val traits = volumeAt(ui.volumes, entry.path)?.traits ?: VolumeTraits()
         val commit = { name: String -> vm.commitRename(entry, name) }
-        RenameDialog(entry, traits, onCommit = commit, onDismiss = vm::cancelRename, failure = ui.renameError)
+        RenameDialog(
+            entry,
+            traits,
+            onCommit = commit,
+            onDismiss = vm::cancelRename,
+            failure = ui.renameError,
+            pending = ui.renamePending,
+        )
     }
     ui.confirm?.let { ConfirmDialog(it, onAnswer = vm::answerConfirm) }
 }
@@ -228,11 +267,18 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
  * Does what the shortcut [action] asks for in [ui]: false when it does nothing there (a command
  * not offered, nowhere to go), so that the key goes on to what has the focus. Enter opens the
  * one selected item only while the shell itself is [shellFocused]: a focused button, crumb or
- * row gets it first.
+ * row gets it first. The preview pane opens and closes on an [expanded] window. Over a file open
+ * in its viewer, Back is the only shortcut: the commands would act on the hidden list.
  */
-private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiState, shellFocused: Boolean): Boolean {
+private fun ExplorerViewModel.onShortcut(
+    action: ShortcutAction,
+    ui: ExplorerUiState,
+    shellFocused: Boolean,
+    expanded: Boolean,
+): Boolean {
     fun offered(c: Command): Boolean = (c in ui.commands).also { if (it) command(c) }
     fun can(possible: Boolean, act: () -> Unit): Boolean = possible.also { if (it) act() }
+    if (ui.viewer != null && viewers != null && action != ShortcutAction.BACK) return false
     return when (action) {
         ShortcutAction.COPY -> offered(Command.COPY)
         ShortcutAction.CUT -> offered(Command.CUT)
@@ -247,12 +293,14 @@ private fun ExplorerViewModel.onShortcut(action: ShortcutAction, ui: ExplorerUiS
         ShortcutAction.BACK -> can(ui.backTarget != null) { systemBack() }
         ShortcutAction.FORWARD -> can(ui.tabs.active.forward.isNotEmpty()) { forward() }
         ShortcutAction.UP -> can(ui.up != null) { up() }
-        // The tab strip and the preview pane come later.
-        ShortcutAction.NEW_TAB, ShortcutAction.CLOSE_TAB, ShortcutAction.NEXT_TAB, ShortcutAction.PREVIEW_PANE -> false
+        ShortcutAction.PREVIEW_PANE -> can(expanded && viewers != null) { togglePreviewPane() }
+        // The tab strip comes later.
+        ShortcutAction.NEW_TAB, ShortcutAction.CLOSE_TAB, ShortcutAction.NEXT_TAB -> false
     }
 }
 
 private val NAV_WIDTH = 240.dp
+private val PREVIEW_WIDTH = 320.dp
 
 /**
  * The app's notice of the file operations ([ExplorerUiState.opsNotice], closed with [onDismissNotice]),

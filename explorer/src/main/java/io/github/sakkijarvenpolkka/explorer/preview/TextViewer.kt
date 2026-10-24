@@ -48,6 +48,7 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.CommandItem
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcons
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
@@ -71,11 +72,19 @@ object TextViewerTags {
  * the name and a close button ([onClose]), the "first 1 MB" notice for a longer file, the rows
  * with their line numbers (a row continuing a long line has none) and a status bar with the
  * encoding and a "⋯" menu to read the file again as Auto, UTF-8, Korean (CP949) or UTF-16 (the
- * byte order detected from a byte order mark, else little-endian). A file that is not text, or
- * cannot be read, says so; choosing an encoding shows a binary file anyway.
+ * byte order detected from a byte order mark, else little-endian). A progress bar shows while it
+ * is read. A file that is not text, or cannot be read, says so, with an "Open with" button when
+ * [onOpenWith] is given; choosing an encoding shows a binary file anyway. A host that draws its own
+ * top bar sets [showTitle] false (no title row, nor window insets).
  */
 @Composable
-fun TextViewer(file: Path, loader: TextLoader, onClose: () -> Unit) {
+fun TextViewer(
+    file: Path,
+    loader: TextLoader,
+    onClose: () -> Unit,
+    showTitle: Boolean = true,
+    onOpenWith: (() -> Unit)? = null,
+) {
     var forced by rememberSaveable(file) { mutableStateOf<TextEncoding?>(null) }
     var detected by rememberSaveable(file) { mutableStateOf<TextEncoding?>(null) }
     var state by remember(file, loader) { mutableStateOf<ViewState>(ViewState.Loading) }
@@ -94,9 +103,9 @@ fun TextViewer(file: Path, loader: TextLoader, onClose: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(colors.background)
-            .windowInsetsPadding(WindowInsets.safeDrawing),
+            .then(if (showTitle) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier),
     ) {
-        TitleRow(file, onClose)
+        if (showTitle) TitleRow(file, onClose)
         if (lines?.truncated == true) {
             Box(Modifier.padding(horizontal = 12.dp, vertical = 4.dp)) {
                 InfoBar(InfoSeverity.INFO, stringResource(R.string.text_truncated))
@@ -104,10 +113,10 @@ fun TextViewer(file: Path, loader: TextLoader, onClose: () -> Unit) {
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when (val shown = state) {
-                ViewState.Loading -> Unit
-                ViewState.Failed -> Notice(stringResource(R.string.open_unsupported))
+                ViewState.Loading -> FluentProgressBar(progress = null, Modifier.align(Alignment.Center))
+                ViewState.Failed -> ViewerNotice(stringResource(R.string.open_unsupported), onOpenWith)
                 is ViewState.Shown -> when (val document = shown.document) {
-                    TextDocument.Binary -> Notice(stringResource(R.string.text_binary))
+                    TextDocument.Binary -> ViewerNotice(stringResource(R.string.text_binary), onOpenWith)
                     is TextDocument.Lines -> Rows(file, document.lines)
                 }
             }
@@ -166,16 +175,6 @@ internal fun ViewerNotice(message: String, onOpenWith: (() -> Unit)?) {
             style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
         )
         if (onOpenWith != null) FluentButton(stringResource(R.string.cmd_open_with), onClick = onOpenWith)
-    }
-}
-
-@Composable
-private fun Notice(text: String) {
-    Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-        BasicText(
-            text,
-            style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
-        )
     }
 }
 

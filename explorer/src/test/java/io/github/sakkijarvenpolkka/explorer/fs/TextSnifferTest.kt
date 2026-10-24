@@ -4,15 +4,69 @@ package io.github.sakkijarvenpolkka.explorer.fs
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CharsetDecoder
+import java.nio.charset.CharsetEncoder
+import java.nio.charset.CoderResult
 import kotlin.text.Charsets.UTF_16BE
 import kotlin.text.Charsets.UTF_16LE
 import kotlin.text.Charsets.UTF_8
 
 class TextSnifferTest {
+
+    /**
+     * UTF-8 decoded the way Android's ICU decoders do it: a character left unfinished at the end of the
+     * input is taken into the decoder (all the input is consumed), and only flush() tells of it, as
+     * malformed. Unlike the JDK's, which leaves those bytes in the input.
+     */
+    private class BufferingUtf8 : Charset("x-test-buffering-utf-8", null) {
+        override fun contains(cs: Charset): Boolean = false
+
+        override fun newEncoder(): CharsetEncoder = throw UnsupportedOperationException()
+
+        override fun newDecoder(): CharsetDecoder = object : CharsetDecoder(this, 1f, 1f) {
+            private var held = 0
+
+            override fun decodeLoop(input: ByteBuffer, output: CharBuffer): CoderResult {
+                val bytes = ByteArray(input.remaining()).also { input.get(it) }
+                val cut = unfinishedTail(bytes)
+                held += cut
+                output.put(String(bytes, 0, bytes.size - cut, UTF_8))
+                return CoderResult.UNDERFLOW
+            }
+
+            override fun implFlush(output: CharBuffer): CoderResult =
+                if (held > 0) CoderResult.malformedForLength(held) else CoderResult.UNDERFLOW
+
+            override fun implReset() {
+                held = 0
+            }
+        }
+
+        /** How many bytes at the end of [bytes] begin a character they do not finish. */
+        private fun unfinishedTail(bytes: ByteArray): Int {
+            for (back in 1..minOf(3, bytes.size)) {
+                val b = bytes[bytes.size - back].toInt() and 0xFF
+                if (b and 0xC0 == 0x80) continue
+                val length = when {
+                    b >= 0xF0 -> 4
+                    b >= 0xE0 -> 3
+                    b >= 0xC0 -> 2
+                    else -> 1
+                }
+                return if (back < length) back else 0
+            }
+            return 0
+        }
+    }
 
     private fun bytes(vararg values: Int): ByteArray = ByteArray(values.size) { values[it].toByte() }
 
@@ -223,5 +277,48 @@ class TextSnifferTest {
         assertFalse(isTextCandidate("photo.jpg", "image/jpeg"))
         assertFalse(isTextCandidate("report.pdf", "application/pdf"))
         assertFalse(isTextCandidate(".txt", null))
+    }
+
+    @Test
+    fun unfinishedLastCharacterReportedByFlushIsMalformed() {
+        // A whole file whose last character is cut short, read by a decoder that tells so only when flushed.
+        val bytes = "a".toByteArray() + "가".toByteArray(UTF_8).copyOf(2)
+        val buffering = BufferingUtf8()
+        assertNull(TextSniffer.decode(bytes, 0, TextEncoding.UTF8, truncated = false, strict = true, charset = buffering))
+        assertEquals(
+            "a\uFFFD",
+            TextSniffer.decode(bytes, 0, TextEncoding.UTF8, truncated = false, strict = false, charset = buffering),
+        )
+    }
+
+    @Test
+    fun truncatedUtf8TailCutWithoutTheDecodersHelp() {
+        // The head of a longer file, cut 1 and 2 bytes into "가" and 1 into "😀", read by a decoder that
+        // would keep the cut bytes to itself: the cut character is one U+FFFD all the same, and no error.
+        val buffering = BufferingUtf8()
+        val han = "가".toByteArray(UTF_8)
+        val emoji = "\uD83D\uDE00".toByteArray(UTF_8)
+        val cuts = listOf(han.copyOf(1), han.copyOf(2), emoji.copyOf(3))
+        for (head in cuts.map { "ab".toByteArray() + it }) {
+            assertEquals(
+                "ab\uFFFD",
+                TextSniffer.decode(head, 0, TextEncoding.UTF8, truncated = true, strict = true, charset = buffering),
+            )
+        }
+        // A head that ends on a whole character has nothing cut.
+        val whole = "ab".toByteArray() + han
+        assertEquals("ab가", TextSniffer.decode(whole, 0, TextEncoding.UTF8, truncated = true, strict = true, charset = buffering))
+        // Stray continuation bytes at the end are invalid, not cut.
+        assertNull(TextSniffer.decode(bytes(0x61, 0x80, 0x80), 0, TextEncoding.UTF8, truncated = true, strict = true))
+    }
+
+    @Test
+    fun readHeadRefusesNegativeLimit() {
+        assertThrows(IllegalArgumentException::class.java) {
+            TextSniffer.readHead(ByteArrayInputStream(ByteArray(1)), limit = -1)
+        }
+        val (empty, truncated) = TextSniffer.readHead(ByteArrayInputStream(ByteArray(1)), limit = 0)
+        assertEquals(0, empty.size)
+        assertTrue(truncated)
     }
 }

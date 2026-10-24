@@ -199,6 +199,8 @@
 
     <!-- The text viewer -->
     <string name="text_truncated">Showing the first 1 MB</string>
+    <string name="preview_none">Select a file to preview</string>
+    <string name="preview_unavailable">No preview available</string>
     <string name="text_binary">This file isn\'t a text file</string>
     <string name="encoding_auto">Auto</string>
     <string name="encoding_utf8">UTF-8</string>

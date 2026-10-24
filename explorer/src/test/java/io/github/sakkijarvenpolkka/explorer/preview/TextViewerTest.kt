@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer.preview
 
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
@@ -20,6 +22,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.TextEncoding
 import io.github.sakkijarvenpolkka.explorer.fs.koreanCharset
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.awaitCancellation
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -28,6 +31,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -56,9 +60,15 @@ class TextViewerTest {
         }
     }
 
-    private fun show(file: Path, loader: TextLoader, onClose: () -> Unit = {}) {
+    private fun show(
+        file: Path,
+        loader: TextLoader,
+        onClose: () -> Unit = {},
+        showTitle: Boolean = true,
+        onOpenWith: (() -> Unit)? = null,
+    ) {
         rule.setContent {
-            FluentTheme(dark = false, accent = null) { TextViewer(file, loader, onClose) }
+            FluentTheme(dark = false, accent = null) { TextViewer(file, loader, onClose, showTitle, onOpenWith) }
         }
     }
 
@@ -97,7 +107,7 @@ class TextViewerTest {
             override suspend fun load(file: Path, forced: TextEncoding?): TextDocument = document
         }
         var closed = false
-        show(Paths.get("/storage/emulated/0/notes.txt"), loader) { closed = true }
+        show(Paths.get("/storage/emulated/0/notes.txt"), loader, onClose = { closed = true })
         waitFor { shown("first line") }
 
         rule.onNodeWithText("notes.txt").assertIsDisplayed()
@@ -140,8 +150,12 @@ class TextViewerTest {
         // UTF-16 without a byte order mark: NUL bytes, so not text until UTF-16 is chosen.
         val file = file("notes.txt", "abc\n가나".toByteArray(UTF_16LE))
         val loader = RecordingLoader()
-        show(file, loader)
+        var opened = 0
+        show(file, loader, onOpenWith = { opened++ })
         waitFor { shown("이 파일은 텍스트 파일이 아닙니다") }
+        // Not text: another app may open it.
+        rule.onNodeWithText("연결 프로그램").performClick()
+        rule.runOnIdle { assertEquals(1, opened) }
 
         choose(TextViewerTags.ENCODING_UTF16)
         waitFor { shown("가나") }
@@ -165,5 +179,31 @@ class TextViewerTest {
         waitFor { encodingShown("UTF-16") }
         rule.onNodeWithText("가나다").assertIsDisplayed()
         assertEquals(listOf(null, TextEncoding.CP949, TextEncoding.UTF16BE), loader.forced.toList())
+    }
+
+    @Test
+    fun loadFailureOffersOpenWith() {
+        val loader = object : TextLoader {
+            override suspend fun load(file: Path, forced: TextEncoding?): TextDocument = throw IOException("Gone")
+        }
+        var opened = 0
+        show(Paths.get("/storage/emulated/0/notes.txt"), loader, onOpenWith = { opened++ })
+        waitFor { shown("이 파일은 열 수 없습니다") }
+        rule.onNodeWithText("연결 프로그램").performClick()
+        rule.runOnIdle { assertEquals(1, opened) }
+        rule.onNodeWithTag(TextViewerTags.LINES).assertDoesNotExist()
+    }
+
+    @Test
+    fun showsProgressWhileLoadingUnderTheHostsBar() {
+        val loader = object : TextLoader {
+            override suspend fun load(file: Path, forced: TextEncoding?): TextDocument = awaitCancellation()
+        }
+        show(Paths.get("/storage/emulated/0/notes.txt"), loader, showTitle = false)
+        rule.waitForIdle()
+        rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.ProgressBarRangeInfo)).assertExists()
+        // The host draws the name and the close button.
+        rule.onNodeWithText("notes.txt").assertDoesNotExist()
+        rule.onNodeWithContentDescription("닫기").assertDoesNotExist()
     }
 }

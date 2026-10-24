@@ -21,8 +21,8 @@ import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
 import io.github.sakkijarvenpolkka.explorer.util.extensionOf
-import java.util.Locale
 
 /**
  * Draws [icon] in [tint] (20 dp unless [modifier] sizes it). A [contentDescription] makes it
@@ -696,7 +696,7 @@ object FluentIcons {
 fun iconFor(entry: FileEntry): ImageVector = when (entry.kind) {
     EntryKind.DIR -> FluentIcons.Folder
     EntryKind.FILE -> {
-        val mime = entry.mime?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
+        val mime = baseMimeType(entry.mime)
         iconForMime(mime)
             ?: iconForExtension(extensionOf(entry.name))
             ?: if (mime?.startsWith("text/") == true) FluentIcons.Text else FluentIcons.File

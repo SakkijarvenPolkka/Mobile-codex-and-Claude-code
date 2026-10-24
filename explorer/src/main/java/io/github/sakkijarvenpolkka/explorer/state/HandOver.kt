@@ -38,8 +38,11 @@ internal class HandOver(
     private val scope: CoroutineScope,
     private val shell: ShellHost,
 ) {
-    /** Opens the file [entry] in another app; an APK needs the user to let this app install apps first. */
-    fun open(entry: FileEntry) = handOver(listOf(entry.path)) { openWith ->
+    /**
+     * Opens the file [entry] in another app, which makes it a recent file; an APK needs the user to let
+     * this app install apps first.
+     */
+    fun open(entry: FileEntry) = handOver(listOf(entry.path), opens = entry.path) { openWith ->
         if (entry.mime == APK_MIME && openWith.needsInstallPermission()) {
             Prepared.Refused(OpenResult.NeedsInstallPermission)
         } else {
@@ -62,10 +65,11 @@ internal class HandOver(
 
     /**
      * Hands [files] to another app with the intent [prepare] makes, off the main thread, for the
-     * shell to start ([ExplorerUiState.launch]). A file gone since its folder was read shows "not
-     * found" and the folder is read again; one the FileProvider does not serve cannot be opened.
+     * shell to start ([ExplorerUiState.launch]); a file it [opens] becomes a recent file then. A file
+     * gone since its folder was read shows "not found" and the folder is read again; one the
+     * FileProvider does not serve cannot be opened.
      */
-    private fun handOver(files: List<Path>, prepare: (OpenWith) -> Prepared) {
+    private fun handOver(files: List<Path>, opens: Path? = null, prepare: (OpenWith) -> Prepared) {
         val openWith = deps.openWith ?: return
         val at = shell.here()
         scope.launch {
@@ -80,7 +84,10 @@ internal class HandOver(
                 if (error == FsError.Unsupported) Prepared.Refused(OpenResult.Unsupported) else Prepared.Failed(error)
             }
             when (prepared) {
-                is Prepared.Launch -> shell.setLaunch(PendingLaunch(prepared.intent, at))
+                is Prepared.Launch -> {
+                    shell.setLaunch(PendingLaunch(prepared.intent, at))
+                    opens?.let(deps::addRecent)
+                }
                 is Prepared.Refused -> onOpenResult(prepared.result, at)
                 is Prepared.Failed -> shell.showError(at, errorText(prepared.error))
             }

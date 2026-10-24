@@ -31,6 +31,11 @@ import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.PermissionGate
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidImageDecoder
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidMediaPort
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidPdfOpener
+import io.github.sakkijarvenpolkka.explorer.preview.FsTextLoader
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.ui.ExplorerShell
@@ -53,10 +58,20 @@ class MainActivity : ComponentActivity() {
             initializer {
                 val app = application as ExplorerApp
                 val mime = MimeResolver()
+                // The view model outlives this activity, so these hold none of it: each player gets the
+                // context of the shell that shows it.
+                val viewers = ViewerDeps(
+                    text = FsTextLoader(NioFsBackend, Dispatchers.IO),
+                    images = AndroidImageDecoder(Dispatchers.IO),
+                    pdf = AndroidPdfOpener(app, Dispatchers.IO),
+                    media = ::AndroidMediaPort,
+                    io = Dispatchers.IO,
+                )
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
                     fileOps = app.fileOps, bin = app.bin, runner = app.runner,
                     opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice, thumbnails = app.thumbnails,
+                    viewers = viewers,
                 )
                 ExplorerViewModel(app, deps)
             }

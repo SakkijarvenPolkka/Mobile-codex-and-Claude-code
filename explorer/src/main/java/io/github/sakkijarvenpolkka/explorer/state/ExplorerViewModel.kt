@@ -35,6 +35,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
@@ -54,7 +55,6 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -77,9 +77,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val host = Host()
     private val handOver = HandOver(app, deps, viewModelScope, host)
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
+    private val viewing = Viewers(deps, viewModelScope, host, handOver)
 
     /** The app's thumbnails, for the list to draw ([ExplorerDeps.thumbnails]). */
     val thumbnails: Thumbnails? = deps.thumbnails
+
+    /** What the viewers read files with ([ExplorerDeps.viewers]); without it, every file opens in another app. */
+    val viewers: ViewerDeps? = deps.viewers
 
     /** What the app's file operations are doing: the one running, its conflict, the queue. */
     val runner: StateFlow<RunnerState> = ops.runner
@@ -116,6 +120,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Env(g, v, c, f)
         },
         ops.state,
+        viewing.state,
         ::build,
     ).stateIn(
         viewModelScope,
@@ -126,6 +131,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             ),
             Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, settings.favorites.value),
             ops.state.value,
+            viewing.state.value,
         ),
     )
 
@@ -160,14 +166,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /**
      * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a
-     * file in another app (the built-in viewers come later). An APK needs the user to let this
-     * app install apps first, which a message offers to do.
+     * file in its built-in viewer or else another app ([Viewers.open]). An APK needs the user to
+     * let this app install apps first, which a message offers to do.
      */
     fun open(entry: FileEntry) {
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            EntryKind.FILE -> handOver.open(entry)
+            EntryKind.FILE -> viewing.open(entry, listedRows())
             // A pipe, socket or device: no app reads it as a file.
             EntryKind.OTHER -> host.showError(here(), UiText.res(R.string.open_unsupported))
         }
@@ -239,6 +245,25 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun dismissOpsNotice() = ops.dismissNotice()
 
+    fun closeViewer() = viewing.close()
+
+    /** Turns the preview pane of wide windows on or off (⋯ ▸ Preview pane, Alt+P). */
+    fun togglePreviewPane() = viewing.togglePane()
+
+    /** The window is [expanded] (840 dp wide or more): the navigation pane is pinned, the preview pane may show. */
+    fun setExpanded(expanded: Boolean) {
+        viewing.setExpanded(expanded)
+        if (expanded) setDrawerOpen(false)
+    }
+
+    // The top bar of the viewer acts on the file it shows.
+
+    fun share(entry: FileEntry) = handOver.share(listOf(entry.path))
+
+    fun openWith(entry: FileEntry) = handOver.openWith(entry)
+
+    fun showProperties(entry: FileEntry) = shell.update { it.copy(overlay = Overlay.Properties(listOf(entry))) }
+
     // The file operations, as OperationsUi describes them.
 
     fun cut() = ops.cut(selectedEntries())
@@ -248,8 +273,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun paste() = ops.paste()
 
     fun delete(permanent: Boolean) = ops.delete(permanent, selectedEntries())
-
-    fun confirmPermanent(paths: List<Path>) = ops.confirmPermanent(paths)
 
     fun startRename(entry: FileEntry) = ops.startRename(entry)
 
@@ -344,12 +367,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     /** Opens or closes the navigation drawer (narrow windows). */
     fun setDrawerOpen(open: Boolean) = shell.update { it.copy(drawerOpen = open) }
 
-    /** The system Back: closes what is open, clears the selection, closes the drawer or goes back, in that order. */
+    /**
+     * The system Back: closes what is open (a menu or dialog, then the viewer), clears the selection,
+     * closes the drawer or goes back, in that order.
+     */
     fun systemBack() {
-        val tab = tabs.value.active
-        val state = shell.value
-        when (backTarget(state.overlay != null, tab.selection.active, state.drawerOpen, tab.back.isNotEmpty())) {
-            BackTarget.OVERLAY -> closeOverlay()
+        when (backOf(tabs.value.active, shell.value, viewing.state.value)) {
+            BackTarget.OVERLAY -> if (shell.value.overlay != null) closeOverlay() else viewing.close()
             BackTarget.SELECTION -> reduce(TabAction.ClearSelection)
             BackTarget.DRAWER -> setDrawerOpen(false)
             BackTarget.HISTORY -> back()
@@ -479,7 +503,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val at = here()
         viewModelScope.launch {
             val target = try {
-                withContext(deps.io) { resolve(text, base) }
+                withContext(deps.io) { resolvePath(deps.fs, deps.lookup, text, base) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -499,18 +523,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                 is Resolved.Failed -> host.showError(at, errorText(target.error))
             }
         }
-    }
-
-    private fun resolve(text: String, base: Path?): Resolved {
-        val path = try {
-            Paths.get(text)
-        } catch (e: InvalidPathException) {
-            return Resolved.Failed(FsError.NotFound)
-        }
-        val absolute = if (path.isAbsolute) path else base?.resolve(path) ?: return Resolved.Failed(FsError.NotFound)
-        val real = deps.fs.realPath(absolute)
-        if (deps.lookup.volumeOf(real) == null) return Resolved.Outside
-        return if (deps.fs.attributes(real).isDirectory) Resolved.Folder(real) else Resolved.File(real)
     }
 
     private fun here(): Location = tabs.value.active.current.location
@@ -550,6 +562,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
      * read again once it is back, and the moves to where a volume is now are dispatched.
      */
     private fun onVolumeEvent(e: VolumeEvent) {
+        if (e is VolumeEvent.Ejecting) viewing.onEjecting(e.uuid)
         val change = volumeTracking.onVolumeEvent(e, tabs.value)
         change.ejected.forEach(loadedFor::remove)
         if (tabs.value.activeId in change.ejected) closeOverlay()
@@ -590,7 +603,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun viewFor(location: Location, global: GlobalSettings): ViewSetting =
         codec.encode(location)?.let(settings::viewFor) ?: global.defaultView
 
-    private fun build(core: Core, env: Env, opsState: OperationsUi.State): ExplorerUiState {
+    private fun build(core: Core, env: Env, opsState: OperationsUi.State, viewed: Viewers.State): ExplorerUiState {
         val tab = core.tabs.active
         val location = tab.current.location
         val unavailable = core.unavailable[tab.id]
@@ -604,8 +617,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             isRestrictedAppDataPath(volume.root, folder, obbAllowed = core.shell.obbAllowed)
         val roots = env.volumes.mapNotNull { it.root }
         val inBin = location == Location.RecycleBin
-        val back =
-            backTarget(core.shell.overlay != null, tab.selection.active, core.shell.drawerOpen, tab.back.isNotEmpty())
         val commands = if (unavailable != null) {
             setOf(Command.REFRESH, Command.OPTIONS)
         } else {
@@ -632,7 +643,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             volumes = env.volumes,
             clipboard = env.clipboard,
             commands = commands,
-            backTarget = back,
+            backTarget = backOf(tab, core.shell, viewed),
             unavailable = unavailable,
             restricted = restricted,
             message = core.shell.message,
@@ -647,8 +658,20 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             failedOp = opsState.failures.firstOrNull(),
             renameError = opsState.renameError,
             opsNotice = opsState.notice,
+            renamePending = opsState.renamePending,
+            viewer = viewed.viewer,
+            previewPane = viewed.pane,
+            previewed = viewing.previewed(viewed, rows, selected),
         )
     }
+
+    /** What Back acts on in [tab] with [shell] over it ([backTarget]): the viewer counts as what is open. */
+    private fun backOf(tab: TabState, shell: ShellState, viewed: Viewers.State): BackTarget? = backTarget(
+        overlayOpen = shell.overlay != null || viewed.viewer != null,
+        selectionActive = tab.selection.active,
+        drawerOpen = shell.drawerOpen,
+        canGoBack = tab.back.isNotEmpty(),
+    )
 
     /** Whether the folders Pin and Unpin act on (the selection, else [folder]) are all favorites. */
     private fun pinned(selected: List<FileEntry>, folder: Path?, favorites: List<Favorite>): Boolean {
@@ -658,13 +681,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             val rel = volume?.root?.relativize(path)?.toString()
             volume != null && favorites.any { it.uuid == volume.uuid && it.rel == rel }
         }
-    }
-
-    private fun kindOf(location: Location): LocationKind = when (location) {
-        Location.Home -> LocationKind.HOME
-        is Location.Folder -> LocationKind.FOLDER
-        Location.RecycleBin -> LocationKind.BIN
-        is Location.SearchResults -> LocationKind.SEARCH
     }
 
     /** What [handOver] and [ops] need of the view model. */
@@ -731,11 +747,4 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private data class LoadKey(val location: Location, val options: ListOptions)
 
     private class ScrollSpot(val location: Location, val index: Int, val offset: Int)
-
-    private sealed interface Resolved {
-        data class Folder(val path: Path) : Resolved
-        data class File(val path: Path) : Resolved
-        data object Outside : Resolved
-        data class Failed(val error: FsError) : Resolved
-    }
 }

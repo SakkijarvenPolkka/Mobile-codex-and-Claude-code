@@ -34,6 +34,14 @@ import io.github.sakkijarvenpolkka.explorer.state.Command.UNPIN
 /** The kind of [Location] the active tab shows. */
 enum class LocationKind { HOME, FOLDER, BIN, SEARCH }
 
+/** The kind of [location]. */
+internal fun kindOf(location: Location): LocationKind = when (location) {
+    Location.Home -> LocationKind.HOME
+    is Location.Folder -> LocationKind.FOLDER
+    Location.RecycleBin -> LocationKind.BIN
+    is Location.SearchResults -> LocationKind.SEARCH
+}
+
 /** Everything the command bar, the ⋯ menu and the context menu can offer. */
 enum class Command {
     OPEN, OPEN_WITH, NEW_FOLDER, NEW_TEXT, CUT, COPY, PASTE, RENAME, SHARE, DELETE, DELETE_PERMANENT,

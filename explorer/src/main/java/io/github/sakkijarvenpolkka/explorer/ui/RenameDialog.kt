@@ -40,7 +40,7 @@ import io.github.sakkijarvenpolkka.explorer.util.text
  * name, by the rules of its volume ([traits], [NameValidator]), shows while typing, and OK is enabled
  * only without it; OK and Done call [onCommit] with the name as typed, Cancel and Back [onDismiss].
  * Why renaming to a name failed ([failure]) shows while that name is in the box; the dialog stays open
- * with what was typed until the rename is done.
+ * with what was typed until the rename is done. While it is [pending], OK and Done do nothing.
  */
 @Composable
 fun RenameDialog(
@@ -49,15 +49,16 @@ fun RenameDialog(
     onCommit: (String) -> Unit,
     onDismiss: () -> Unit,
     failure: RenameError? = null,
+    pending: Boolean = false,
 ) {
     var value by remember(entry) { mutableStateOf(TextFieldValue(entry.name, preselection(entry))) }
     val problem = (NameValidator.validate(value.text, traits) as? NameCheck.Bad)?.problem
-    val commit = { if (problem == null) onCommit(value.text) }
+    val commit = { if (problem == null && !pending) onCommit(value.text) }
     ContentDialog(
         title = stringResource(R.string.rename_title),
         onDismiss = onDismiss,
         primary = stringResource(R.string.ok) to commit,
-        primaryEnabled = problem == null,
+        primaryEnabled = problem == null && !pending,
         close = stringResource(R.string.cancel) to onDismiss,
     ) {
         val focus = remember { FocusRequester() }

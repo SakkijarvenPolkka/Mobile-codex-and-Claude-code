@@ -6,9 +6,11 @@
  */
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import java.io.IOException
 import java.io.InputStream
 import java.nio.channels.FileChannel
 import java.nio.file.DirectoryIteratorException
+import java.nio.file.FileSystemException
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.NoSuchFileException
@@ -59,6 +61,26 @@ interface FsBackend {
 
     /** Bytes this app may still write on [path]'s volume. */
     fun availableBytes(path: Path): Long
+}
+
+/**
+ * Whether [path] itself is there (NOFOLLOW_LINKS, so a broken link is): its attributes are read.
+ * False only when it is not found, also when a folder on its way is a file now (ENOTDIR). Any other
+ * failure leaves that untold, and is thrown: [FsBackend.exists] says false for it as well (an item
+ * the app may not look at, an I/O error).
+ */
+fun FsBackend.isPresent(path: Path): Boolean = try {
+    attributes(path)
+    true
+} catch (e: IOException) {
+    if (e.toFsError() != FsError.NotFound && !e.isNotADirectory()) throw e
+    false
+}
+
+/** Whether [this] is ENOTDIR: the JDK says so by its strerror text alone, Android's libcore may name the errno. */
+private fun IOException.isNotADirectory(): Boolean {
+    val text = (this as? FileSystemException)?.reason ?: message ?: return false
+    return "ENOTDIR" in text || text.contains("Not a directory", ignoreCase = true)
 }
 
 /** [FsBackend] on `java.nio.file`. */

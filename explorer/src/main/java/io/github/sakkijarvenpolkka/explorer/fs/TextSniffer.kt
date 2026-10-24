@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.fs
 
+import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
 import io.github.sakkijarvenpolkka.explorer.util.extensionOf
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -13,7 +14,6 @@ import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.UnsupportedCharsetException
-import java.util.Locale
 
 /** The most of a file the text viewer reads and shows: 1 MiB. */
 const val TEXT_PREVIEW_LIMIT = 1 shl 20
@@ -26,8 +26,7 @@ val TEXT_EXTENSIONS: Set<String> = setOf(
 
 /** Whether the text viewer shows a file named [name] of type [mime]: a `text/` type, or an extension in [TEXT_EXTENSIONS]. */
 fun isTextCandidate(name: String, mime: String?): Boolean {
-    val type = mime?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
-    return type?.startsWith("text/") == true || extensionOf(name) in TEXT_EXTENSIONS
+    return baseMimeType(mime)?.startsWith("text/") == true || extensionOf(name) in TEXT_EXTENSIONS
 }
 
 /** The encodings the text viewer reads; [CP949] is [koreanCharset]. */
@@ -72,9 +71,11 @@ object TextSniffer {
 
     /**
      * The first [limit] bytes of [input] (all of it when it is shorter), read in a loop of
-     * plain reads, and whether more follows them. Reads at most one byte past [limit].
+     * plain reads, and whether more follows them. Reads at most one byte past [limit], which may
+     * not be negative.
      */
     fun readHead(input: InputStream, limit: Int = TEXT_PREVIEW_LIMIT): Pair<ByteArray, Boolean> {
+        require(limit >= 0) { "limit $limit" }
         var buffer = ByteArray(minOf(limit, READ_CHUNK))
         var filled = 0
         while (true) {
@@ -106,34 +107,73 @@ object TextSniffer {
     }
 
     /**
-     * [bytes] from [start] in [encoding]. When [strict], null if they are not valid in it;
-     * otherwise what is not valid becomes U+FFFD. A [truncated] head is decoded as input that
-     * goes on (see [sniff]).
+     * [bytes] from [start] in [encoding], read with [charset] (its own, unless a test gives another). When
+     * [strict], null if they are not valid in it; otherwise what is not valid becomes U+FFFD. A [truncated]
+     * head is cut here before it is decoded (see [sniff]): UTF-16 to an even length, and UTF-8 before a
+     * character it leaves unfinished, which becomes one U+FFFD. Nothing is left to how a decoder treats an
+     * unfinished end: the JDK's leave it in the input, Android's take it in and tell of it only when flushed,
+     * which is checked here too (as for a CP949 head that ends inside a character).
      */
-    private fun decode(bytes: ByteArray, start: Int, encoding: TextEncoding, truncated: Boolean, strict: Boolean): String? {
+    internal fun decode(
+        bytes: ByteArray,
+        start: Int,
+        encoding: TextEncoding,
+        truncated: Boolean,
+        strict: Boolean,
+        charset: Charset = charsetOf(encoding),
+    ): String? {
         val utf16 = encoding == TextEncoding.UTF16LE || encoding == TextEncoding.UTF16BE
-        val end = if (truncated && utf16 && (bytes.size - start) % 2 != 0) bytes.size - 1 else bytes.size
+        var end = if (truncated && utf16 && (bytes.size - start) % 2 != 0) bytes.size - 1 else bytes.size
+        val cut = if (truncated && encoding == TextEncoding.UTF8) unfinishedUtf8(bytes, start, end) else 0
+        end -= cut
         val onError = if (strict) CodingErrorAction.REPORT else CodingErrorAction.REPLACE
-        val decoder = charsetOf(encoding).newDecoder().onMalformedInput(onError).onUnmappableCharacter(onError)
+        val decoder = charset.newDecoder().onMalformedInput(onError).onUnmappableCharacter(onError)
         val input = ByteBuffer.wrap(bytes, start, end - start)
-        // None of these encodings makes more characters than bytes; one more for the U+FFFD of a cut character.
+        // None of these encodings makes more characters than bytes; one more for a U+FFFD at the end.
         var output = CharBuffer.allocate(end - start + 1)
         while (true) {
-            val result = decoder.decode(input, output, !truncated)
+            val result = decoder.decode(input, output, true)
             if (result.isError) return null
             if (!result.isOverflow) break
             output = output.grown()
         }
-        if (truncated) {
-            if (input.hasRemaining()) {
-                if (!output.hasRemaining()) output = output.grown()
-                output.put(REPLACEMENT)
+        while (true) {
+            val result = decoder.flush(output)
+            if (result.isOverflow) {
+                output = output.grown()
+                continue
             }
-        } else {
-            while (decoder.flush(output).isOverflow) output = output.grown()
+            // An unfinished last character the decoder kept back: the action set above does not apply here.
+            if (result.isError) {
+                if (strict) return null
+                output = output.withRoom().put(REPLACEMENT)
+            }
+            break
         }
+        if (cut > 0) output = output.withRoom().put(REPLACEMENT)
         // array() and position() rather than flip(): CharBuffer.flip() returning CharBuffer is newer than API 30.
         return String(output.array(), 0, output.position())
+    }
+
+    /**
+     * How many bytes at the end of [bytes] (from [start] to [end]) begin a UTF-8 character they do not
+     * finish: a lead byte followed by fewer continuation bytes than it announces (1 to 3). 0 for a whole
+     * last character, and for bytes that are not valid anyway, which the decoder tells of.
+     */
+    private fun unfinishedUtf8(bytes: ByteArray, start: Int, end: Int): Int {
+        for (back in 1..minOf(3, end - start)) {
+            val byte = bytes[end - back].toInt() and 0xFF
+            // A continuation byte: the lead byte is further back.
+            if (byte and 0xC0 == 0x80) continue
+            val length = when (byte) {
+                in 0xC2..0xDF -> 2
+                in 0xE0..0xEF -> 3
+                in 0xF0..0xF4 -> 4
+                else -> return 0
+            }
+            return if (back < length) back else 0
+        }
+        return 0
     }
 
     /** [bytes] from [start] decoded with [encoding], what is not valid in it shown as U+FFFD. */
@@ -141,6 +181,9 @@ object TextSniffer {
         SniffResult.Text(checkNotNull(decode(bytes, start, encoding, truncated, strict = false)), encoding, truncated)
 
     private fun CharBuffer.grown(): CharBuffer = CharBuffer.allocate(capacity() * 2 + 16).put(array(), 0, position())
+
+    /** This buffer, or a larger copy when it is full. */
+    private fun CharBuffer.withRoom(): CharBuffer = if (hasRemaining()) this else grown()
 
     private fun charsetOf(encoding: TextEncoding): Charset = when (encoding) {
         TextEncoding.UTF8 -> Charsets.UTF_8

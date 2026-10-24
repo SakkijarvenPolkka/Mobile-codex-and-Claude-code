@@ -14,8 +14,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
-import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
@@ -23,8 +23,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.Resolution
+import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.ops.CapturedLog
-import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
@@ -96,17 +96,19 @@ class ExplorerViewModelOpsTest {
 
     /**
      * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
-     * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there.
+     * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there. The
+     * Recycle Bin finds the volumes through [binLookup] of them.
      */
     private fun start(
         extra: List<Volume> = emptyList(),
         fs: FsBackend = NioFsBackend,
         notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
+        binLookup: (VolumeLookup) -> VolumeLookup = { it },
         beforeViewModel: () -> Unit = {},
     ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
         val journal = OperationJournal(journalDir, fs)
-        bin = RecycleBin(fs, volumes, { 1_700_000_000_000L }, ::newId)
+        bin = RecycleBin(fs, binLookup(volumes), { 1_700_000_000_000L }, ::newId)
         val fileOps = FileOps(fs, volumes, LABELS, journal, ids = ::newId, bin = bin)
         runner = OperationRunner(runnerScope, fileOps, journal, io, host = null)
         val deps = ExplorerDeps(
@@ -654,29 +656,83 @@ class ExplorerViewModelOpsTest {
     }
 
     @Test
-    fun deleteToBinAccessDeniedIsListed() {
-        val (a, b, c) = listOf("a.txt", "b.txt", "c.txt").map { root.resolve(it).toString() }
-        val spec = OperationSpec("op", OpKind.DELETE_TO_BIN, listOf(a, b, c))
-        val denied = ItemFailure(a, FsError.AccessDenied)
-        val failed = listOf(denied, ItemFailure(b, FsError.BinUnavailable), ItemFailure(c, FsError.NotFound))
+    fun retryOfListedDeleteToBinFailuresRetriesOnlyThose() {
+        val a = file("a.txt")
+        val gone = root.resolve("gone.txt")
+        val sd = folder.newFolder("sd").toPath().toRealPath()
+        val b = Files.write(sd.resolve("b.txt"), "b".toByteArray())
+        // The SD card's Recycle Bin cannot be made: a file has its name.
+        Files.write(sd.resolve(HiddenNames.RECYCLE_BIN), ByteArray(0))
+        var refuseA = true
+        // Where a.txt is cannot be told, once: the only failure of a delete to the bin it lists.
+        val denyingA = { volumes: VolumeLookup ->
+            VolumeLookup { path ->
+                if (refuseA && path == a) {
+                    refuseA = false
+                    throw FsException(FsError.AccessDenied)
+                }
+                volumes.volumeOf(path)
+            }
+        }
+        start(extra = listOf(FakeVolumes.removable("1A2B-3C4D", "SD card", sd)), binLookup = denyingA)
+        runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a, b, gone).map { it.toString() }))
+        drain()
+        assertEquals(ConfirmRequest.BinUnavailable(listOf(b)), ui.confirm)
+        val listed = checkNotNull(ui.failedOp) { "No failures listed" }
+        assertEquals(listOf(a.toString()), (listed.result as OpResult.Done).failed.map { it.path })
+        vm.answerConfirm(yes = false)
 
-        val told = tellingOf(FinishedOp(spec, OpResult.Done(emptyList(), failed)))
-
-        // What the bin could not take is asked about, what is gone needs no word, the rest is listed.
-        assertEquals(ConfirmRequest.BinUnavailable(listOf(root.resolve("b.txt"))), told.question)
-        assertEquals(FinishedOp(spec, OpResult.Done(emptyList(), listOf(denied))), told.listed)
-        assertNull(told.message)
+        // Only a.txt is tried again: b.txt is not asked about again, nor is gone.txt looked for.
+        vm.retryFailed(listed)
+        drain()
+        assertFalse(Files.exists(a))
+        assertEquals(listOf("a.txt"), bin.list(listOf(root)).map { it.name })
+        assertTrue(Files.exists(b))
+        assertNull(ui.confirm)
+        assertNull(ui.failedOp)
+        assertEquals(done(1), ui.message)
     }
 
     @Test
-    fun refusedDeleteToBinAsksPermanent() {
-        val paths = listOf(root.resolve("a.txt"), root.resolve("b.txt"))
-        val spec = OperationSpec("op", OpKind.DELETE_TO_BIN, paths.map { it.toString() })
+    fun secondCommitWhileRenamingIsIgnored() {
+        file("a.txt")
+        start()
+        vm.startRename(entry("a.txt"))
+        val renaming = checkNotNull(ui.renaming)
+        vm.commitRename(renaming, "b.txt")
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(ui.renamePending)
 
-        val told = tellingOf(FinishedOp(spec, OpResult.Failed(FsError.BinUnavailable, 0, 0)))
+        // OK tapped twice: the rename is under way, and the second one is not started.
+        vm.commitRename(renaming, "b.txt")
+        drain()
+        assertEquals(listOf("b.txt"), names())
+        assertNull(ui.renaming)
+        assertFalse(ui.renamePending)
+        assertNull(ui.message)
+        assertEquals(listOf(root.resolve("b.txt")), ui.selected.map { it.path })
+    }
 
-        // No Recycle Bin at all: every item is asked about, and nothing else is told.
-        assertEquals(Telling(question = ConfirmRequest.BinUnavailable(paths)), told)
+    @Test
+    fun pasteDropsItemWhoseFolderBecameAFile() {
+        dir("d")
+        val x = file("d/x.txt")
+        val dst = dir("dst")
+        start()
+        goTo(root.resolve("d"))
+        select("x.txt")
+        vm.cut()
+        goTo(dst)
+        // d is a file now: x.txt is not there (ENOTDIR, which says so as surely as ENOENT).
+        Files.delete(x)
+        Files.delete(root.resolve("d"))
+        file("d")
+        vm.paste()
+        drain()
+
+        assertNull(ui.message)
+        assertNull(ui.clipboard)
+        assertEquals(emptyList<String>(), names())
     }
 
     @Test

@@ -63,8 +63,8 @@ import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
+import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
 import kotlinx.coroutines.CancellationException
-import java.util.Locale
 import kotlin.math.max
 
 /** The test tags of [ImageViewer]. */
@@ -184,9 +184,8 @@ private fun ImagePage(entry: FileEntry, decoder: ImageDecoderPort, zoom: ZoomSta
 /** Decodes [entry] for a page of [viewport] pixels: as an animation first when its type may be one. */
 private suspend fun decodePage(entry: FileEntry, decoder: ImageDecoderPort, viewport: IntSize): Page.Shown {
     val original = decoder.sizeOf(entry.path)
-    val mime = entry.mime?.substringBefore(';')?.trim()?.lowercase(Locale.ROOT)
     val (width, height) = viewport
-    val animation = if (mime in ANIMATABLE_TYPES) decoder.decodeAnimation(entry.path, width, height) else null
+    val animation = if (baseMimeType(entry.mime) in ANIMATABLE_TYPES) decoder.decodeAnimation(entry.path, width, height) else null
     val still = if (animation == null) decoder.decode(entry.path, width, height) else null
     return Page.Shown(original, still, animation)
 }
