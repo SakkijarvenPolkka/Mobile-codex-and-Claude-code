@@ -5,6 +5,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.ui.fluent
 
+import androidx.annotation.StringRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -27,7 +28,10 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
@@ -36,9 +40,9 @@ import io.github.sakkijarvenpolkka.explorer.R
 enum class InfoSeverity { INFO, WARNING, ERROR, SUCCESS }
 
 /**
- * A full-width message bar: a severity badge, [message] (announced politely by accessibility
- * services when it appears or changes), an optional [action] button and, with [onClose], a
- * close button.
+ * A full-width message bar: a severity badge (named after the severity for accessibility
+ * services), [message] (announced politely when it appears or changes), an optional [action]
+ * button and, with [onClose], a close button.
  */
 @Composable
 fun InfoBar(severity: InfoSeverity, message: String, action: Pair<String, () -> Unit>? = null, onClose: (() -> Unit)? = null) {
@@ -55,7 +59,15 @@ fun InfoBar(severity: InfoSeverity, message: String, action: Pair<String, () -> 
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Canvas(Modifier.size(20.dp)) { drawBadge(severity, tone, contentColorOn(tone)) }
+        val badge = stringResource(severityName(severity))
+        Canvas(
+            Modifier
+                .size(20.dp)
+                .semantics {
+                    contentDescription = badge
+                    role = Role.Image
+                },
+        ) { drawBadge(severity, tone, contentColorOn(tone)) }
         BasicText(
             message,
             modifier = Modifier
@@ -75,6 +87,14 @@ fun InfoBar(severity: InfoSeverity, message: String, action: Pair<String, () -> 
             )
         }
     }
+}
+
+@StringRes
+private fun severityName(severity: InfoSeverity): Int = when (severity) {
+    InfoSeverity.INFO -> R.string.severity_info
+    InfoSeverity.WARNING -> R.string.severity_warning
+    InfoSeverity.ERROR -> R.string.severity_error
+    InfoSeverity.SUCCESS -> R.string.severity_success
 }
 
 private fun severityTone(severity: InfoSeverity, colors: FluentColors): Color = when (severity) {

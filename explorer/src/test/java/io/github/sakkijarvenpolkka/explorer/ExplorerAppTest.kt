@@ -40,6 +40,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbKind
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.deliverBroadcast
 import io.github.sakkijarvenpolkka.explorer.preview.ImageDecoderPort
 import io.github.sakkijarvenpolkka.explorer.preview.MediaPort
 import io.github.sakkijarvenpolkka.explorer.preview.MediaViewer
@@ -273,7 +274,8 @@ class ExplorerAppTest {
         val ejecting = cardIn(card, "ejecting")
         storage.resetStorageVolumeList()
         storage.addStorageVolume(ejecting)
-        app.sendBroadcast(
+        deliverBroadcast(
+            app,
             Intent(Intent.ACTION_MEDIA_EJECT, Uri.fromFile(card.toFile()))
                 .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, ejecting),
         )

@@ -792,7 +792,8 @@ class SearchUiTest {
     @Test
     fun searchStatusSaysResultsMayBeCapped() {
         val capped = ListingState.Streaming(emptyList(), done = true, capped = true, skippedDirs = 0, currentDir = null)
-        rule.setContent { ExplorerTheme(settings.global.value) { SearchStatus(capped, emptyList()) } }
+        val global = settings.global.value
+        rule.setContent { ExplorerTheme(global) { SearchStatus(capped, emptyList()) } }
 
         rule.onNode(hasText(str(R.string.search_capped)) and hasAnyAncestor(hasTestTag(Tags.SEARCH_STATUS)))
             .assertIsDisplayed()

@@ -22,7 +22,9 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
@@ -37,7 +39,9 @@ import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -53,6 +57,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.width
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import org.junit.Assert.assertEquals
@@ -75,6 +80,10 @@ class FluentComponentsTest {
     val rule = createComposeRule()
 
     private val isButton = SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Button)
+
+    private fun clickLabel(label: String) = SemanticsMatcher("click label is \"$label\"") {
+        it.config.getOrNull(SemanticsActions.OnClick)?.label == label
+    }
 
     private fun show(content: @Composable () -> Unit) {
         rule.setContent { FluentTheme(dark = false, accent = null, content = content) }
@@ -242,6 +251,37 @@ class FluentComponentsTest {
         rule.runOnIdle { assertEquals(listOf("primary", "secondary", "close"), calls) }
     }
 
+    @Config(qualifiers = "w800dp-h600dp")
+    @Test
+    fun shortContentDialogIsNarrowerThanTheMaximum() {
+        var long by mutableStateOf(false)
+        show {
+            ContentDialog(title = "Rename", onDismiss = {}, primary = "OK" to {}, close = "Cancel" to {}) {
+                BasicText(if (long) "photo ".repeat(100) else "a.txt")
+            }
+        }
+        val dialog = rule.onNode(SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, "Rename"))
+        val short = dialog.getUnclippedBoundsInRoot().width
+        assertTrue("$short", short < 548.dp)
+        assertTrue("$short", short >= 280.dp)
+
+        // Long content wraps at the maximum width.
+        long = true
+        rule.waitForIdle()
+        assertEquals(548.dp, dialog.getUnclippedBoundsInRoot().width)
+    }
+
+    @Config(qualifiers = "w800dp-h600dp")
+    @Test
+    fun fullWidthContentDialogStaysAtTheMaximum() {
+        show {
+            ContentDialog(title = "Copying", onDismiss = {}, primary = null, close = "Cancel" to {}, fullWidth = true) {
+                BasicText("a.txt")
+            }
+        }
+        rule.onNode(SemanticsMatcher.expectValue(SemanticsProperties.PaneTitle, "Copying")).assertWidthIsEqualTo(548.dp)
+    }
+
     @Test
     fun iconForPicksByMimeAndKind() {
         fun entry(name: String, kind: EntryKind = EntryKind.FILE, mime: String? = null) = FileEntry(
@@ -265,6 +305,9 @@ class FluentComponentsTest {
         assertSame(FluentIcons.Apk, iconFor(entry("app", mime = "application/vnd.android.package-archive")))
         assertSame(FluentIcons.Pdf, iconFor(entry("manual.pdf")))
         assertSame(FluentIcons.Video, iconFor(entry("clip.mp4")))
+        // `.ts` is an MPEG transport stream (video/mp2t), as Android types it; `.tsx` stays code.
+        assertSame(FluentIcons.Video, iconFor(entry("recording.ts")))
+        assertSame(FluentIcons.Code, iconFor(entry("App.tsx")))
         assertSame(FluentIcons.Audio, iconFor(entry("song", mime = "audio/mpeg")))
         assertSame(FluentIcons.Text, iconFor(entry("notes.txt", mime = "text/plain")))
         assertSame(FluentIcons.Code, iconFor(entry("Main.kt", mime = "text/plain")))
@@ -311,6 +354,15 @@ class FluentComponentsTest {
         }
         show { Column { icons.forEach { FluentIcon(it, contentDescription = it.name) } } }
         rule.onNodeWithContentDescription(FluentIcons.Restore.name).assertExists()
+    }
+
+    @Test
+    fun directionalIconsMirrorRightToLeft() {
+        with(FluentIcons) {
+            for (icon in listOf(Back, Forward, ChevronRight, Restore)) assertTrue(icon.name, icon.autoMirror)
+            // Up and down, and pictures of things, read the same either way.
+            for (icon in listOf(Up, ChevronDown, Folder, Search, Close, Play)) assertFalse(icon.name, icon.autoMirror)
+        }
     }
 
     @Test
@@ -363,13 +415,29 @@ class FluentComponentsTest {
             }
         }
         rule.onNodeWithText("SD").assert(isButton).performClick()
-        rule.onNodeWithContentDescription("PC")
+        rule.onNodeWithContentDescription("Folders in PC")
             .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.DropdownList))
             .assertWidthIsAtLeast(48.dp)
             .performClick()
-        rule.onNodeWithContentDescription("SD").performClick()
+        rule.onNodeWithContentDescription("Folders in SD").performClick()
         rule.onNodeWithContentDescription("PC › SD").performTouchInput { click(Offset(width - 4f, centerY)) }
         rule.runOnIdle { assertEquals(listOf("crumb:sd", "children:pc", "children:sd", "edit"), events) }
+    }
+
+    @Test
+    fun breadcrumbNamesItsEditActionAndChevrons() {
+        show {
+            Box(Modifier.fillMaxWidth()) {
+                Breadcrumb(listOf(Crumb("PC", "pc"), Crumb("SD", "sd")), onCrumb = {}, onChildren = {}, onEdit = {})
+            }
+        }
+        rule.onNodeWithContentDescription("PC › SD").assert(clickLabel("Edit address"))
+        // Each chevron says what it opens, not just the name of the segment before it.
+        for (label in listOf("PC", "SD")) {
+            rule.onNodeWithContentDescription("Folders in $label")
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.DropdownList))
+            rule.onNodeWithContentDescription(label).assertDoesNotExist()
+        }
     }
 
     @Test
@@ -441,6 +509,15 @@ class FluentComponentsTest {
         rule.onNodeWithText("Restart").assert(isButton).performClick()
         rule.onNodeWithContentDescription("Close").assert(isButton).performClick()
         rule.runOnIdle { assertEquals(listOf("action", "close"), events) }
+    }
+
+    @Test
+    fun infoBarBadgeNamesItsSeverity() {
+        show { Column { InfoSeverity.entries.forEach { InfoBar(it, "Message ${it.name}") } } }
+        for (description in listOf("Information", "Warning", "Error", "Success")) {
+            rule.onNodeWithContentDescription(description)
+                .assert(SemanticsMatcher.expectValue(SemanticsProperties.Role, Role.Image))
+        }
     }
 
     @Test

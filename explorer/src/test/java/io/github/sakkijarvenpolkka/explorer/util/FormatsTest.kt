@@ -27,6 +27,14 @@ class FormatsTest {
     }
 
     @Test
+    fun negativeSizesShowAsZero() {
+        // A size worked out as a difference can come out below zero; it is never shown as "-5 bytes".
+        assertEquals("0 bytes", Formats.size(-5, korean = false))
+        assertEquals("0바이트", Formats.size(-1, korean = true))
+        assertEquals("0 bytes", Formats.size(Long.MIN_VALUE, korean = false))
+    }
+
+    @Test
     fun bytesBelowOneKbHaveAThousandsSeparator() {
         assertEquals("1,023바이트", Formats.size(1023, korean = true))
         assertEquals("1,023 bytes", Formats.size(1023, korean = false))

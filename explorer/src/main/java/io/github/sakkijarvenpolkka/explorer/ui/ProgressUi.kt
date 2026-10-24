@@ -59,6 +59,8 @@ fun ProgressDialog(op: RunningOp, onBackground: () -> Unit, onCancel: () -> Unit
         primary = null,
         secondary = stringResource(R.string.progress_background) to onBackground,
         close = stringResource(R.string.cancel) to onCancel,
+        // The name changes with each file.
+        fullWidth = true,
     ) {
         Column(Modifier.fillMaxWidth().testTag(Tags.PROGRESS), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             progress?.currentName?.let { Name(DisplayName.of(it)) }

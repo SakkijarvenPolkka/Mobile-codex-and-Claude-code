@@ -30,15 +30,17 @@ object Formats {
     /**
      * Below 1 KB the exact count with a thousands separator (`1,023 bytes`, Korean
      * `1,023바이트`); from there a number of three significant digits and the unit (`1.50 KB`,
-     * `10.0 KB`, `118 MB`). The Korean bytes label follows the number without a space.
+     * `10.0 KB`, `118 MB`). The Korean bytes label follows the number without a space. A negative
+     * size (a difference that came out below zero) is shown as 0.
      */
     fun size(bytes: Long, korean: Boolean): String {
-        if (bytes < 1024) {
-            val count = String.format(Locale.US, "%,d", bytes)
+        val amount = bytes.coerceAtLeast(0)
+        if (amount < 1024) {
+            val count = String.format(Locale.US, "%,d", amount)
             return if (korean) "${count}바이트" else "$count bytes"
         }
         var unit = 0
-        var value = BigDecimal(bytes).divide(KIB)
+        var value = BigDecimal(amount).divide(KIB)
         while (unit < UNITS.lastIndex && value >= KIB) {
             value = value.divide(KIB)
             unit++

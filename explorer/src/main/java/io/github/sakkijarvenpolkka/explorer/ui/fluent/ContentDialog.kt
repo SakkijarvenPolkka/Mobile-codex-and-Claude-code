@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicText
@@ -37,7 +39,10 @@ import androidx.compose.ui.window.DialogProperties
  * as the accent button (disabled unless [primaryEnabled]), then [secondary] and [close]; each
  * pair is a label and its action. The buttons only call their actions; the caller removes the
  * dialog. Back calls [onDismiss]; touching outside does not, so typed input is not lost by
- * accident. The dialog keeps clear of the system bars and of the keyboard.
+ * accident. The dialog is as wide as its content and buttons need, from 280 to 548 dp (longer
+ * text wraps); with [fullWidth] it is always as wide as it gets, for content that changes while
+ * it is shown (a progress, a name being typed), so the dialog does not resize with it. It keeps
+ * clear of the system bars and of the keyboard.
  */
 @Composable
 fun ContentDialog(
@@ -47,6 +52,7 @@ fun ContentDialog(
     secondary: Pair<String, () -> Unit>? = null,
     close: Pair<String, () -> Unit>?,
     primaryEnabled: Boolean = true,
+    fullWidth: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Dialog(
@@ -66,6 +72,7 @@ fun ContentDialog(
                 .imePadding()
                 .padding(24.dp)
                 .widthIn(min = 280.dp, max = 548.dp)
+                .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier.width(IntrinsicSize.Max))
                 .shadow(16.dp, shape)
                 .background(colors.card, shape)
                 .border(1.dp, colors.stroke, shape)

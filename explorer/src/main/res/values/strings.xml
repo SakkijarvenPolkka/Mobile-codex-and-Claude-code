@@ -3,6 +3,10 @@
 <resources>
     <string name="app_name">Files</string>
     <string name="close">Close</string>
+    <string name="severity_info">Information</string>
+    <string name="severity_warning">Warning</string>
+    <string name="severity_error">Error</string>
+    <string name="severity_success">Success</string>
 
     <!-- All files access -->
     <string name="permission_title">Access to all files is needed</string>
@@ -24,6 +28,8 @@
     <string name="outside_storage">Paths outside your storage can\'t be opened</string>
     <string name="usb_restart">Restart the app to open this drive</string>
     <string name="restart">Restart</string>
+    <string name="address_edit">Edit address</string>
+    <string name="folders_in">Folders in %s</string>
 
     <!-- Folder contents -->
     <string name="restricted_banner">Android restricts this folder. Other apps\' data can\'t be changed here.</string>

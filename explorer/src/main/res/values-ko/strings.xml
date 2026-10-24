@@ -3,6 +3,10 @@
 <resources>
     <string name="app_name">파일 탐색기</string>
     <string name="close">닫기</string>
+    <string name="severity_info">정보</string>
+    <string name="severity_warning">경고</string>
+    <string name="severity_error">오류</string>
+    <string name="severity_success">성공</string>
 
     <!-- All files access -->
     <string name="permission_title">모든 파일에 대한 접근 권한이 필요합니다</string>
@@ -24,6 +28,8 @@
     <string name="outside_storage">저장소 밖의 경로는 열 수 없습니다</string>
     <string name="usb_restart">앱을 다시 시작하면 이 드라이브를 열 수 있습니다</string>
     <string name="restart">다시 시작</string>
+    <string name="address_edit">주소 편집</string>
+    <string name="folders_in">%s의 폴더</string>
 
     <!-- Folder contents -->
     <string name="restricted_banner">Android에서 제한한 폴더입니다. 다른 앱의 데이터는 볼 수만 있고 바꿀 수 없습니다.</string>

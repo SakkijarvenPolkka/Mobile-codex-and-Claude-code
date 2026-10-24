@@ -184,8 +184,9 @@ class ShellTest {
     private fun InLocale(locale: Locale?, content: @Composable () -> Unit) {
         if (locale == null) return content()
         val base = LocalContext.current
-        val resources = remember(locale) {
-            val configuration = Configuration(base.resources.configuration).apply { setLocale(locale) }
+        val current = LocalConfiguration.current
+        val resources = remember(locale, current) {
+            val configuration = Configuration(current).apply { setLocale(locale) }
             base.createConfigurationContext(configuration).resources
         }
         CompositionLocalProvider(
@@ -467,8 +468,8 @@ class ShellTest {
         dir("y")
         file("z.txt")
         show()
-        inside(Tags.BREADCRUMB, hasContentDescription(str(R.string.volume_internal)) and hasRole(Role.DropdownList))
-            .performClick()
+        val chevron = str(R.string.folders_in, str(R.string.volume_internal))
+        inside(Tags.BREADCRUMB, hasContentDescription(chevron) and hasRole(Role.DropdownList)).performClick()
         rule.waitForIdle()
         rule.onNodeWithTag(Tags.crumbChild("x")).assertIsDisplayed()
         rule.onNodeWithTag(Tags.crumbChild("y")).assertIsDisplayed()

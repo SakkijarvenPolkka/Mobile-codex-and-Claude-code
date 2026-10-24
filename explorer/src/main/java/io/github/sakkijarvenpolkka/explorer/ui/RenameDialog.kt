@@ -60,6 +60,8 @@ fun RenameDialog(
         primary = stringResource(R.string.ok) to commit,
         primaryEnabled = problem == null && !pending,
         close = stringResource(R.string.cancel) to onDismiss,
+        // The name, and what is wrong with it, change as they are typed.
+        fullWidth = true,
     ) {
         val focus = remember { FocusRequester() }
         FluentTextBox(

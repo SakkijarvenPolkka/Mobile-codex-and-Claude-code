@@ -41,6 +41,11 @@ android {
         compose = true
     }
 
+    androidResources {
+        // The app speaks English and Korean; the libraries' other translations only make the APK bigger.
+        localeFilters += listOf("en", "ko")
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true

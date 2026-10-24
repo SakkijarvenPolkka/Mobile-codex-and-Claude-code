@@ -95,6 +95,20 @@ class VolumeRegistryTest {
     }
 
     @Test
+    fun secondaryVolumeWithoutFsUuidIsKeyedByItsDirectory() {
+        fun usb(label: String, directory: File?, state: String = "mounted") =
+            volumeFrom(null, label, directory, state, primary = false, removable = true)
+
+        // The directory's name, not the localized description: the same in every language, and two
+        // drives both described as "USB drive" do not collide.
+        assertEquals("usbotg", usb("USB drive", File("/storage/usbotg")).uuid)
+        assertEquals("usbotg", usb("USB 드라이브", File("/storage/usbotg")).uuid)
+        assertEquals("usbotg2", usb("USB drive", File("/storage/usbotg2")).uuid)
+        // Without a directory (Android reports none unless mounted), only the description is left.
+        assertEquals("USB drive", usb("USB drive", null, "unmounted").uuid)
+    }
+
+    @Test
     fun onlyVfatVolumesGetTheFat32SizeLimit() {
         fun card(fsType: String?) = volumeFrom(
             "1A2B-3C4D", "SD card", File("/storage/1A2B-3C4D"), "mounted", primary = false, removable = true,
@@ -184,7 +198,8 @@ class VolumeRegistryTest {
             storage.resetStorageVolumeList()
             storage.addStorageVolume(primaryVolume())
             storage.addStorageVolume(volume)
-            context.sendBroadcast(
+            deliverBroadcast(
+                context,
                 Intent(action, Uri.fromFile(File("/storage/1A2B-3C4D")))
                     .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, volume),
             )

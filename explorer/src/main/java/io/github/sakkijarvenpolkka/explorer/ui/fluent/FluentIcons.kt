@@ -352,7 +352,7 @@ object FluentIcons {
     }
 
     val Back: ImageVector by lazy {
-        icon("Back") {
+        icon("Back", autoMirror = true) {
             stroke {
                 moveTo(19.5f, 12f)
                 horizontalLineTo(4.5f)
@@ -364,7 +364,7 @@ object FluentIcons {
     }
 
     val Forward: ImageVector by lazy {
-        icon("Forward") {
+        icon("Forward", autoMirror = true) {
             stroke {
                 moveTo(4.5f, 12f)
                 horizontalLineTo(19.5f)
@@ -605,7 +605,7 @@ object FluentIcons {
     }
 
     val ChevronRight: ImageVector by lazy {
-        icon("ChevronRight") {
+        icon("ChevronRight", autoMirror = true) {
             stroke {
                 moveTo(9f, 5.5f)
                 lineTo(15.5f, 12f)
@@ -674,7 +674,7 @@ object FluentIcons {
 
     /** An arrow turning back (restore from the Recycle Bin). */
     val Restore: ImageVector by lazy {
-        icon("Restore") {
+        icon("Restore", autoMirror = true) {
             stroke {
                 moveTo(4.5f, 9.5f)
                 horizontalLineTo(14.5f)
@@ -741,6 +741,7 @@ private val CODE_MIMES = setOf(
 private val IMAGE_EXTENSIONS = setOf(
     "jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif", "svg", "tif", "tiff", "ico", "dng",
 )
+// `ts` is a video (MPEG transport stream, video/mp2t as Android types it), not TypeScript.
 private val VIDEO_EXTENSIONS = setOf(
     "mp4", "m4v", "mkv", "webm", "3gp", "3g2", "mov", "avi", "wmv", "flv", "ts", "mpg", "mpeg",
 )
@@ -750,7 +751,7 @@ private val AUDIO_EXTENSIONS = setOf(
 private val ARCHIVE_EXTENSIONS = setOf("zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "xz", "zst")
 private val APK_EXTENSIONS = setOf("apk", "apks", "xapk")
 private val CODE_EXTENSIONS = setOf(
-    "kt", "kts", "java", "c", "h", "cpp", "hpp", "cc", "cs", "py", "js", "mjs", "ts", "tsx", "jsx",
+    "kt", "kts", "java", "c", "h", "cpp", "hpp", "cc", "cs", "py", "js", "mjs", "tsx", "jsx",
     "json", "xml", "html", "htm", "css", "scss", "sh", "bat", "ps1", "go", "rs", "swift", "rb", "php",
     "sql", "yaml", "yml", "toml", "gradle",
 )
@@ -758,13 +759,15 @@ private val TEXT_EXTENSIONS = setOf("txt", "log", "md", "csv", "tsv", "ini", "co
 
 private val Ink = SolidColor(Color.Black)
 
-private inline fun icon(name: String, block: ImageVector.Builder.() -> Unit): ImageVector =
+/** A 24 × 24 icon; one that points along the line of text ([autoMirror]) is flipped right to left. */
+private inline fun icon(name: String, autoMirror: Boolean = false, block: ImageVector.Builder.() -> Unit): ImageVector =
     ImageVector.Builder(
         name = "Fluent.$name",
         defaultWidth = 24.dp,
         defaultHeight = 24.dp,
         viewportWidth = 24f,
         viewportHeight = 24f,
+        autoMirror = autoMirror,
     ).apply(block).build()
 
 /** An outline path: [width] unit strokes with round caps and joins. */

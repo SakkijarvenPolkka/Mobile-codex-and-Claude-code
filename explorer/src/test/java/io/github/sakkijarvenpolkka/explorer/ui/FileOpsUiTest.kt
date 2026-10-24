@@ -9,6 +9,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.SemanticsNodeInteraction
@@ -16,6 +17,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
@@ -31,6 +33,7 @@ import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.unit.width
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.R
@@ -47,6 +50,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpProgress
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
@@ -58,6 +62,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
+import io.github.sakkijarvenpolkka.explorer.ops.RunningOp
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ConfirmRequest
@@ -251,6 +256,19 @@ class FileOpsUiTest {
     }
 
     @Test
+    fun renameDialogKeepsItsWidthWhileTyping() {
+        val a = entry(file("a.txt"))
+        showAlone { RenameDialog(a, VolumeTraits(fatNames = true), onCommit = {}, onDismiss = {}) }
+        val dialog = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle))
+        val width = dialog.getUnclippedBoundsInRoot().width
+
+        // A long name, and what is wrong with it, neither widen the dialog as they are typed.
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("a:" + "b".repeat(240) + ".txt")
+        rule.onNodeWithText(str(R.string.name_fat_chars)).assertExists()
+        assertEquals(width, dialog.getUnclippedBoundsInRoot().width)
+    }
+
+    @Test
     fun renameOkDisabledWhilePending() {
         val a = entry(file("a.txt"))
         val committed = mutableListOf<String>()
@@ -291,6 +309,20 @@ class FileOpsUiTest {
         waitFor { names() == listOf("report.txt") }
         rule.onNodeWithTag(Tags.RENAME_FIELD).assertDoesNotExist()
         assertFalse(Files.exists(root.resolve("report.pdf")))
+    }
+
+    @Test
+    fun progressDialogKeepsItsWidthAsTheNameChanges() {
+        val spec = OperationSpec(newId(), OpKind.COPY, listOf(root.resolve("a").toString()), root.toString())
+        var name by mutableStateOf("IMG_20261024_101500_" + "holiday_".repeat(30) + "edited.jpg")
+        showAlone { ProgressDialog(RunningOp(spec, OpProgress(100, 10, 2, 0, name)), {}, {}) }
+        val dialog = rule.onNode(SemanticsMatcher.keyIsDefined(SemanticsProperties.PaneTitle))
+        val width = dialog.getUnclippedBoundsInRoot().width
+
+        // A dialog that sizes to its content would jump with every file name.
+        name = "b.txt"
+        rule.waitForIdle()
+        assertEquals(width, dialog.getUnclippedBoundsInRoot().width)
     }
 
     @Test

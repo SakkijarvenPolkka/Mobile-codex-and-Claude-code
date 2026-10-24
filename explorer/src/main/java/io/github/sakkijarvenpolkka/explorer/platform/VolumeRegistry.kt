@@ -52,8 +52,10 @@ data class Volume(
 /**
  * A [Volume] from a `StorageVolume`'s fields: [state] is its `getState()` string, [directory]
  * its `getDirectory()`, and [fsType] its file system type if known ([fsTypeFor]). A secondary
- * volume without a file system UUID is keyed by its [label]. Removable volumes get the FAT naming
- * rules; only a volume known to be vfat gets FAT32's size limit, since exFAT has none.
+ * volume without a file system UUID is keyed by its directory's name, which, unlike its [label],
+ * is the same in every language and differs between two drives; Android reports no directory
+ * unless the volume is mounted, so then only the [label] is left. Removable volumes get the FAT
+ * naming rules; only a volume known to be vfat gets FAT32's size limit, since exFAT has none.
  */
 fun volumeFrom(
     uuid: String?,
@@ -74,7 +76,7 @@ fun volumeFrom(
     val path = directory?.toPath()
     val mounted = volumeState == VolumeState.MOUNTED || volumeState == VolumeState.MOUNTED_READ_ONLY
     return Volume(
-        uuid = if (primary) PRIMARY_UUID else uuid ?: label,
+        uuid = if (primary) PRIMARY_UUID else uuid ?: directory?.name ?: label,
         label = label,
         root = if (mounted) path else null,
         state = volumeState,

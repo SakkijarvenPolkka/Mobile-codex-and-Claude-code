@@ -20,20 +20,22 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import io.github.sakkijarvenpolkka.explorer.R
 
 /** A path segment: what is shown and what identifies it to the caller. */
 data class Crumb(val label: String, val key: Any)
 
 /**
  * [crumbs] as `A › B › C ▾`. Tapping a segment calls [onCrumb]; the chevron after it calls
- * [onChildren] for that segment (a drop-down list named after it for accessibility
- * services); tapping the empty space calls [onEdit] (read as the whole path by accessibility
- * services). The row fills the width and, when the path is too long, scrolls with its end
- * (the current folder) in view; a touch-target-wide strip after the scrolling crumbs stays
- * empty space, so path editing is reachable however long the path is.
+ * [onChildren] for that segment (a drop-down list read as "Folders in A" by accessibility
+ * services); tapping the empty space calls [onEdit] (read as the whole path, with "Edit
+ * address" as its action). The row fills the width and, when the path is too long, scrolls
+ * with its end (the current folder) in view; a touch-target-wide strip after the scrolling
+ * crumbs stays empty space, so path editing is reachable however long the path is.
  */
 @Composable
 fun Breadcrumb(crumbs: List<Crumb>, onCrumb: (Crumb) -> Unit, onChildren: (Crumb) -> Unit, onEdit: () -> Unit) {
@@ -44,7 +46,12 @@ fun Breadcrumb(crumbs: List<Crumb>, onCrumb: (Crumb) -> Unit, onChildren: (Crumb
         Modifier
             .fillMaxWidth()
             .heightIn(min = MinTouchTarget)
-            .clickable(interactionSource = null, indication = null, onClick = onEdit)
+            .clickable(
+                interactionSource = null,
+                indication = null,
+                onClickLabel = stringResource(R.string.address_edit),
+                onClick = onEdit,
+            )
             .semantics { contentDescription = path },
         contentAlignment = Alignment.CenterStart,
     ) {
@@ -62,7 +69,7 @@ fun Breadcrumb(crumbs: List<Crumb>, onCrumb: (Crumb) -> Unit, onChildren: (Crumb
                             style = ButtonStyle.SUBTLE,
                             enabled = true,
                             role = Role.DropdownList,
-                            contentDescription = crumb.label,
+                            contentDescription = stringResource(R.string.folders_in, crumb.label),
                             iconOnly = true,
                         ) { content ->
                             val chevron = if (index == crumbs.lastIndex) FluentIcons.ChevronDown else FluentIcons.ChevronRight

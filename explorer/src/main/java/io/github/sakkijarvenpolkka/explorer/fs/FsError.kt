@@ -76,7 +76,12 @@ sealed interface NameProblem {
 val FsError.isFatal: Boolean
     get() = when (this) {
         FsError.NoSpace, FsError.IoError, FsError.ReadOnly, FsError.VolumeRemoved -> true
-        else -> false
+        // Listed one by one, so a new error has to be sorted here rather than fall through.
+        FsError.AccessDenied, FsError.NotFound, FsError.AlreadyExists, is FsError.NameInvalid,
+        FsError.TooLargeForVolume, FsError.CrossesIntoSelf, FsError.Restricted, FsError.Corrupt,
+        FsError.Encrypted, FsError.Unsupported, FsError.UnsafeArchive, FsError.UnsupportedEncoding,
+        FsError.BinUnavailable, FsError.Busy, is FsError.Unknown,
+        -> false
     }
 
 /** An [IOException] that carries an [FsError] across code that only speaks exceptions. */
