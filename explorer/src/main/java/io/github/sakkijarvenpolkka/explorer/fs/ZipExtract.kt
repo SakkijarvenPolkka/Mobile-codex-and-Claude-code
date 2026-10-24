@@ -24,21 +24,25 @@ import java.util.zip.ZipFile
 import kotlin.time.TimeSource
 
 /**
- * One run of [ZipOps.extract] on [fs], of [archive] into [targetDir], for the archive named [stem], by
- * [opId]: the temporary folder recorded in [write]'s journal, names numbered with [labels], and each file
- * flushed to the device before it gets its name if [sync].
+ * One run of [ZipOps.extract] on [fs], of [archive] into [targetDir] on [volume], for the archive named
+ * [stem], by [opId]: the temporary folder recorded in [write]'s journal, names numbered with [labels], the
+ * progress paced by [time].
  */
 internal class Extraction(
     private val fs: FsBackend,
     private val write: WriteProtocol,
     private val labels: NameLabels,
-    private val sync: Boolean,
+    private val volume: VolumeRoot?,
+    private val time: TimeSource,
     private val archive: ZipFile,
     private val targetDir: Path,
     private val stem: String,
     private val opId: String,
 ) {
     private val temp = targetDir.resolve(tempNameFor(stem, opId))
+
+    /** Whether each file is flushed to the device before it gets its name: on removable media. */
+    private val sync = volume?.removable == true
 
     /** Writes the extracted files, into the temporary folder: the journal records that, which holds them. */
     private val inner = WriteProtocol(fs, NoJournal)
@@ -59,9 +63,10 @@ internal class Extraction(
         }
         val names = listed.map { ZipNames.sanitize(it.name) ?: throw FsException(FsError.UnsafeArchive) }
         if (listed.any { it.size < 0 }) throw FsException(FsError.Corrupt)
+        checkStorable(names)
         val declared = listed.indices.filter { isFile(names[it]) }.sumOf { listed[it].size }
         checkRoom(declared)
-        val progress = Progress(TimeSource.Monotonic, onProgress, names.count { it.isNotEmpty() }, declared)
+        val progress = Progress(time, onProgress, names.count { it.isNotEmpty() }, declared)
         progress.report(force = true)
         write.journal.add(temp)
         var created = false
@@ -79,6 +84,20 @@ internal class Extraction(
         write.journal.remove(temp)
         progress.report(force = true)
         return ExtractResult(folder, renamed)
+    }
+
+    /**
+     * Fails with [FsError.NameInvalid] if the FAT naming rules of [volume], if it has them, refuse a part
+     * of one of [names] (the safe names), as they would a copy of it ([fatProblemOf]).
+     */
+    private fun checkStorable(names: List<String>) {
+        val traits = volume?.traits?.takeIf { it.fatNames } ?: return
+        for (name in names) {
+            for (part in name.split('/')) {
+                if (part.isEmpty()) continue
+                fatProblemOf(part, traits)?.let { throw FsException(FsError.NameInvalid(it)) }
+            }
+        }
     }
 
     /** Fails with [FsError.NoSpace] if the volume can tell it has no room for [bytes] and 64 MiB more. */

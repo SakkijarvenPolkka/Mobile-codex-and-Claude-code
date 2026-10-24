@@ -253,6 +253,14 @@ class PdfViewerTest {
     }
 
     @Test
+    fun otherFailureSaysItCannotBeOpened() {
+        // A file that could not be read (a failing card, say) is not called damaged.
+        show({ throw FsException(FsError.IoError) })
+        waitFor { textShown("이 파일은 열 수 없습니다") }
+        assertFalse(textShown("손상된 파일입니다"))
+    }
+
+    @Test
     fun leavingClosesDocument() {
         val pdf = FakePdf(threePages)
         var shown by mutableStateOf(true)

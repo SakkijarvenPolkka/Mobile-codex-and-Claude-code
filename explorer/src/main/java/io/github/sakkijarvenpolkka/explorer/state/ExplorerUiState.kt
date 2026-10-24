@@ -129,10 +129,10 @@ sealed interface Overlay {
  * Everything the shell shows. [listing] is the active tab's; [unavailable] is set when the
  * active tab's folder is on a volume that is not mounted (the tab keeps its place);
  * [restricted] when the folder is under `Android/data` or, unless the user lets the app install
- * apps, `Android/obb`. [selected] are the selected items in listing order; [up] is where Up
- * goes, null when it is disabled. [launch] is an intent for the shell to start from the
- * activity, so that the app it opens comes back here, and to report with
- * [ExplorerViewModel.launched]. [renaming] is the item the rename dialog is open for, and
+ * apps, `Android/obb`; [readOnly] when its volume is mounted read-only. [selected] are the selected
+ * items in listing order; [up] is where Up goes, null when it is disabled. [launch] is an intent
+ * for the shell to start from the activity, so that the app it opens comes back here, and to report
+ * with [ExplorerViewModel.launched]. [renaming] is the item the rename dialog is open for, and
  * [renameError] why renaming it to the name typed failed; [confirm] a question to answer;
  * [progressInBackground] whether the progress of the operations shows as a chip of the status bar
  * instead of a dialog; [failedOp] an operation whose failures to list. [opsNotice] is what the file
@@ -157,6 +157,7 @@ data class ExplorerUiState(
     val unavailable: DecodedLocation.Unavailable?,
     val restricted: Boolean,
     val message: UiMessage?,
+    val readOnly: Boolean = false,
     val overlay: Overlay? = null,
     val drawerOpen: Boolean = false,
     val selected: List<FileEntry> = emptyList(),

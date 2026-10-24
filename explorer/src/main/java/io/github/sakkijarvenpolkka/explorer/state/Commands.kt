@@ -69,6 +69,41 @@ data class CommandContext(
     val hasEntries: Boolean,
 )
 
+/**
+ * What the commands of a tab depend on of where it is: its drive [unavailable] (not mounted), the folder
+ * [restricted] (`Android/data`, `Android/obb`), and on a volume that is [writable] (mounted, not read-only).
+ */
+internal data class Place(val unavailable: Boolean, val restricted: Boolean, val writable: Boolean)
+
+/**
+ * The commands of a tab at [location] ([place]) with [selected] of its [rows], [clipboard] holding what
+ * it does, and the folders Pin and Unpin act on [pinned] or not: Refresh and Options alone while its drive
+ * is unavailable, else [commandsFor] them.
+ */
+internal fun commandsAt(
+    location: Location,
+    selected: List<FileEntry>,
+    rows: List<Row>,
+    clipboard: Clipboard?,
+    place: Place,
+    pinned: Boolean,
+): Set<Command> {
+    if (place.unavailable) return setOf(REFRESH, OPTIONS)
+    val inBin = location == Location.RecycleBin
+    val context = CommandContext(
+        kind = kindOf(location),
+        selection = selected,
+        clipboard = clipboard,
+        restricted = place.restricted,
+        // The Recycle Bin is on every volume; an item on a read-only one fails by itself.
+        volumeWritable = inBin || place.writable,
+        pinned = pinned,
+        binEmpty = !inBin || rows.isEmpty(),
+        hasEntries = rows.isNotEmpty(),
+    )
+    return commandsFor(context)
+}
+
 /** Commands that change files; a read-only volume offers none of them. */
 private val FILE_CHANGES = setOf(
     NEW_FOLDER, NEW_TEXT, CUT, PASTE, RENAME, DELETE, DELETE_PERMANENT, COMPRESS, EXTRACT, RESTORE, EMPTY_BIN,

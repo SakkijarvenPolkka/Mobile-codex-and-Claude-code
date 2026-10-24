@@ -53,10 +53,10 @@ class VolumeTracking(
     }
 
     /**
-     * What [e] does to the tabs of [model]. Ejecting: the tabs in folders of that volume become
-     * unavailable. Mounted: the tabs waiting for it whose folder is where it was are no longer;
-     * the others (it mounted at another root, or a saved tab only guessed the mount point) get
-     * the move to their folder decoded from (uuid, rel) on its root now, without a history entry.
+     * What [e] does to the tabs of [model]. Ejecting: the tabs in folders of that volume, or at search
+     * results of one, become unavailable. Mounted: the tabs waiting for it whose place is where it was
+     * are no longer; the others (it mounted at another root, or a saved tab only guessed the mount point)
+     * get the move to their folder decoded from (uuid, rel) on its root now, without a history entry.
      */
     fun onVolumeEvent(e: VolumeEvent, model: TabsModel): VolumeChange = when (e) {
         is VolumeEvent.Ejecting -> VolumeChange(ejected = markEjected(e.uuid, model))
@@ -81,26 +81,40 @@ class VolumeTracking(
     /** Keeps the marks of the tabs that [stayed] where they were marked; the others moved or closed. */
     fun retain(stayed: (TabId) -> Boolean) = marks.update { it.filterKeys(stayed) }
 
-    /** Marks the tabs of [model] in folders of the volume [uuid], which is going; returns them. */
+    /**
+     * Marks the tabs of [model] in folders of the volume [uuid], which is going, or at search results of
+     * one (by the folder searched); returns them.
+     */
     private fun markEjected(uuid: String, model: TabsModel): Set<TabId> {
         val root = lastRoots[uuid] ?: return emptySet()
         val gone = model.tabs.mapNotNull { tab ->
-            val path = (tab.current.location as? Location.Folder)?.path?.takeIf { it.startsWith(root) }
+            val path = folderOf(tab.current.location)?.takeIf { it.startsWith(root) }
             path?.let { tab.id to DecodedLocation.Unavailable(uuid, root.relativize(it).toString()) }
         }.toMap()
         if (gone.isNotEmpty()) marks.update { it + gone }
         return gone.keys
     }
 
-    /** See [onVolumeEvent]; the tabs that move stop waiting once they have moved ([retain]). */
+    /**
+     * See [onVolumeEvent]; the tabs that move stop waiting once they have moved ([retain]). A tab at search
+     * results goes to the same search of the same folder there.
+     */
     private fun remount(uuid: String, model: TabsModel): List<TabAction> {
         val root = volumes.volumes.value.firstOrNull { it.uuid == uuid }?.root ?: return emptyList()
-        val places = marks.value.filterValues { it.uuid == uuid }.mapValues { (_, gone) ->
-            Location.Folder(root.resolve(gone.rel))
+        val places = marks.value.filterValues { it.uuid == uuid }.mapValues { (id, gone) ->
+            val folder = root.resolve(gone.rel)
+            (model.locationOf(id) as? Location.SearchResults)?.copy(root = folder) ?: Location.Folder(folder)
         }
         val (there, elsewhere) = places.entries.partition { (id, place) -> model.locationOf(id) == place }
         if (there.isNotEmpty()) marks.update { it - there.map { (id, _) -> id }.toSet() }
         return elsewhere.map { (id, place) -> TabAction.ReplaceCurrent(id, place) }
+    }
+
+    /** The folder [location] shows, or the one its search results are of. */
+    private fun folderOf(location: Location): Path? = when (location) {
+        is Location.Folder -> location.path
+        is Location.SearchResults -> location.root
+        Location.Home, Location.RecycleBin -> null
     }
 
     /**

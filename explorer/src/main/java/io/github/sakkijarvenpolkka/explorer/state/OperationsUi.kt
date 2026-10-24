@@ -55,12 +55,6 @@ import java.nio.file.Paths
 import java.util.UUID
 import kotlin.time.Duration.Companion.seconds
 
-/** The kinds whose sources are no longer where they were once done: their folders change. */
-private val TAKES_SOURCES = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE)
-
-/** The kinds that change what the Recycle Bin holds (deleting for good: a bin item, from the bin). */
-private val CHANGES_BIN = setOf(OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE, OpKind.EMPTY_BIN)
-
 /**
  * The file operations of the view model [shell]. Renaming and new items run at once with
  * [ExplorerDeps.fileOps]; the others go to the app's runner ([ExplorerDeps.runner]), whose state this
@@ -395,16 +389,17 @@ internal class OperationsUi(
     }
 
     /**
-     * The progress shows as a dialog again once nothing runs, and the app's notice goes once the runner
-     * goes from having work to having none (no work goes on without the foreground service any more, and
-     * new work starts it again); each operation that ended is taken.
+     * Once the runner goes from having work to having none, the progress shows as a dialog again and the
+     * app's notice goes (no work goes on without the foreground service any more, and new work starts it
+     * again); each operation that ended is taken. An idle state seen before any work (one handed over late,
+     * from before the operation was asked for) changes nothing: the progress put in the background stays.
      */
     private suspend fun onRunner(now: RunnerState) {
         val idle = now.running == null && now.queue.isEmpty()
         // One that ended since it was last seen: there was work, even if the runner was not seen busy.
         val worked = hadWork || now.finished.any { it.spec.id !in handled }
         hadWork = !idle
-        if (idle && state.value.inBackground) setInBackground(false)
+        if (idle && worked && state.value.inBackground) setInBackground(false)
         if (idle && worked) dismissNotice()
         handled.retainAll(now.finished.map { it.spec.id }.toSet())
         for (op in now.finished) if (handled.add(op.spec.id)) onFinished(op)
@@ -420,22 +415,7 @@ internal class OperationsUi(
         deps.runner?.dismiss(op.spec.id)
         val spec = op.spec
         val result = op.result
-        val folders = HashSet<Path>()
-        // add(), not +=: a Path is an Iterable<Path> of its names.
-        spec.target?.let { folders.add(Paths.get(it)) }
-        if (spec.kind in TAKES_SOURCES) spec.sources.mapNotNullTo(folders) { Paths.get(it).parent }
-        (result as? OpResult.Done)?.created?.mapNotNullTo(folders) { it.parent }
-        val binChanged = spec.kind in CHANGES_BIN
-        shell.refreshShowing { location ->
-            when (location) {
-                is Location.Folder -> location.path in folders
-                // Searched again when a folder under the one searched changed.
-                is Location.SearchResults -> folders.any { it.startsWith(location.root) }
-                Location.RecycleBin -> binChanged
-                // Home shows the Recycle Bin's size and the recent files, which any operation may have moved.
-                Location.Home -> true
-            }
-        }
+        shell.refreshShowing(changedBy(op))
         val target = spec.target?.let { Paths.get(it) }
         if (result is OpResult.Done && target != null) selectMade(spec.kind, target, result.created)
         if (spec.kind == OpKind.MOVE) afterMove(spec.sources.map { Paths.get(it) })

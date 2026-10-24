@@ -18,20 +18,23 @@ import kotlin.time.TimeSource
 /** How much of a file is compressed at a time. */
 private const val PACK_CHUNK = 64 shl 10
 
-/** [ZipOps.compress] on [fs], the archive written through [write], its names numbered with [labels]. */
+/**
+ * [ZipOps.compress] on [fs], the archive written through [write], its names numbered with [labels], its
+ * progress paced by [time].
+ */
 internal class Compression(
     private val fs: FsBackend,
     private val write: WriteProtocol,
     private val labels: NameLabels,
+    private val time: TimeSource,
 ) {
 
     /** Compresses [sources] into a new archive in [targetDir] and returns it, as [ZipOps.compress] says. */
     suspend fun run(sources: List<Path>, targetDir: Path, opId: String, onProgress: (OpProgress) -> Unit): Path {
-        require(sources.isNotEmpty()) { "nothing to compress" }
         val tops = outermost(sources).map { Listing.entry(fs, it, NO_MIME) }
         val items = packed(tops)
         if (items.isEmpty()) throw FsException(FsError.Unsupported)
-        val progress = Progress(TimeSource.Monotonic, onProgress, items.size, items.sumOf { it.entry.size })
+        val progress = Progress(time, onProgress, items.size, items.sumOf { it.entry.size })
         progress.report(force = true)
         val first = tops.first()
         val stem = if (first.kind == EntryKind.DIR) first.name else splitName(first.name).first

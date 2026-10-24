@@ -32,10 +32,10 @@ import java.nio.charset.Charset
 
 /**
  * "Extract Compressed (Zipped) Folders" for [request]: the folder the files go into ([ExtractRequest.target],
- * from its drive among [volumes] down), and the character set to read the archive's file names with: Auto,
- * or one of those extracting knows ([zipCharsets]: UTF-8, Korean), the one the names were found to be in
- * chosen at first. Extract calls [onExtract] with the name of the set chosen (null for Auto, which finds it
- * again when it runs); Cancel and Back call [onDismiss].
+ * from its drive among [volumes] down), and the character set to read the archive's file names with: Auto
+ * (with the set it found), or one of those extracting knows ([zipCharsets]: UTF-8, Korean), the one the
+ * names were found to be in chosen at first. Extract calls [onExtract] with the name of the set chosen (null
+ * for Auto, which finds it again when it runs); Cancel and Back call [onDismiss].
  */
 @Composable
 fun ExtractDialog(
@@ -45,7 +45,8 @@ fun ExtractDialog(
     onDismiss: () -> Unit,
 ) {
     val choices: List<Charset?> = remember { listOf(null) + zipCharsets() }
-    var chosen by remember(request) { mutableStateOf(choices.firstOrNull { it?.name() == request.detected }) }
+    val detected = choices.firstOrNull { it?.name() == request.detected }
+    var chosen by remember(request) { mutableStateOf(detected) }
     val colors = FluentTheme.colors
     ContentDialog(
         title = stringResource(R.string.extract_title),
@@ -69,17 +70,17 @@ fun ExtractDialog(
         )
         Column(Modifier.selectableGroup()) {
             for (charset in choices) {
-                RadioRow(stringResource(labelOf(charset)), chosen == charset, Tags.extractEncoding(charset?.name())) {
-                    chosen = charset
+                val label = if (charset == null) {
+                    stringResource(R.string.encoding_auto_detected, stringResource(labelOf(detected)))
+                } else {
+                    stringResource(labelOf(charset))
                 }
+                RadioRow(label, chosen == charset, Tags.extractEncoding(charset?.name())) { chosen = charset }
             }
         }
     }
 }
 
-/** What the choice of [charset] is called: Auto for none, else UTF-8 or the Korean code page. */
-private fun labelOf(charset: Charset?): Int = when (charset) {
-    null -> R.string.encoding_auto
-    Charsets.UTF_8 -> R.string.encoding_utf8
-    else -> R.string.encoding_korean
-}
+/** What [charset] is called: UTF-8, else the Korean code page (the only other one extracting knows). */
+private fun labelOf(charset: Charset?): Int =
+    if (charset == Charsets.UTF_8) R.string.encoding_utf8 else R.string.encoding_korean

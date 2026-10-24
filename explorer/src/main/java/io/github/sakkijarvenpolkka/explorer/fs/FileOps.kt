@@ -83,10 +83,14 @@ class FileOps(
      *   folder there ([ZipOps.extract]), its names read in the character set [OpOptions.zipCharset] names
      *   (detected when null; one this runtime does not know is [FsError.UnsupportedEncoding] after 0 of 0
      *   items). [OpResult.Done.created] holds the archive, or the folders, and
-     *   [OpResult.Done.renamedDuplicates] how many entries had to take a ` (2)` name. Any failure of an
-     *   archive ends the run with [OpResult.Failed]: none of its items is kept, out of the items it had
-     *   counted, or of 0 when it was refused before (unsafe, encrypted or damaged, names in no character
-     *   set it knows, no room).
+     *   [OpResult.Done.renamedDuplicates] how many entries had to take a ` (2)` name. Each archive is
+     *   written or extracted whole, or not at all. A compression that fails ends with [OpResult.Failed],
+     *   out of the items it had counted, or of 0 when there was nothing to compress. An archive that
+     *   fails to extract is listed in [OpResult.Done.failed] and the next one goes on, the folders of
+     *   those before it kept; a failure that ends everything fails the ones not tried yet the same way.
+     *   When nothing at all is extracted, the run is [OpResult.Failed] as the first archive failed: out
+     *   of the items it had counted, or of 0 when it was refused before (unsafe, encrypted or damaged,
+     *   names in no character set it knows or that the target's volume refuses, no room).
      *
      * The kinds that use the Recycle Bin are [FsError.BinUnavailable], after 0 of 0 items, without [bin],
      * and the ZIP kinds are [FsError.Unsupported], after 0 of 0 items, without [zip].
@@ -140,8 +144,8 @@ class FileOps(
         OpKind.DELETE_TO_BIN -> withBin { binRuns.deleteToBin(it, spec, onProgress, onCommitted) }
         OpKind.RESTORE -> withBin { binRuns.restore(it, spec, resolver, onProgress, onCommitted) }
         OpKind.EMPTY_BIN -> withBin { binRuns.emptyBin(it, spec, onProgress, onCommitted) }
-        OpKind.COMPRESS -> withZip { it.compressRun(spec, onProgress, onCommitted) }
-        OpKind.EXTRACT -> withZip { it.extractRun(spec, onProgress, onCommitted) }
+        OpKind.COMPRESS -> withZip { it.compressRun(spec, time, onProgress, onCommitted) }
+        OpKind.EXTRACT -> withZip { it.extractRun(spec, time, onProgress, onCommitted) }
     }
 
     /** What [block] makes of the Recycle Bin, or [FsError.BinUnavailable] after 0 of 0 items without one. */
@@ -156,7 +160,15 @@ class FileOps(
      * The character set the entry names of [archive] are in ([ZipOps.detectCharset]), for an extraction to
      * offer. Fails with [FsException] as that does, and as [FsError.Unsupported] without [zip].
      */
-    fun zipCharset(archive: Path): Charset = (zip ?: throw FsException(FsError.Unsupported)).detectCharset(archive)
+    fun zipCharset(archive: Path): Charset = zipOps().detectCharset(archive)
+
+    /**
+     * The folder an extraction of [archive] into [targetDir] would make now ([ZipOps.extractFolder]), for
+     * the extract dialog to name; [FsError.Unsupported] without [zip].
+     */
+    fun extractFolder(archive: Path, targetDir: Path): Path = zipOps().extractFolder(archive, targetDir)
+
+    private fun zipOps(): ZipOps = zip ?: throw FsException(FsError.Unsupported)
 
     /**
      * What [run] would find before writing anything for a copy or a move: what the target cannot store,
@@ -369,9 +381,6 @@ class FileOps(
         return steps
     }
 
-    private fun isFatProblem(problem: NameProblem): Boolean =
-        problem is NameProblem.FatChar || problem == NameProblem.TrailingDotOrSpace
-
     /** Whether [path] is known to be on another volume than the target's, so that moving it copies it. */
     private fun onOtherVolume(path: Path, targetVolume: VolumeRoot?): Boolean {
         val volume = volumes.volumeOf(path)
@@ -413,14 +422,7 @@ class FileOps(
     private fun unstorableOn(traits: VolumeTraits, entry: FileEntry): FsError? {
         val maxSize = traits.maxFileSize
         if (maxSize != null && entry.kind == EntryKind.FILE && entry.size > maxSize) return FsError.TooLargeForVolume
-        if (!traits.fatNames) return null
-        val problem = when (val check = NameValidator.validate(entry.name, traits)) {
-            // Only what FAT refuses: the other rules are for typed names, and this one is already on disk.
-            is NameCheck.Bad -> check.problem.takeIf(::isFatProblem)
-            // The validator trims what a person types; a name on disk that ends in a space really does.
-            is NameCheck.Ok -> NameProblem.TrailingDotOrSpace.takeIf { entry.name.endsWith(' ') }
-        }
-        return problem?.let { FsError.NameInvalid(it) }
+        return fatProblemOf(entry.name, traits)?.let { FsError.NameInvalid(it) }
     }
 
     /** Whether the target ([realTarget]) or a folder above it is one of the source folders among [tops]. */

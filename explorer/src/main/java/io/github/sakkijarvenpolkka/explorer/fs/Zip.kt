@@ -12,6 +12,7 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.util.zip.ZipException
 import java.util.zip.ZipFile
+import kotlin.time.TimeSource
 
 /** What `ZipFile` says of a name the path check of Android 14 and later refuses (`ZipPathValidator`). */
 private const val INVALID_PATH = "Invalid zip entry path"
@@ -27,16 +28,18 @@ data class ExtractResult(val folder: Path, val renamedDuplicates: Int)
  * ZIP archives on [fs] (spec §6.2): [compress] writes items into a new one, [extract] puts the entries of
  * one into a new folder. Files are written through [write]: the archive under a temporary name, renamed
  * once whole, and each extracted file the same way, in a temporary folder that [write]'s journal records
- * and that gets its name once everything is in it. [labels] number the names that are taken.
- * [removable] says whether a folder is on removable media, where each extracted file is flushed to the
- * device. Archives are read with `java.util.zip.ZipFile`, which reads the file itself, not through [fs].
- * Nothing here switches threads: the caller runs it where blocking calls belong.
+ * and that gets its name once everything is in it. [labels] number the names that are taken. [volumes]
+ * says which volume a folder is on: on removable media each extracted file is flushed to the device, and
+ * a volume with FAT naming rules refuses the names they forbid. [time] paces the progress reports, unless
+ * a call is given its own. Archives are read with `java.util.zip.ZipFile`, which reads the file itself,
+ * not through [fs]. Nothing here switches threads: the caller runs it where blocking calls belong.
  */
 class ZipOps(
     private val fs: FsBackend,
     private val write: WriteProtocol,
     private val labels: NameLabels,
-    private val removable: (Path) -> Boolean = { false },
+    private val volumes: VolumeLookup = VolumeLookup { null },
+    private val time: TimeSource = TimeSource.Monotonic,
 ) {
     /**
      * The character set the entry names of [zip] are in ([chooseZipCharset]). Fails with [FsException]:
@@ -66,22 +69,26 @@ class ZipOps(
      * The walk is over before anything is written, so neither the archive nor its temporary file is in
      * it. The archive is written as [WriteProtocol.write] writes a file, under [opId]'s temporary name, and
      * flushed to the device. [onProgress] gets the totals first (the items and the bytes of their files),
-     * then at most one report each 100 ms as the files are read, then a final one. Fails with
-     * [FsException]: nothing at all to compress is [FsError.Unsupported].
+     * then at most one report each 100 ms by [time] as the files are read, then a final one. Fails with
+     * [FsException]: nothing at all to compress (no [sources], or only links and special files) is
+     * [FsError.Unsupported].
      */
     suspend fun compress(
         sources: List<Path>,
         targetDir: Path,
         opId: String,
+        time: TimeSource = this.time,
         onProgress: (OpProgress) -> Unit,
-    ): Path = asZipFailure { Compression(fs, write, labels).run(sources, targetDir, opId, onProgress) }
+    ): Path = asZipFailure { Compression(fs, write, labels, time).run(sources, targetDir, opId, onProgress) }
 
     /**
      * Extracts [zip] into a new folder in [targetDir], named after it without its extension and numbered
      * if that is taken ([UniqueStyle.KEEP_BOTH]): never into a folder that is there. The names are read
      * with [charset], or the one [detectCharset] finds when it is null, and checked before anything is
-     * written ([ZipNames.sanitize]): one unsafe name refuses the whole archive. So does too little room
-     * for the sizes the archive declares, when the volume can tell (64 MiB are left free).
+     * written ([ZipNames.sanitize]): one unsafe name refuses the whole archive. So does a name the FAT
+     * naming rules of [targetDir]'s volume refuse, as copying it there would be ([FsError.NameInvalid]:
+     * one of `: * ? " < > |`, or a trailing dot or space), and too little room for the sizes the archive
+     * declares, when the volume can tell (64 MiB are left free).
      *
      * Everything goes first into the hidden temporary folder `.<name>.<opId>.xpart` there, which the
      * journal records before it is made: each entry as [WriteProtocol.write] writes a file, with the
@@ -90,14 +97,14 @@ class ZipOps(
      * counted in [ExtractResult.renamedDuplicates]; so does a folder whose name a file has. Folders the
      * archive names get their times once all files are in. A link stored in the archive becomes a file
      * holding its target's path; nothing is followed. Once all is in, the temporary folder is renamed in
-     * one step to the new folder's name. When [removable] says [targetDir] is on removable media, each
+     * one step to the new folder's name. When [targetDir] is on removable media ([volumes]), each
      * file is flushed to the device before it gets its name, as a copy there is (spec §4.3); elsewhere
      * renaming it is enough, and the temporary folder is what a dying process leaves.
      *
      * [onProgress] gets the totals first (the entries and their declared sizes), then at most one report
-     * each 100 ms, then a final one. An entry that holds more bytes than it declares is stopped there; one
-     * that holds fewer, or whose CRC-32 is not the declared one, or whose data does not inflate is
-     * [FsError.Corrupt], as is an archive that cannot be read; an encrypted entry is
+     * each 100 ms by [time], then a final one. An entry that holds more bytes than it declares is stopped
+     * there; one that holds fewer, or whose CRC-32 is not the declared one, or whose data does not inflate
+     * is [FsError.Corrupt], as is an archive that cannot be read; an encrypted entry is
      * [FsError.Encrypted]. Fails with [FsException], also when the names are in no character set that
      * decodes them ([FsError.UnsupportedEncoding]) or unsafe ([FsError.UnsafeArchive]); a full volume is
      * [FsError.NoSpace]. If anything fails or the extraction is cancelled, the temporary folder is deleted
@@ -108,13 +115,27 @@ class ZipOps(
         targetDir: Path,
         charset: Charset?,
         opId: String,
+        time: TimeSource = this.time,
         onProgress: (OpProgress) -> Unit,
     ): ExtractResult = asZipFailure {
         val names = charset ?: detectCharset(zip)
+        val volume = volumes.volumeOf(targetDir)
         open(zip, names).use { archive ->
             val stem = splitName(zip.fileName.toString()).first
-            Extraction(fs, write, labels, removable(targetDir), archive, targetDir, stem, opId).run(onProgress)
+            Extraction(fs, write, labels, volume, time, archive, targetDir, stem, opId).run(onProgress)
         }
+    }
+
+    /**
+     * The folder [extract] would make for [zip] in [targetDir] if it ran now: the first of its names
+     * (numbered as [extract] numbers them) that nothing in [targetDir] has.
+     */
+    fun extractFolder(zip: Path, targetDir: Path): Path {
+        val stem = splitName(zip.fileName.toString()).first
+        return (1..MAX_UNIQUE_NUMBER).asSequence()
+            .map { targetDir.resolve(candidateName(stem, "", UniqueStyle.KEEP_BOTH, it, labels)) }
+            .firstOrNull { !fs.exists(it) }
+            ?: throw FsException(FsError.AlreadyExists)
     }
 
     /** [zip] opened with its names in [charset]; fails with [FsException], as [detectCharset] does. */
@@ -152,7 +173,7 @@ private fun namesOf(file: ZipFile): List<String> = file.entries().toList().map {
  * What a [ZipException] of `ZipFile` stands for: an unsafe path (the check of Android 14 and later), an
  * encrypted entry (it refuses those, general purpose flag bit 0, by name), or else damage.
  */
-private fun errorOf(e: ZipException): FsError {
+internal fun errorOf(e: ZipException): FsError {
     val message = e.message.orEmpty()
     return when {
         INVALID_PATH in message -> FsError.UnsafeArchive
@@ -177,17 +198,18 @@ private inline fun <T> asZipFailure(block: () -> T): T = try {
 
 /**
  * [OpKind.COMPRESS] of [spec], as [FileOps.run] describes it: its sources into a new archive in its
- * target folder ([ZipOps.compress]).
+ * target folder ([ZipOps.compress]), the progress paced by [time].
  */
 internal suspend fun ZipOps.compressRun(
     spec: OperationSpec,
+    time: TimeSource,
     onProgress: (OpProgress) -> Unit,
     onCommitted: (Int) -> Unit,
 ): OpResult {
     val target = Paths.get(requireNotNull(spec.target) { "${spec.kind} needs a target" })
     val tracked = Tracked(onProgress)
     return try {
-        val zip = compress(spec.sources.map { Paths.get(it) }, target, spec.id, tracked::report)
+        val zip = compress(spec.sources.map { Paths.get(it) }, target, spec.id, time, tracked::report)
         onCommitted(spec.sources.size)
         OpResult.Done(listOf(zip), emptyList())
     } catch (e: FsException) {
@@ -197,10 +219,15 @@ internal suspend fun ZipOps.compressRun(
 
 /**
  * [OpKind.EXTRACT] of [spec], as [FileOps.run] describes it: each of its sources, an archive, into a
- * new folder in its target folder ([ZipOps.extract]), in turn.
+ * new folder in its target folder ([ZipOps.extract]), in turn, the progress paced by [time]. Each is
+ * extracted whole or not at all. One that fails is listed in [OpResult.Done.failed] and the next goes on,
+ * the folders of those before it kept; a failure that ends everything ([isFatal]) ends the run there,
+ * failing the archives not tried yet the same way. When nothing at all is extracted, the run ends as the
+ * first archive's failure: [OpResult.Failed], none of its items kept.
  */
 internal suspend fun ZipOps.extractRun(
     spec: OperationSpec,
+    time: TimeSource,
     onProgress: (OpProgress) -> Unit,
     onCommitted: (Int) -> Unit,
 ): OpResult {
@@ -212,19 +239,27 @@ internal suspend fun ZipOps.extractRun(
         return OpResult.Failed(FsError.UnsupportedEncoding, 0, 0)
     }
     val created = ArrayList<Path>()
+    val failed = ArrayList<ItemFailure>()
+    var first: OpResult.Failed? = null
     var renamed = 0
     for ((index, source) in spec.sources.withIndex()) {
         val tracked = Tracked(onProgress)
         try {
-            val result = extract(Paths.get(source), target, charset, spec.id, tracked::report)
+            val result = extract(Paths.get(source), target, charset, spec.id, time, tracked::report)
             created.add(result.folder)
             renamed += result.renamedDuplicates
         } catch (e: FsException) {
-            return tracked.failed(e.error)
+            if (first == null) first = tracked.failed(e.error)
+            failed += ItemFailure(source, e.error)
+            if (e.error.isFatal) {
+                spec.sources.drop(index + 1).mapTo(failed) { ItemFailure(it, e.error) }
+                break
+            }
         }
         onCommitted(index + 1)
     }
-    return OpResult.Done(created, emptyList(), renamedDuplicates = renamed)
+    if (created.isEmpty()) first?.let { return it }
+    return OpResult.Done(created, failed, renamedDuplicates = renamed)
 }
 
 /** [onProgress] of a run that writes or extracts one archive, keeping how many items it said it has. */

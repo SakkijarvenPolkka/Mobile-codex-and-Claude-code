@@ -38,13 +38,17 @@ import io.github.sakkijarvenpolkka.explorer.ops.CapturedLog
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
+import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.Overlay
 import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.startAt
+import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -102,14 +106,21 @@ class ZipUiTest {
         runnerScope.cancel()
     }
 
-    /** The shell at [root], on a wide window, with the app's file operations and ZIP archives over the real file system. */
+    /**
+     * The shell at [root], on a wide window, with the app's file operations and ZIP archives over the real file
+     * system, and other apps to open files with.
+     */
     private fun show() {
         settings.startAt(root, volumes)
         val journal = OperationJournal(folder.newFolder("ops"), NioFsBackend)
         val zip = ZipOps(NioFsBackend, WriteProtocol(NioFsBackend, journal), LABELS)
         val fileOps = FileOps(NioFsBackend, volumes, LABELS, journal, ids = ::newId, zip = zip)
         runner = OperationRunner(runnerScope, fileOps, journal, io, host = null)
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, fileOps = fileOps, runner = runner)
+        val mime = MimeResolver()
+        val openWith = OpenWith(app, mime)
+        val deps = ExplorerDeps(
+            NioFsBackend, settings, volumes, volumes, mime, io, openWith = openWith, fileOps = fileOps, runner = runner,
+        )
         vm = ExplorerViewModel(app, deps)
         rule.setContent {
             val global by settings.global.collectAsState()
@@ -158,7 +169,8 @@ class ZipUiTest {
         // The names were found to be in the Korean code page.
         rule.onNodeWithText("한국어(CP949)").assertIsSelected()
         rule.onNodeWithText(str(R.string.encoding_utf8)).assertIsNotSelected()
-        rule.onNodeWithText(str(R.string.encoding_auto)).assertIsNotSelected()
+        // Auto finds it again when it runs, and says what it found.
+        rule.onNodeWithText("자동 (한국어(CP949))").assertIsNotSelected()
 
         button("압축 풀기").performClick()
         rule.onNodeWithText(str(R.string.extract_title)).assertDoesNotExist()
@@ -251,12 +263,106 @@ class ZipUiTest {
         button(str(R.string.extract_button)).performClick()
         drain()
 
-        // Refused as a whole: nothing written, inside the folder or above it.
+        // Refused as a whole: nothing written, inside the folder or next to it (where ../ would go), no temporary
+        // folder left.
         rule.onNode(hasText(str(R.string.zip_unsafe), substring = true) and hasAnyAncestor(hasTestTag(Tags.MESSAGE)))
             .assertIsDisplayed()
         assertFalse(Files.exists(root.resolve("evil")))
-        assertFalse(Files.exists(root.resolveSibling("evil.txt")))
+        assertFalse(Files.exists(root.resolve("evil.txt")))
+        assertEquals(listOf("evil.zip"), Files.list(root).use { list -> list.map { it.fileName.toString() }.toList() })
         assertEquals(listOf("evil.zip"), ui.rows.map { it.entry.name })
+    }
+
+    @Test
+    fun damagedArchiveShowsMessageAndNoDialog() {
+        putZip(root, "bad.zip", "not an archive".toByteArray())
+        show()
+        row("bad.zip").performClick()
+        drain()
+
+        // Looking into it fails: the bar says why, and there is nothing to extract.
+        rule.onNode(hasText(str(R.string.zip_corrupt), substring = true) and hasAnyAncestor(hasTestTag(Tags.MESSAGE)))
+            .assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.extract_title)).assertDoesNotExist()
+        assertNull(ui.extract)
+    }
+
+    @Test
+    fun dialogNamesTheFolderTheExtractionMakes() {
+        koreanZip()
+        Files.createDirectory(root.resolve("옛날"))
+        show()
+        row("옛날.zip").performClick()
+        drain()
+
+        // That name is taken: the files go into a new folder next to it, never into that one.
+        rule.onNodeWithTag(Tags.EXTRACT_FOLDER).assert(hasText("${str(R.string.volume_internal)} › 옛날 (2)"))
+        button(str(R.string.extract_button)).performClick()
+        drain()
+        assertEquals("가나다", String(Files.readAllBytes(root.resolve("옛날 (2)/한글.txt"))))
+        assertEquals(emptyList<Path>(), Files.list(root.resolve("옛날")).use { it.toList() })
+    }
+
+    @Test
+    fun detectionOpensTheDialogOnlyForTheLastTapOverNothingElse() {
+        putZip(root, "a.zip", zipOf("a.txt" to "a"))
+        putZip(root, "b.zip", zipOf("b.txt" to "b"))
+        show()
+        // Two archives tapped before either is looked into: the dialog is the last one's.
+        row("a.zip").performClick()
+        row("b.zip").performClick()
+        drain()
+        assertEquals("b.zip", ui.extract?.entry?.name)
+
+        vm.closeOverlay()
+        row("a.zip").performClick()
+        // What opened meanwhile stays open.
+        vm.command(Command.OPTIONS)
+        drain()
+        assertEquals(Overlay.Options, ui.overlay)
+        assertNull(ui.extract)
+    }
+
+    @Test
+    fun revealGoesWhenTheArchiveIsNotListed() {
+        file("report.txt")
+        show()
+        vm.searchNow("*.txt")
+        drain()
+        vm.dispatch(TabAction.Select(root.resolve("report.txt")))
+        vm.command(Command.COMPRESS)
+        drain()
+
+        // The archive is made, but these results do not have it: there is nothing to scroll to.
+        assertTrue(Files.exists(root.resolve("report.zip")))
+        assertEquals(listOf("report.txt"), ui.rows.map { it.entry.name })
+        assertNull(ui.reveal)
+    }
+
+    @Test
+    fun zipWhereNothingIsExtractedOpensAsAnyFile() {
+        putZip(root, "a.zip", zipOf("a.txt" to "a"))
+        Files.createDirectories(root.resolve("Android/data/app"))
+        putZip(root.resolve("Android/data/app"), "b.zip", zipOf("b.txt" to "b"))
+        show()
+
+        // A read-only drive takes no new folder: the archive goes to another app (none serves this folder).
+        volumes.update("primary") { it.copy(state = VolumeState.MOUNTED_READ_ONLY) }
+        drain()
+        row("a.zip").performClick()
+        drain()
+        assertNull(ui.extract)
+        assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
+
+        // Nor does a folder Android keeps to an app.
+        volumes.update("primary") { it.copy(state = VolumeState.MOUNTED) }
+        vm.dismissMessage()
+        vm.navigate(Location.Folder(root.resolve("Android/data/app")))
+        drain()
+        row("b.zip").performClick()
+        drain()
+        assertNull(ui.extract)
+        assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
     }
 
     private companion object {

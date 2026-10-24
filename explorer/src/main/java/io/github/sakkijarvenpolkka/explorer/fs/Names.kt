@@ -68,6 +68,21 @@ object NameValidator {
 }
 
 /**
+ * What the FAT naming rules of a volume with [traits] refuse in [name], a name that is already made (on
+ * disk, or in an archive): `\ : * ? " < > |`, or a trailing dot or space. Null when [traits] has no FAT
+ * rules ([VolumeTraits.fatNames]), and for the other problems [NameValidator] finds, which are for the
+ * names a person types.
+ */
+internal fun fatProblemOf(name: String, traits: VolumeTraits): NameProblem? {
+    if (!traits.fatNames) return null
+    return when (val check = NameValidator.validate(name, traits)) {
+        is NameCheck.Bad -> check.problem.takeIf { it is NameProblem.FatChar || it == NameProblem.TrailingDotOrSpace }
+        // The validator trims what a person types; a name made that ends in a space really does.
+        is NameCheck.Ok -> NameProblem.TrailingDotOrSpace.takeIf { name.endsWith(' ') }
+    }
+}
+
+/**
  * Splits [name] into its stem and its extension with the dot (`report.pdf` → `report`, `.pdf`;
  * `a.tar.gz` → `a.tar`, `.gz`). A name with no extension (see [extensionStart]: `.bashrc`, `a.`)
  * has an empty one. The extension keeps its case, and `stem + extension` is always [name].

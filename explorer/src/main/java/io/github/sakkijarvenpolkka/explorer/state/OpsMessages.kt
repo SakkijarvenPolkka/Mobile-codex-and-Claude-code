@@ -1,6 +1,6 @@
 /*
  * Files — what the shell tells of a file operation that ended: a message, a question, or the failures
- * to list.
+ * to list; and which places it changed.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -12,7 +12,14 @@ import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.util.UiText
+import java.nio.file.Path
 import java.nio.file.Paths
+
+/** The kinds whose sources are no longer where they were once done: their folders change. */
+private val TAKES_SOURCES = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE)
+
+/** The kinds that change what the Recycle Bin holds (deleting for good: a bin item, from the bin). */
+private val CHANGES_BIN = setOf(OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT, OpKind.RESTORE, OpKind.EMPTY_BIN)
 
 /**
  * What to tell of an operation that ended ([tellingOf]): a [message] about no place (one of
@@ -78,6 +85,29 @@ private fun tellingOfDone(op: FinishedOp, result: OpResult.Done): Telling {
     val listed = others.filterNot { it.error == FsError.NotFound }
     val question = if (refused.isEmpty()) null else ConfirmRequest.BinUnavailable(refused.map { Paths.get(it.path) })
     return Telling(message, question, op.copy(result = result.copy(failed = listed)).takeIf { listed.isNotEmpty() })
+}
+
+/**
+ * Whether [op], which ended, changed what a location shows: a folder it wrote to or took items from (or
+ * one it made something in), search results of a folder above one of those, the Recycle Bin for the kinds
+ * that change it, and Home always (it shows the Recycle Bin's size and the recent files, which any
+ * operation may have moved).
+ */
+internal fun changedBy(op: FinishedOp): (Location) -> Boolean {
+    val spec = op.spec
+    val folders = HashSet<Path>()
+    // add(), not +=: a Path is an Iterable<Path> of its names.
+    spec.target?.let { folders.add(Paths.get(it)) }
+    if (spec.kind in TAKES_SOURCES) spec.sources.mapNotNullTo(folders) { Paths.get(it).parent }
+    (op.result as? OpResult.Done)?.created?.mapNotNullTo(folders) { it.parent }
+    return { location ->
+        when (location) {
+            is Location.Folder -> location.path in folders
+            is Location.SearchResults -> folders.any { it.startsWith(location.root) }
+            Location.RecycleBin -> spec.kind in CHANGES_BIN
+            Location.Home -> true
+        }
+    }
 }
 
 /** What an operation of [kind] is called in "Stopped …". */

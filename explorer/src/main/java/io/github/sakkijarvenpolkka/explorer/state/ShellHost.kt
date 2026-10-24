@@ -40,7 +40,7 @@ internal interface ShellHost {
      */
     fun selectAt(at: Location, paths: List<Path>, reveal: Boolean = false)
 
-    /** Opens [overlay] when the active tab is still at [at]. */
+    /** Opens [overlay] when the active tab is still at [at] and nothing else is open over the shell. */
     fun openAt(at: Location, overlay: Overlay)
 
     /** Closes what is open over the shell. */

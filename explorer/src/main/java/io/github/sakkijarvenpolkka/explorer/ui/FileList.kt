@@ -154,7 +154,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
  * [ExplorerUiState.contextMenuFor], so that it opens next to it. The item being renamed
  * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view, and so is the item to reveal
  * ([ExplorerUiState.reveal]) once it is listed, which then [onRevealed] reports. Search results show the
- * folder each is in, under a line of how the search goes ([SearchStatus]); none found says so.
+ * folder each is in, under a line of how the search goes ([SearchStatus]); none found says so, unless the
+ * search was stopped.
  */
 @Composable
 fun FileList(
@@ -202,7 +203,8 @@ fun FileList(
         }
     }
     val search = ui.listing as? ListingState.Streaming
-    val nothingFound = search?.done == true && rows.isEmpty()
+    // A search stopped before the end may have missed what is there.
+    val nothingFound = search?.done == true && !search.stopped && rows.isEmpty()
     when (mode) {
         ViewMode.DETAILS, ViewMode.LIST -> {
             val state = positions.list(tab.id, tab.current)
@@ -483,7 +485,7 @@ private fun NameIn(name: String, folder: String?, modifier: Modifier) {
  * done, that only the first results show and how many folders could not be read.
  */
 @Composable
-private fun SearchStatus(search: ListingState.Streaming, volumes: List<Volume>) {
+internal fun SearchStatus(search: ListingState.Streaming, volumes: List<Volume>) {
     val res = LocalResources.current
     val internal = stringResource(R.string.volume_internal)
     val current = search.currentDir?.takeIf { !search.done }

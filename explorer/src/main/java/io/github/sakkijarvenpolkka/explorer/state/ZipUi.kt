@@ -6,13 +6,14 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import android.util.Log
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpOptions
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
-import io.github.sakkijarvenpolkka.explorer.fs.splitName
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -24,7 +25,8 @@ import java.util.UUID
 /**
  * What the extract dialog is open for: the archive [entry], the character set its names were found to be
  * in ([detected], by its name), and the folder its files go into ([target]): a new one next to it, named
- * after it without its extension (numbered when it runs, if that name is taken then).
+ * after it without its extension, numbered if that name was taken when the dialog opened (and numbered
+ * again when it runs, if the name is taken by then).
  */
 data class ExtractRequest(val entry: FileEntry, val detected: String, val target: Path)
 
@@ -42,6 +44,9 @@ internal class ZipUi(
     private val scope: CoroutineScope,
     private val shell: ShellHost,
 ) {
+    /** How many archives have been asked to be extracted: only the last one asked opens its dialog. */
+    private var asked = 0
+
     /**
      * Compresses [selected], in listing order (the archive is named after the first), into a new archive in
      * the active tab's folder, or in the folder searched for search results.
@@ -58,24 +63,31 @@ internal class ZipUi(
 
     /**
      * Opens the extract dialog of the archive [entry] once the character set of its names is found
-     * ([FileOps.zipCharset]), which reads the archive off the main thread; when that fails (an archive that
-     * is damaged, encrypted, unsafe, or whose names no character set decodes), a message says why instead.
-     * Neither shows once the active tab has left where it was asked.
+     * ([FileOps.zipCharset]) and the folder it would go into ([FileOps.extractFolder]), both read off the
+     * main thread; when that fails (an archive that is damaged, encrypted, unsafe, or whose names no
+     * character set decodes), a message says why instead. Neither shows once the active tab has left where
+     * it was asked, nor once another archive was asked for since; the dialog does not open over another
+     * that was opened meanwhile.
      */
     fun requestExtract(entry: FileEntry) {
         val fileOps = deps.fileOps ?: return
         val folder = entry.path.parent ?: return
         val at = shell.here()
+        val ask = ++asked
         scope.launch {
-            val charset = try {
-                withContext(deps.io) { fileOps.zipCharset(entry.path) }
+            val request = try {
+                withContext(deps.io) {
+                    val charset = fileOps.zipCharset(entry.path)
+                    ExtractRequest(entry, charset.name(), fileOps.extractFolder(entry.path, folder))
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                return@launch shell.showError(at, errorText(e.toFsError()))
+                if (e !is FsException) Log.w(TAG, "Could not look into an archive", e)
+                if (ask == asked) shell.showError(at, errorText(e.toFsError()))
+                return@launch
             }
-            val target = folder.resolve(splitName(entry.name).first)
-            shell.openAt(at, Overlay.Extract(ExtractRequest(entry, charset.name(), target)))
+            if (ask == asked) shell.openAt(at, Overlay.Extract(request))
         }
     }
 
@@ -95,4 +107,8 @@ internal class ZipUi(
     }
 
     private fun newId(): String = UUID.randomUUID().toString()
+
+    private companion object {
+        const val TAG = "ZipUi"
+    }
 }

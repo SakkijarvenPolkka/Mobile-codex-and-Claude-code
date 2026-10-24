@@ -5,6 +5,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import java.nio.file.Path
 
 /** What a tab shows. */
@@ -35,3 +36,14 @@ fun upTarget(location: Location, volumes: List<Path>, homeEnabled: Boolean): Loc
     is Location.SearchResults -> Location.Folder(location.root)
     Location.Home, Location.RecycleBin -> null
 }
+
+/**
+ * Where Up goes from [location] in the app ([upTarget], to Home from a volume root among [roots]):
+ * nowhere while it is [unavailable] or on no volume [lookup] knows, so that it never leaves a volume.
+ */
+internal fun upFrom(location: Location, unavailable: Boolean, roots: List<Path>, lookup: VolumeLookup): Location? =
+    when {
+        unavailable -> null
+        location is Location.Folder && lookup.volumeOf(location.path) == null -> null
+        else -> upTarget(location, roots, homeEnabled = true)
+    }

@@ -36,6 +36,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.ContentCount
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.countContents
+import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ContentDialog
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.MinTouchTarget
@@ -46,18 +47,28 @@ import java.time.ZoneId
 
 /**
  * The properties of [entries]. One item shows its icon and name, type, location, size, what a
- * folder contains, date modified and whether it is hidden; several show the type and location
- * they share, their total size and contents and whether all are hidden. Sizes and contents
- * follow [contents] (see [countContents]) while it counts.
+ * folder contains, date modified and whether it is hidden; the root of one of [volumes] is named
+ * as its drive, and is in no location. Several show the type and location they share, their total
+ * size and contents and whether all are hidden. Sizes and contents follow [contents] (see
+ * [countContents]) while it counts.
  */
 @Composable
-fun PropertiesDialog(entries: List<FileEntry>, contents: Flow<ContentCount>, onDismiss: () -> Unit) {
+fun PropertiesDialog(
+    entries: List<FileEntry>,
+    contents: Flow<ContentCount>,
+    onDismiss: () -> Unit,
+    volumes: List<Volume> = emptyList(),
+) {
     val res = LocalResources.current
     val locale = LocalConfiguration.current.locales[0]
     val korean = locale.language == "ko"
     val counted by contents.collectAsState(initial = ContentCount())
     val single = entries.singleOrNull()
-    val names = entries.take(2).joinToString(", ") { it.name } + if (entries.size > 2) ", …" else ""
+    val internal = stringResource(R.string.volume_internal)
+    // The root of a drive is the drive.
+    val drive = single?.let { entry -> volumes.firstOrNull { it.root == entry.path } }
+        ?.let { volumeLabel(it, internal) }
+    val names = drive ?: (entries.take(2).joinToString(", ") { it.name } + if (entries.size > 2) ", …" else "")
     ContentDialog(
         title = res.getString(R.string.prop_title, DisplayName.inSentence(names)),
         onDismiss = onDismiss,
@@ -69,12 +80,12 @@ fun PropertiesDialog(entries: List<FileEntry>, contents: Flow<ContentCount>, onD
                 val gap = Arrangement.spacedBy(12.dp)
                 Row(horizontalArrangement = gap, verticalAlignment = Alignment.CenterVertically) {
                     EntryIcon(single, Modifier.size(32.dp))
-                    OneLine(DisplayName.of(single.name), Modifier.weight(1f))
+                    OneLine(drive ?: DisplayName.of(single.name), Modifier.weight(1f))
                 }
                 Separator()
             }
             entries.map { typeLabel(it, res) }.distinct().singleOrNull()?.let { Property(R.string.prop_type, it) }
-            entries.map { it.path.parent }.distinct().singleOrNull()?.let {
+            entries.map { it.path.parent }.distinct().singleOrNull()?.takeIf { drive == null }?.let {
                 Property(R.string.prop_location, DisplayName.of(it.toString()))
             }
             val bytes = if (single?.kind == EntryKind.FILE) single.size else counted.bytes

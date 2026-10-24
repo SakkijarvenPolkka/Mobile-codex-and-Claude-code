@@ -63,6 +63,34 @@ class VolumeTrackingTest {
     }
 
     @Test
+    fun searchResultsOnAnEjectedVolumeAreMarkedLikeItsFolders() {
+        val searched = Location.SearchResults(sdRoot.resolve("DCIM"), "img")
+        val model = TabsReducer.reduce(model, TabAction.Navigate(searched))
+        val tracking = VolumeTracking(volumes, codec)
+        tracking.volumeAt(SD, null)
+
+        val ejected = tracking.onVolumeEvent(VolumeEvent.Ejecting(SD), model)
+
+        // Unavailable, by the folder searched: no results of a drive that is gone.
+        assertEquals(setOf(onSd), ejected.ejected)
+        assertEquals(mapOf(onSd to DecodedLocation.Unavailable(SD, "DCIM")), tracking.unavailable.value)
+
+        // Back at its own root: it only stops waiting, to be searched again where it is.
+        tracking.volumeAt(SD, sdRoot)
+        assertTrue(tracking.onVolumeEvent(VolumeEvent.Mounted(SD), model).moves.isEmpty())
+        assertTrue(tracking.unavailable.value.isEmpty())
+
+        // Gone again, then back at another root: the same search, of the same folder there.
+        tracking.volumeAt(SD, null)
+        tracking.onVolumeEvent(VolumeEvent.Ejecting(SD), model)
+        val elsewhere = Paths.get("/mnt/media_rw/$SD")
+        tracking.volumeAt(SD, elsewhere)
+        val mounted = tracking.onVolumeEvent(VolumeEvent.Mounted(SD), model)
+        val there = Location.SearchResults(elsewhere.resolve("DCIM"), "img")
+        assertEquals(listOf(TabAction.ReplaceCurrent(onSd, there)), mounted.moves)
+    }
+
+    @Test
     fun remountAtTheSameRootOnlyEndsTheWait() {
         val tracking = VolumeTracking(volumes, codec)
         tracking.volumeAt(SD, null)

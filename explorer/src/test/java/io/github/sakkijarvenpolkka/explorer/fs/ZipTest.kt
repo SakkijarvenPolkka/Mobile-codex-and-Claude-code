@@ -12,13 +12,17 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.InputStream
 import java.nio.channels.FileChannel
 import java.nio.charset.Charset
 import java.nio.file.Files
 import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
+import java.util.zip.ZipException
 import kotlin.math.abs
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TestTimeSource
 
 class ZipTest {
 
@@ -78,6 +82,9 @@ class ZipTest {
 
         assertEquals(dst.resolve("사진.zip"), zip)
         assertEquals(listOf("사진/", "사진/빈 폴더/", "사진/여름.txt", "빈 파일.txt", "empty/"), entryNames(zip))
+        // Every name is in UTF-8, and flagged so (EFS).
+        val bytes = Files.readAllBytes(zip)
+        assertTrue(centralHeaders(bytes).indices.all { bytes.flags(it) and FLAG_UTF8 != 0 })
         assertEquals(OpProgress(6, 0, 5, 0, null), reports.first())
         assertEquals(OpProgress(6, 6, 5, 5, "empty"), reports.last())
 
@@ -345,7 +352,12 @@ class ZipTest {
         val card = folder.newFolder("card").toPath()
         val fs = FaultyFs()
         val asked = ArrayList<Path>()
-        val ops = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS, removable = { asked.add(it); it == card })
+        val volume = VolumeRoot("card", card, VolumeTraits(), removable = true)
+        val volumes = VolumeLookup { path ->
+            asked.add(path)
+            volume.takeIf { path == card }
+        }
+        val ops = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS, volumes)
 
         ops.extractNow(zip, into = card)
 
@@ -357,6 +369,33 @@ class ZipTest {
             forced,
         )
         assertEquals(setOf(card), asked.toSet())
+    }
+
+    @Test
+    fun fatVolumeRefusesNamesItCannotHoldBeforeWriting() {
+        val card = folder.newFolder("card").toPath()
+        val fat = VolumeRoot("card", card, VolumeTraits(fatNames = true), removable = true)
+        val fs = FaultyFs()
+        val ops = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS, volumesOf(fat))
+        val refused = mapOf(
+            "photo 12:30.jpg" to ':', "d*/x.txt" to '*', "ok/what?.txt" to '?', "\"q\".txt" to '"',
+            "<a>.txt" to '<', "dir/pipe|.txt" to '|',
+        )
+
+        for ((name, char) in refused) {
+            val zip = putZip(src, "x.zip", zipOf("ok.txt" to "ok", name to "bad"))
+
+            // The names FAT refuses refuse the whole archive, as copying them would ("not allowed on the drive").
+            assertEquals(name, FsError.NameInvalid(NameProblem.FatChar(char)), failureOf { ops.extractNow(zip, card) })
+        }
+
+        // Before anything is written: not a folder, not a byte, nothing recorded.
+        assertEquals(emptyList<FaultyFs.Call>(), fs.calls)
+        assertEquals(emptyMap<String, String>(), tree(card))
+        assertEquals(emptySet<Path>(), journal.recorded)
+        // A volume without those rules takes them.
+        val zip = putZip(src, "x.zip", zipOf("photo 12:30.jpg" to "fine"))
+        assertEquals(mapOf("photo 12:30.jpg" to "fine"), tree(zipOps().extractNow(zip).folder))
     }
 
     @Test
@@ -423,6 +462,90 @@ class ZipTest {
 
         assertEquals(OpResult.Done(listOf(dst.resolve("x")), emptyList()), result)
         assertEquals(mapOf("x/" to "", "x/가.txt" to "x"), tree(dst))
+    }
+
+    @Test
+    fun nothingToCompressIsUnsupported() {
+        assertEquals(FsError.Unsupported, failureOf { zipOps().compressNow() })
+
+        val result = runBlocking { fileOps().run(spec(OpKind.COMPRESS, emptyList(), dst), NeverAsked, {}) }
+
+        assertEquals(OpResult.Failed(FsError.Unsupported, 0, 0), result)
+        assertEquals(emptyMap<String, String>(), tree(dst))
+    }
+
+    @Test
+    fun fileOpsKeepsWhatArchivesBeforeAFailedOneExtracted() {
+        val a = putZip(src, "a.zip", zipOf("a.txt" to "a"))
+        val bad = putZip(src, "bad.zip", "not an archive".toByteArray())
+        val c = putZip(src, "c.zip", zipOf("c.txt" to "c"))
+        val committed = ArrayList<Int>()
+
+        val result = runBlocking { fileOps().run(extracting(a, bad, c), NeverAsked, {}) { committed += it } }
+
+        // The damaged one is listed, and the others are extracted around it, the one before it kept.
+        val failed = listOf(ItemFailure(bad.toString(), FsError.Corrupt))
+        assertEquals(OpResult.Done(listOf(dst.resolve("a"), dst.resolve("c")), failed), result)
+        assertEquals(listOf(1, 2, 3), committed)
+        assertEquals(mapOf("a/" to "", "a/a.txt" to "a", "c/" to "", "c/c.txt" to "c"), tree(dst))
+    }
+
+    @Test
+    fun fatalFailureAfterAnExtractedArchiveKeepsIt() {
+        val a = putZip(src, "a.zip", zipOf("a.txt" to "a"))
+        val b = putZip(src, "b.zip", zipOf("b.txt" to "0123456789"))
+        val c = putZip(src, "c.zip", zipOf("c.txt" to "c"))
+        val fs = FaultyFs().apply { failAt(".b.txt.$OP_ID.xpart", 3, "No space left on device") }
+
+        val result = fileOps(fs).runToEnd(extracting(a, b, c))
+
+        // The volume is full: the archive after it is not tried, as it would not fit either.
+        val failed = listOf(b, c).map { ItemFailure(it.toString(), FsError.NoSpace) }
+        assertEquals(OpResult.Done(listOf(dst.resolve("a")), failed), result)
+        assertEquals(mapOf("a/" to "", "a/a.txt" to "a"), tree(dst))
+        assertEquals(emptySet<Path>(), journal.recorded)
+    }
+
+    @Test
+    fun zipExceptionsTellUnsafeEncryptedOrCorrupt() {
+        // What the path check of Android 14 and later throws from the ZipFile constructor.
+        assertEquals(FsError.UnsafeArchive, errorOf(ZipException("Invalid zip entry path: ../evil.txt")))
+        assertEquals(FsError.Encrypted, errorOf(ZipException("invalid CEN header (encrypted entry)")))
+        assertEquals(FsError.Corrupt, errorOf(ZipException("zip END header not found")))
+    }
+
+    @Test
+    fun progressIsPacedByTheInjectedTimeSource() {
+        val names = listOf("a.txt", "b.txt", "c.txt")
+        val files = names.map { write(src, it, it) }
+        val time = TestTimeSource()
+        // A second goes by as each file is read, and as each is written out of the archive.
+        val fs = object : FsBackend by NioFsBackend {
+            override fun openRead(path: Path): InputStream = NioFsBackend.openRead(path).also { time += 1.seconds }
+
+            override fun createNew(path: Path): FileChannel = NioFsBackend.createNew(path).also { time += 1.seconds }
+        }
+        val ops = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS, time = time)
+        val packed = ArrayList<OpProgress>()
+        val unpacked = ArrayList<OpProgress>()
+
+        val zip = runBlocking { ops.compress(files, dst, OP_ID) { packed += it } }
+        runBlocking { ops.extract(zip, dst, null, OP_ID) { unpacked += it } }
+
+        // So each file gets a report, not only the last one.
+        assertEquals(names, packed.mapNotNull { it.currentName }.distinct())
+        assertEquals(names, unpacked.mapNotNull { it.currentName }.distinct())
+
+        // A run of FileOps is paced by its own time source.
+        val untimed = ZipOps(fs, WriteProtocol(fs, journal), KO_LABELS)
+        val fileOps = FileOps(fs, VolumeLookup { null }, KO_LABELS, journal, time = time, ids = { "r1" }, zip = untimed)
+        val run = ArrayList<OpProgress>()
+
+        val again = folder.newFolder("again").toPath()
+
+        runBlocking { fileOps.run(spec(OpKind.COMPRESS, files, again), NeverAsked, { run += it }) }
+
+        assertEquals(names, run.mapNotNull { it.currentName }.distinct())
     }
 
     @Test

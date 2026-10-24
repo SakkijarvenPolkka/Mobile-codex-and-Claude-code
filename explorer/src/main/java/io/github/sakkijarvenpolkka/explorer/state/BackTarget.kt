@@ -20,3 +20,11 @@ fun backTarget(overlayOpen: Boolean, selectionActive: Boolean, drawerOpen: Boole
         canGoBack -> BackTarget.HISTORY
         else -> null
     }
+
+/** What Back acts on in [tab] with [shell] over it ([backTarget]): the viewer [viewed] counts as what is open. */
+internal fun backOf(tab: TabState, shell: ShellState, viewed: Viewers.State): BackTarget? = backTarget(
+    overlayOpen = shell.overlay != null || viewed.viewer != null,
+    selectionActive = tab.selection.active,
+    drawerOpen = shell.drawerOpen,
+    canGoBack = tab.back.isNotEmpty(),
+)

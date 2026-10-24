@@ -143,12 +143,17 @@ fun PdfViewer(
     }
 }
 
-/** The text that says why a document could not be opened, for [error] (the file system's as the shell says them). */
+/**
+ * The text that says why a document could not be opened, for [error]: damaged or encrypted, gone or not to
+ * be read (the file system's as the shell says them), else that it cannot be opened (an I/O error, say: a
+ * file not read is not called damaged).
+ */
 private fun failureText(error: FsError?): Int = when (error) {
+    FsError.Corrupt -> R.string.pdf_corrupt
     FsError.Encrypted -> R.string.pdf_encrypted
     FsError.NotFound -> R.string.error_not_found
     FsError.AccessDenied -> R.string.error_access_denied
-    else -> R.string.pdf_corrupt
+    else -> R.string.open_unsupported
 }
 
 /** What [PdfViewer] shows while the document opens, once it is open, and when it could not be. */

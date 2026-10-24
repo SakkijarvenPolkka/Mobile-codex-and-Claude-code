@@ -152,7 +152,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
     LaunchedEffect(ui.location) { if (ui.location !is Location.SearchResults) searchOpen = false }
     val searchBox = @Composable { modifier: Modifier ->
         val focusChange = { focused: Boolean -> searchFocused = focused }
-        SearchBox(ui, vm::search, vm::searchNow, vm::cancelSearch, focusChange, modifier, autoFocus = searchOpen)
+        val close = if (searchOpen && !expanded) ({ searchOpen = false }) else null
+        SearchBox(ui, vm::search, vm::searchNow, vm::clearSearch, focusChange, modifier, searchOpen, close)
     }
     Box(
         Modifier
@@ -251,7 +252,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
         Overlay.Options -> OptionsDialog(ui.global, onChange = vm::setGlobal, onDismiss = vm::closeOverlay)
         is Overlay.Properties -> {
             val contents = remember(overlay) { vm.contentsOf(overlay.entries) }
-            PropertiesDialog(overlay.entries, contents, onDismiss = vm::closeOverlay)
+            PropertiesDialog(overlay.entries, contents, onDismiss = vm::closeOverlay, volumes = ui.volumes)
         }
         is Overlay.Extract -> {
             val entry = overlay.request.entry

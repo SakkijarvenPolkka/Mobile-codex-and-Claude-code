@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -57,20 +58,23 @@ internal fun searchHint(ui: ExplorerUiState): String {
  * The search box of [ui]'s active tab, [searchHint] while empty. A change of its text calls [onSearch]
  * (the view model waits for the typing to stop), unless the keyboard is still composing it (a Korean
  * syllable being put together, say): then once it is composed. The keyboard's search key calls
- * [onSearchNow], composed or not. While it holds text, × empties it and calls [onCancel]. Each tab has its
- * own: it keeps what was typed in it, empties when the tab leaves its search results, and shows the words
- * of search results it comes to otherwise (Back, Forward, a search run again). [onFocusChange] tells when
- * it has the focus; with [autoFocus] it takes it when it first shows.
+ * [onSearchNow], composed or not. While it holds text, × empties it and calls [onClear] (which leaves
+ * search results for the folder searched). A box that can be closed ([onClose]: a narrow window's, opened
+ * by its 🔍) shows × while empty too, which closes it, as Back does then. Each tab has its own: it keeps
+ * what was typed in it, empties when the tab leaves its search results, and shows the words of search
+ * results it comes to otherwise (Back, Forward, a search run again). [onFocusChange] tells when it has the
+ * focus; with [autoFocus] it takes it when it first shows.
  */
 @Composable
 fun SearchBox(
     ui: ExplorerUiState,
     onSearch: (String) -> Unit,
     onSearchNow: (String) -> Unit,
-    onCancel: () -> Unit,
+    onClear: () -> Unit,
     onFocusChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     autoFocus: Boolean = false,
+    onClose: (() -> Unit)? = null,
 ) {
     val tab = ui.tabs.activeId
     val shown = (ui.location as? Location.SearchResults)?.query
@@ -90,6 +94,8 @@ fun SearchBox(
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { if (autoFocus) focus.requestFocus() }
     val keyboard = LocalSoftwareKeyboardController.current
+    val closes = onClose != null && value.text.isEmpty()
+    BackHandler(enabled = closes && ui.overlay == null) { onClose?.invoke() }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         FluentTextBox(
             value = value,
@@ -115,17 +121,21 @@ fun SearchBox(
             },
             submitAction = ImeAction.Search,
         )
-        if (value.text.isNotEmpty()) {
+        if (value.text.isNotEmpty() || closes) {
             FluentButton(
                 text = null,
                 onClick = {
-                    value = TextFieldValue()
-                    onCancel()
+                    if (closes) {
+                        onClose()
+                    } else {
+                        value = TextFieldValue()
+                        onClear()
+                    }
                 },
                 modifier = Modifier.testTag(Tags.SEARCH_CLEAR),
                 icon = FluentIcons.Close,
                 style = ButtonStyle.SUBTLE,
-                contentDescription = stringResource(R.string.cancel),
+                contentDescription = stringResource(if (closes) R.string.close else R.string.cancel),
             )
         }
     }

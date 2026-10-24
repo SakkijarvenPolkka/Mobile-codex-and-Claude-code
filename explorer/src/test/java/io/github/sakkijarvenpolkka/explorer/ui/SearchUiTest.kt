@@ -30,6 +30,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.pressKey
 import androidx.lifecycle.viewModelScope
@@ -40,6 +41,8 @@ import io.github.sakkijarvenpolkka.explorer.data.ViewMode
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.SortKey
+import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
@@ -574,5 +577,169 @@ class SearchUiTest {
         assertEquals(Location.SearchResults(root, "x"), location())
         assertEquals(true, (ui.listing as? ListingState.Streaming)?.done)
         rule.onNodeWithTag(Tags.SEARCH_STATUS).assertDoesNotExist()
+    }
+
+    @Test
+    fun clearReturnsToTheFolderSearched() {
+        dir("docs")
+        file("docs/a.txt")
+        file("ab.txt")
+        show()
+        searchFor("a")
+        assertEquals(Location.SearchResults(root, "a"), location())
+
+        // × goes back to the folder, as Back does: no results are left under an empty box.
+        rule.onNodeWithTag(Tags.SEARCH_CLEAR).performClick()
+        drain()
+        assertEquals(Location.Folder(root), location())
+        assertEquals(listOf("docs", "ab.txt"), names())
+        assertEquals("", boxText())
+        assertEquals(listOf(Location.SearchResults(root, "a")), ui.tabs.active.forward.map { it.location })
+
+        // Search results that were not come to from their folder (a restored tab's, searched again) make way for it.
+        vm.navigate(Location.Folder(root.resolve("docs")))
+        drain()
+        vm.dispatch(TabAction.ReplaceCurrent(ui.tabs.activeId, Location.SearchResults(root.resolve("docs"), "a")))
+        drain()
+        assertEquals(listOf("a.txt"), names())
+        rule.onNodeWithTag(Tags.SEARCH_CLEAR).performClick()
+        drain()
+        assertEquals(Location.Folder(root.resolve("docs")), location())
+        assertEquals(listOf("a.txt"), names())
+        assertEquals(listOf(Location.Folder(root)), ui.tabs.active.back.map { it.location })
+    }
+
+    @Test
+    fun compactBoxClosesWithClearOrBackWhenEmpty() {
+        file("a.txt")
+        show(WidthClass.COMPACT)
+        rule.onNodeWithTag(Tags.CMD_SEARCH).performClick()
+        drain()
+        box().assertIsDisplayed()
+
+        // Opened and left empty: × closes it.
+        rule.onNodeWithTag(Tags.SEARCH_CLEAR).performClick()
+        drain()
+        box().assertDoesNotExist()
+
+        // So does Back, which goes nowhere else.
+        rule.onNodeWithTag(Tags.CMD_SEARCH).performClick()
+        drain()
+        box().assertIsDisplayed()
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        drain()
+        box().assertDoesNotExist()
+        assertEquals(Location.Folder(root), location())
+        assertEquals(listOf("a.txt"), names())
+    }
+
+    @Test
+    fun stoppedSearchDoesNotSayNothingFound() {
+        val a1 = dir("a1")
+        file("a1/x1.txt")
+        dir("z")
+        file("z/y2.txt")
+        // Stopped while a1 is listed: nothing found yet.
+        var inA1: (() -> Unit)? = { vm.cancelSearch() }
+        show { listed ->
+            val come = inA1.takeIf { listed == a1 }
+            if (come != null) {
+                inA1 = null
+                come()
+                shadowOf(Looper.getMainLooper()).idle()
+            }
+        }
+        vm.searchNow("y2")
+        drain()
+
+        // It ended because it was stopped, not because there is nothing: that is not said.
+        assertNull(inA1)
+        val search = ui.listing as ListingState.Streaming
+        assertTrue(search.done && search.stopped)
+        assertTrue(ui.rows.isEmpty())
+        rule.onNodeWithTag(Tags.SEARCH_NONE).assertDoesNotExist()
+    }
+
+    @Test
+    fun sortChangeSortsResultsWithoutSearchingAgain() {
+        file("a.txt")
+        file("ab.txt")
+        file("ba.txt")
+        show()
+        searchFor("a")
+        assertEquals(listOf("a.txt", "ab.txt", "ba.txt"), names())
+        val listed = fs.listed.size
+
+        vm.setView(ui.viewSetting.copy(sort = SortSpec(SortKey.NAME, ascending = false)))
+        drain()
+
+        assertEquals(listOf("ba.txt", "ab.txt", "a.txt"), names())
+        assertEquals(listed, fs.listed.size)
+        assertEquals(true, (ui.listing as? ListingState.Streaming)?.done)
+    }
+
+    @Test
+    fun searchingAgainKeepsTheRowsAndTheScroll() {
+        repeat(80) { file("a%02d.txt".format(it)) }
+        show()
+        searchFor("a")
+        assertEquals(80, ui.rows.size)
+        rule.onNodeWithTag(Tags.fileList(ViewMode.DETAILS)).performScrollToIndex(60)
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.row("a60.txt")).assertIsDisplayed()
+        Files.delete(root.resolve("a79.txt"))
+
+        // As after a file operation under the folder searched: the rows found stay until the new search has them.
+        vm.refresh()
+        rule.waitForIdle()
+        assertEquals(80, ui.rows.size)
+        drain()
+
+        assertEquals(79, ui.rows.size)
+        assertEquals(true, (ui.listing as? ListingState.Streaming)?.done)
+        rule.onNodeWithTag(Tags.row("a60.txt")).assertIsDisplayed()
+    }
+
+    @Test
+    fun closingATabForgetsItsSearches() {
+        file("a.txt")
+        show()
+        searchFor("a")
+        val searched = ui.tabs.activeId
+        assertTrue(searched in vm.searches.remembered)
+
+        vm.newTab()
+        vm.closeTab(searched)
+        drain()
+
+        assertFalse(searched in vm.searches.remembered)
+    }
+
+    @Test
+    fun blankQueryNeitherSearchesNorNavigates() {
+        file("a.txt")
+        show()
+        val listed = fs.listed.size
+
+        // Spaces, after the pause or at the search key, are no search: they would find everything.
+        box().performClick()
+        box().performTextInput("   ")
+        idleFor(SEARCH_DELAY_MS)
+        box().performImeAction()
+        drain()
+
+        assertEquals(Location.Folder(root), location())
+        assertEquals(listed, fs.listed.size)
+        assertTrue(ui.tabs.active.back.isEmpty())
+        assertEquals(listOf("a.txt"), names())
+    }
+
+    @Test
+    fun searchStatusSaysResultsMayBeCapped() {
+        val capped = ListingState.Streaming(emptyList(), done = true, capped = true, skippedDirs = 0, currentDir = null)
+        rule.setContent { ExplorerTheme(settings.global.value) { SearchStatus(capped, emptyList()) } }
+
+        rule.onNode(hasText(str(R.string.search_capped)) and hasAnyAncestor(hasTestTag(Tags.SEARCH_STATUS)))
+            .assertIsDisplayed()
     }
 }

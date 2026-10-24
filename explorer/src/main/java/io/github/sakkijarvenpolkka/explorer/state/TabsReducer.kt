@@ -78,6 +78,14 @@ sealed interface TabAction {
     data class SetSelection(val paths: List<Path>) : TabAction
 }
 
+/** Whether this action changes only the selection: the tabs stay where they are. */
+internal fun TabAction.changesSelectionOnly(): Boolean = when (this) {
+    is TabAction.Select, is TabAction.Toggle, is TabAction.RangeTo, is TabAction.SelectAll,
+    TabAction.ClearSelection, is TabAction.Invert, is TabAction.Prune, is TabAction.SetSelection,
+    -> true
+    else -> false
+}
+
 /** The single source of truth for tabs, history and selection: a pure function of its input. */
 object TabsReducer {
     /** The most entries a back or forward stack keeps; the oldest are dropped first. */

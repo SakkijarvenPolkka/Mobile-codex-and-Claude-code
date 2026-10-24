@@ -32,9 +32,9 @@ sealed interface ListingState {
     data class Loaded(val rows: List<Row>, val refreshing: Boolean = false) : ListingState
 
     /**
-     * Rows that arrive over time (search): [done] once all have; [capped] when the limit on
-     * results stopped it; [skippedDirs] folders that could not be read; [currentDir] the folder
-     * being read.
+     * Rows that arrive over time (search): [done] once all have, or once it was [stopped] (by the user,
+     * before the end: there may be more); [capped] when the limit on results stopped it; [skippedDirs]
+     * folders that could not be read; [currentDir] the folder being read.
      */
     data class Streaming(
         val rows: List<Row>,
@@ -42,6 +42,7 @@ sealed interface ListingState {
         val capped: Boolean,
         val skippedDirs: Int,
         val currentDir: Path?,
+        val stopped: Boolean = false,
     ) : ListingState
 
     data class Error(val error: FsError) : ListingState
@@ -112,13 +113,21 @@ class ListingLoader(
 
     /**
      * Shows [source]'s states for [tab] (Recycle Bin, search results): [ListingState.Loading]
-     * until it emits. It is collected in the loader's scope, so it moves its own work off the
-     * main thread. Clears the stale mark.
+     * until it emits, or with [refresh] the rows already shown, as `Loaded(rows, refreshing = true)` or
+     * as a [ListingState.Streaming] that is not done. It is collected in the loader's scope, so it moves
+     * its own work off the main thread. Clears the stale mark.
      */
     @Synchronized
-    fun setSource(tab: TabId, source: Flow<ListingState>) {
+    fun setSource(tab: TabId, source: Flow<ListingState>, refresh: Boolean = false) {
         val slot = slot(tab)
-        val generation = restart(slot, ListingState.Loading)
+        val shown = slot.state.value
+        val kept = when {
+            !refresh -> null
+            shown is ListingState.Loaded -> shown.copy(refreshing = true)
+            shown is ListingState.Streaming -> shown.copy(done = false, stopped = false)
+            else -> null
+        }
+        val generation = restart(slot, kept ?: ListingState.Loading)
         slot.job = scope.launch {
             try {
                 source.collect { publish(slot, generation, it) }

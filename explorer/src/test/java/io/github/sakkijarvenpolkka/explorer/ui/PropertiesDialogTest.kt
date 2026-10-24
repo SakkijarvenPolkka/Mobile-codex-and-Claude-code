@@ -17,6 +17,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.countContents
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.Volume
+import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.Formats
 import kotlinx.coroutines.Dispatchers
@@ -50,16 +52,31 @@ class PropertiesDialogTest {
 
     private fun entry(path: Path): FileEntry = Listing.entry(NioFsBackend, path, MimeResolver()::mimeOf)
 
-    private fun show(entries: List<FileEntry>, fs: FsBackend = NioFsBackend) {
+    private fun show(entries: List<FileEntry>, fs: FsBackend = NioFsBackend, volumes: List<Volume> = emptyList()) {
         rule.setContent {
             FluentTheme(dark = false, accent = null) {
                 val contents = remember { countContents(fs, entries).flowOn(Dispatchers.IO) }
-                PropertiesDialog(entries, contents, onDismiss = {})
+                PropertiesDialog(entries, contents, onDismiss = {}, volumes = volumes)
             }
         }
     }
 
     private fun shown(text: String): Boolean = rule.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+
+    @Test
+    fun volumeRootShowsTheDriveNameAndNoLocation() {
+        val root = folder.newFolder("0").toPath()
+        val card = folder.newFolder("1A2B-3C4D").toPath()
+        val volumes = listOf(FakeVolumes.primary(root), FakeVolumes.removable("1A2B-3C4D", "SD 카드", card))
+        show(listOf(entry(root)), volumes = volumes)
+
+        // The drive by its name, not its folder's (`0`), and nothing it would be "in".
+        rule.onNodeWithText("⁨내부 저장소⁩ 속성").assertExists()
+        rule.onNodeWithText("내부 저장소").assertExists()
+        rule.onNodeWithText("0").assertDoesNotExist()
+        rule.onNodeWithText("위치").assertDoesNotExist()
+        rule.onNodeWithText(folder.root.toString()).assertDoesNotExist()
+    }
 
     @Test
     fun fileShowsNameTypeLocationSizeAndModified() {

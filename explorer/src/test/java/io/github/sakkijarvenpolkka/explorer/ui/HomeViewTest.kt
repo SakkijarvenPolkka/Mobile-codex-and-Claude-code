@@ -227,8 +227,8 @@ class HomeViewTest {
         show(usage = { error("statfs failed") })
         // Not an endless progress bar: Home with nothing in it.
         assertEquals(HomeData(emptyList(), emptyList(), emptyList(), 0L, 0), ui.home)
-        rule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate) and hasAnyAncestor(hasTestTag(Tags.HOME)))
-            .assertDoesNotExist()
+        val spinner = hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate)
+        rule.onNode(spinner and hasAnyAncestor(hasTestTag(Tags.HOME))).assertDoesNotExist()
     }
 
     @Test

@@ -214,7 +214,9 @@ class FavoritesTest {
         dir("a")
         dir("b")
         // Stored between them: one that leads nowhere, which is not shown.
-        val stored = listOf(Favorite("primary", "a", "a"), Favorite("primary", "../x", "x"), Favorite("primary", "b", "b"))
+        val stored = listOf(
+            Favorite("primary", "a", "a"), Favorite("primary", "../x", "x"), Favorite("primary", "b", "b"),
+        )
         settings.setFavorites(stored)
         show()
         go(Location.Home)
