@@ -33,7 +33,13 @@ import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
 import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeRegistry
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidImageDecoder
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidMediaPort
+import io.github.sakkijarvenpolkka.explorer.preview.AndroidPdfOpener
+import io.github.sakkijarvenpolkka.explorer.preview.FsTextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.OpenFiles
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
+import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -94,6 +100,20 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
 
     /** The files the viewers hold open, for the whole app: those on a volume that goes are closed with it. */
     val viewerFiles = OpenFiles()
+
+    /**
+     * What the built-in viewers read files with, for the whole app, keeping in [viewerFiles] what they hold
+     * open. They hold no activity: each player gets the context of the shell that shows it.
+     */
+    val viewers: ViewerDeps by lazy {
+        ViewerDeps(
+            text = FsTextLoader(NioFsBackend, Dispatchers.IO),
+            images = AndroidImageDecoder(Dispatchers.IO),
+            pdf = AndroidPdfOpener(this, Dispatchers.IO),
+            media = ::AndroidMediaPort,
+            io = Dispatchers.IO,
+        ).trackedIn(viewerFiles)
+    }
 
     /** Whether the user was asked to allow notifications since the process started (main thread only). */
     internal var notificationsAsked = false

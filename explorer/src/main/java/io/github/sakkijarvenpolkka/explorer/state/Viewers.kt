@@ -14,7 +14,6 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.isPresent
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
 import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
-import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -33,11 +32,11 @@ internal fun ExplorerDeps.addRecent(file: Path) {
 }
 
 /**
- * Opens the files of the view model [shell]: in the built-in viewers of [ExplorerDeps.viewers] those they
- * show ([previewKindFor]), any other in another app with [handOver]. It keeps what is open: the file
- * shown full screen, whether the preview pane is on, and the file last opened into it. [rows] are the
- * active tab's rows as listed now. The shell calls it directly for what the viewers' buttons do. Main
- * thread only, in [scope].
+ * Opens the files of the view model [shell]: in the built-in viewers, if the app has them
+ * ([ExplorerDeps.builtInViewers]), those they show ([previewKindFor]), any other in another app with
+ * [handOver]. It keeps what is open: the file shown full screen, whether the preview pane is on, and
+ * the file last opened into it. [rows] are the active tab's rows as listed now. The shell calls it
+ * directly for what the viewers' buttons do. Main thread only, in [scope].
  */
 internal class Viewers(
     private val deps: ExplorerDeps,
@@ -63,9 +62,6 @@ internal class Viewers(
     private val mutableState = MutableStateFlow(State())
     val state: StateFlow<State> = mutableState.asStateFlow()
 
-    /** What the viewers read files with ([ExplorerDeps.viewers]); without it, every file opens in another app. */
-    val viewerDeps: ViewerDeps? = deps.viewers
-
     /** The volumes (by uuid) of the file shown full screen and of the one picked for the pane. */
     private var viewerVolume: String? = null
     private var pickedVolume: String? = null
@@ -79,7 +75,7 @@ internal class Viewers(
      */
     fun open(entry: FileEntry, rows: List<Row>, fullScreen: Boolean = false) {
         val kind = previewKindFor(entry)
-        if (deps.viewers == null || kind == null) return handOver.open(entry)
+        if (!deps.builtInViewers || kind == null) return handOver.open(entry)
         val at = shell.here()
         scope.launch {
             val error = try {

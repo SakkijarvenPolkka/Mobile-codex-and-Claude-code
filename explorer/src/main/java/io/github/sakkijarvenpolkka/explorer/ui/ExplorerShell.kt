@@ -61,6 +61,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
 import io.github.sakkijarvenpolkka.explorer.platform.launch
 import io.github.sakkijarvenpolkka.explorer.preview.PreviewPane
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerScreen
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
@@ -115,10 +116,12 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
  * state has something for it to do. The keyboard shortcuts ([shortcutFor]) are read here first, so
  * the shell takes the focus back whenever the list shows with nothing open over it; the intents the
  * view model asks for are started from here, from the activity. The file operations show from the
- * runner's state ([OperationsDialogs]), which outlives the activity.
+ * runner's state ([OperationsDialogs]), which outlives the activity. [viewers] read the files the
+ * built-in viewers and the preview pane show, for a view model that opens files in them (its deps'
+ * `builtInViewers`); without them, neither shows.
  */
 @Composable
-fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
+fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: ViewerDeps? = null) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val runner by vm.runner.collectAsStateWithLifecycle()
     val expanded = widthClass == WidthClass.EXPANDED
@@ -145,7 +148,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .onPreviewKeyEvent { event ->
                 // The address box is the shell's only text field.
                 val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit)
-                action != null && vm.onShortcut(action, ui, shellFocused = focused, expanded = expanded)
+                action != null && vm.onShortcut(action, ui, focused, expanded, builtInViewers = viewers != null)
             }
             .onFocusChanged {
                 hasFocus = it.hasFocus
@@ -155,7 +158,6 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
             .focusTarget()
             .testTag(Tags.SHELL),
     ) {
-        val viewers = vm.viewing.viewerDeps
         val viewer = ui.viewer
         if (viewer != null && viewers != null) {
             ViewerScreen(
@@ -272,21 +274,21 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
  * Does what the shortcut [action] asks for in [ui]: false when it does nothing there (a command
  * not offered, nowhere to go), so that the key goes on to what has the focus. Enter opens the
  * one selected item only while the shell itself is [shellFocused]: a focused button, crumb or
- * row gets it first. The preview pane opens and closes on an [expanded] window. Ctrl+T opens a tab
- * at Home, Ctrl+W closes the active one and Ctrl+Tab goes to the next (with one tab, the key goes
- * on). Over a file open in its viewer, Back is the only shortcut: the commands would act on the
- * hidden list.
+ * row gets it first. The preview pane opens and closes on an [expanded] window of a shell given the
+ * [builtInViewers]. Ctrl+T opens a tab at Home, Ctrl+W closes the active one and Ctrl+Tab goes to the
+ * next (with one tab, the key goes on). Over a file open in its viewer, Back is the only
+ * shortcut: the commands would act on the hidden list.
  */
 private fun ExplorerViewModel.onShortcut(
     action: ShortcutAction,
     ui: ExplorerUiState,
     shellFocused: Boolean,
     expanded: Boolean,
+    builtInViewers: Boolean,
 ): Boolean {
     fun offered(c: Command): Boolean = (c in ui.commands).also { if (it) command(c) }
     fun can(possible: Boolean, act: () -> Unit): Boolean = possible.also { if (it) act() }
-    val viewers = viewing.viewerDeps
-    if (ui.viewer != null && viewers != null && action != ShortcutAction.BACK) return false
+    if (ui.viewer != null && builtInViewers && action != ShortcutAction.BACK) return false
     return when (action) {
         ShortcutAction.COPY -> offered(Command.COPY)
         ShortcutAction.CUT -> offered(Command.CUT)
@@ -301,7 +303,7 @@ private fun ExplorerViewModel.onShortcut(
         ShortcutAction.BACK -> can(ui.backTarget != null) { systemBack() }
         ShortcutAction.FORWARD -> can(ui.tabs.active.forward.isNotEmpty()) { forward() }
         ShortcutAction.UP -> can(ui.up != null) { up() }
-        ShortcutAction.PREVIEW_PANE -> can(expanded && viewers != null) { viewing.togglePane() }
+        ShortcutAction.PREVIEW_PANE -> can(expanded && builtInViewers) { viewing.togglePane() }
         ShortcutAction.NEW_TAB -> can(true) { newTab() }
         ShortcutAction.CLOSE_TAB -> can(true) { closeTab(ui.tabs.activeId) }
         ShortcutAction.NEXT_TAB -> can(ui.tabs.tabs.size > 1) { nextTab() }

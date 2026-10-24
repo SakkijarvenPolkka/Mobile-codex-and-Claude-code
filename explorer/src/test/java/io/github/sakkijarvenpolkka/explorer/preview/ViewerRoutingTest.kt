@@ -155,7 +155,7 @@ class ViewerRoutingTest {
         val mime = MimeResolver()
         val deps = ExplorerDeps(
             fs, settings, volumes, volumes, mime, Dispatchers.Unconfined, openWith = OpenWith(app, mime),
-            opsNotice = notice, viewers = viewers, clock = { OPENED_AT },
+            opsNotice = notice, builtInViewers = true, clock = { OPENED_AT },
         )
         vm = ExplorerViewModel(app, deps)
         settle()
@@ -169,7 +169,7 @@ class ViewerRoutingTest {
         width.value = widthClass
         rule.setContent {
             val global by settings.global.collectAsState()
-            ExplorerTheme(global) { ExplorerShell(vm, width.value) }
+            ExplorerTheme(global) { ExplorerShell(vm, width.value, viewers) }
         }
         rule.waitForIdle()
     }

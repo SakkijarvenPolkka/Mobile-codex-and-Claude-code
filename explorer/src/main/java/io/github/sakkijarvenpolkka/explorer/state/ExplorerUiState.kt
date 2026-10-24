@@ -25,7 +25,6 @@ import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
-import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
@@ -40,9 +39,10 @@ import java.nio.file.Path
  * are not changed. [bin] is the app's one Recycle Bin, shared with the file operations; without
  * it, there is none. [opsNotice] is what the file operations tell from outside any activity,
  * which the app keeps until it leaves the screen here ([clearOpsNotice]). [thumbnails] are the app's
- * cached thumbnails, for the tiles and large icons views; without them, those show icons only. [viewers]
- * read the files the built-in viewers show; without them, every file opens in another app. [clock] is
- * when a file is opened, for the recent files.
+ * cached thumbnails, for the tiles and large icons views; without them, those show icons only. With
+ * [builtInViewers], the files the built-in viewers show open in them (the shell is given what they read
+ * files with); without, every file opens in another app. [clock] is when a file is opened, for the
+ * recent files.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -58,7 +58,7 @@ data class ExplorerDeps(
     val opsNotice: StateFlow<OpsNotice?> = MutableStateFlow(null),
     val clearOpsNotice: () -> Unit = {},
     val thumbnails: Thumbnails? = null,
-    val viewers: ViewerDeps? = null,
+    val builtInViewers: Boolean = false,
     val clock: () -> Long = System::currentTimeMillis,
 )
 
