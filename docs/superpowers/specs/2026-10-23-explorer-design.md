@@ -452,7 +452,7 @@ suspend fun FileOps.run(spec: OperationSpec, resolver: ConflictResolver,
   yaml, yml, smi, srt, vtt, kt, java, py, js, ts, c, cpp, h, sh, gradle, properties). 최대 1 MiB를 직접 읽기
   루프로 읽는다(`readNBytes`는 API 33). `TextSniffer`: BOM(EF BB BF → UTF-8, FF FE → UTF-16LE,
   FE FF → UTF-16BE) → 앞 8 KiB에 NUL이 있으면 바이너리(다른 앱으로 열기) → 엄격한 UTF-8
-  (`REPORT`, 잘린 파일이면 `endOfInput = false`로 끝의 잘린 다중 바이트를 오류로 보지 않음) → CP949.
+  (`REPORT`, 잘린 파일이면 끝의 완성되지 않은 다중 바이트(최대 3바이트, 선행 바이트별 둘째 바이트 범위 확인)를 직접 잘라내고 U+FFFD를 붙임 — Android ICU 디코더의 버퍼링에 기대지 않음) → CP949.
   잘린 UTF-16은 짝수 길이로 자름. 줄 단위로 메인 스레드 밖에서 나눠 `LazyColumn`, 고정폭 글꼴, 줄 번호,
   2,000자를 넘는 줄은 같은 줄 번호로 이어지는 행으로 나눔. 1 MiB를 넘으면 "처음 1 MiB만 표시합니다".
   상태 표시줄에 감지한 인코딩, ⋯에서 바꾸기(자동 / UTF-8 / 한국어 / UTF-16). 편집은 v1에 없다.
