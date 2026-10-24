@@ -31,6 +31,7 @@ import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.backClosesSearchBox
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcons
@@ -60,10 +61,11 @@ internal fun searchHint(ui: ExplorerUiState): String {
  * syllable being put together, say): then once it is composed. The keyboard's search key calls
  * [onSearchNow], composed or not. While it holds text, × empties it and calls [onClear] (which leaves
  * search results for the folder searched). A box that can be closed ([onClose]: a narrow window's, opened
- * by its 🔍) shows × while empty too, which closes it, as Back does then. Each tab has its own: it keeps
- * what was typed in it, empties when the tab leaves its search results, and shows the words of search
- * results it comes to otherwise (Back, Forward, a search run again). [onFocusChange] tells when it has the
- * focus; with [autoFocus] it takes it when it first shows.
+ * by its 🔍) shows × while empty too, which closes it, as Back does then once it has nothing to close or
+ * clear first ([backClosesSearchBox]). Each tab has its own: it keeps what was typed in it, empties when
+ * the tab leaves its search results, and shows the words of search results it comes to otherwise (Back,
+ * Forward, a search run again). [onFocusChange] tells when it has the focus; with [autoFocus] it takes it
+ * when it first shows.
  */
 @Composable
 fun SearchBox(
@@ -95,7 +97,8 @@ fun SearchBox(
     LaunchedEffect(Unit) { if (autoFocus) focus.requestFocus() }
     val keyboard = LocalSoftwareKeyboardController.current
     val closes = onClose != null && value.text.isEmpty()
-    BackHandler(enabled = closes && ui.overlay == null) { onClose?.invoke() }
+    // Back closes it only when nothing comes first: what is open over it, the selection, the drawer.
+    BackHandler(enabled = closes && backClosesSearchBox(ui.backTarget)) { onClose?.invoke() }
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         FluentTextBox(
             value = value,

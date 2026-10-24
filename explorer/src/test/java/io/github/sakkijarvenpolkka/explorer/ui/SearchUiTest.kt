@@ -218,6 +218,12 @@ class SearchUiTest {
     private fun inStatus(text: String): SemanticsNodeInteraction =
         rule.onNode(hasText(text) and hasAnyAncestor(hasTestTag(Tags.SEARCH_STATUS)))
 
+    /** The system Back, then what it leads to. */
+    private fun pressBack() {
+        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
+        drain()
+    }
+
     @OptIn(ExperimentalTestApi::class)
     @Test
     fun debounceRunsOnce() {
@@ -631,6 +637,55 @@ class SearchUiTest {
         box().assertDoesNotExist()
         assertEquals(Location.Folder(root), location())
         assertEquals(listOf("a.txt"), names())
+    }
+
+    @Test
+    fun compactBoxBackClearsTheSelectionFirst() {
+        dir("docs")
+        file("docs/a.txt")
+        show(WidthClass.COMPACT)
+        vm.navigate(Location.Folder(root.resolve("docs")))
+        drain()
+        rule.onNodeWithTag(Tags.CMD_SEARCH).performClick()
+        drain()
+        vm.onLongPress(ui.rows.single().entry)
+        drain()
+        assertTrue(ui.tabs.active.selection.active)
+
+        // Back clears the selection first: the empty box stays open.
+        pressBack()
+        assertFalse(ui.tabs.active.selection.active)
+        box().assertIsDisplayed()
+        assertEquals(Location.Folder(root.resolve("docs")), location())
+
+        // Then it closes the box, before it goes back.
+        pressBack()
+        box().assertDoesNotExist()
+        assertEquals(Location.Folder(root.resolve("docs")), location())
+        pressBack()
+        assertEquals(Location.Folder(root), location())
+    }
+
+    @Test
+    fun compactBoxBackClosesTheDrawerFirst() {
+        file("a.txt")
+        show(WidthClass.COMPACT)
+        rule.onNodeWithTag(Tags.CMD_SEARCH).performClick()
+        drain()
+        vm.setDrawerOpen(true)
+        drain()
+        rule.onNodeWithTag(Tags.DRAWER).assertIsDisplayed()
+
+        // Back closes the drawer over the box first: the box stays open under it.
+        pressBack()
+        assertFalse(ui.drawerOpen)
+        rule.onNodeWithTag(Tags.DRAWER).assertDoesNotExist()
+        box().assertIsDisplayed()
+
+        // Then the box.
+        pressBack()
+        box().assertDoesNotExist()
+        assertEquals(Location.Folder(root), location())
     }
 
     @Test

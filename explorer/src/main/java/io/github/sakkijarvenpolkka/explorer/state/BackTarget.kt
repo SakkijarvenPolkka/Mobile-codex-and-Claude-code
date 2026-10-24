@@ -10,7 +10,8 @@ enum class BackTarget { OVERLAY, SELECTION, DRAWER, HISTORY }
 
 /**
  * What Back acts on: an open menu or dialog, then the selection, then the open drawer, then the
- * active tab's history. Null when there is nothing, so Back leaves the app (predictive back).
+ * active tab's history. Null when there is nothing, so Back leaves the app (predictive back). A narrow
+ * window's open, empty search box comes between the drawer and the history ([backClosesSearchBox]).
  */
 fun backTarget(overlayOpen: Boolean, selectionActive: Boolean, drawerOpen: Boolean, canGoBack: Boolean): BackTarget? =
     when {
@@ -28,3 +29,9 @@ internal fun backOf(tab: TabState, shell: ShellState, viewed: Viewers.State): Ba
     drawerOpen = shell.drawerOpen,
     canGoBack = tab.back.isNotEmpty(),
 )
+
+/**
+ * Whether Back closes a narrow window's open, empty search box (opened by its 🔍), [target] being what it
+ * acts on otherwise: the box comes after the drawer, before the history, so only for the history or nothing.
+ */
+fun backClosesSearchBox(target: BackTarget?): Boolean = target == null || target == BackTarget.HISTORY

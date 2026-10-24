@@ -73,7 +73,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
     private val home = HomeLoader(deps, codec, viewModelScope)
     internal val searches = Searches(deps, viewModelScope, host) { shell.value.obbAllowed }
-    private val zips = ZipUi(deps, viewModelScope, host)
+    private val zips = ZipUi(deps, viewModelScope, host) { shell.value.obbAllowed }
 
     /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
     internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
@@ -165,14 +165,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /**
      * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a ZIP archive in
-     * the extract dialog where it can be extracted, a file in its built-in viewer or else another app ([Viewers.open]).
-     * An APK needs the user to let this app install apps first, which a message offers to do.
+     * the extract dialog where its folder takes the new one ([ZipUi.extracts]), a file in its built-in viewer or
+     * else another app ([Viewers.open]). An APK needs the user to let this app install apps first, which a
+     * message offers to do.
      */
     fun open(entry: FileEntry) {
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            EntryKind.FILE -> if (extracts(entry)) requestExtract(entry) else viewing.open(entry, listedRows())
+            EntryKind.FILE -> if (zips.extracts(entry)) requestExtract(entry) else viewing.open(entry, listedRows())
             // A pipe, socket or device: no app reads it as a file.
             EntryKind.OTHER -> host.showError(here(), UiText.res(R.string.open_unsupported))
         }
@@ -183,9 +184,6 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val toggles = tabs.value.active.selection.active || here() == Location.RecycleBin
         if (toggles) reduce(TabAction.Toggle(entry.path)) else open(entry)
     }
-
-    /** Whether [entry] is a ZIP archive to extract next to it: not in a restricted folder, nor on a read-only drive. */
-    private fun extracts(entry: FileEntry): Boolean = isZip(entry) && ui.value.let { !it.restricted && !it.readOnly }
 
     /**
      * A long press: selects the item (entering selection mode), adds it to the selection in

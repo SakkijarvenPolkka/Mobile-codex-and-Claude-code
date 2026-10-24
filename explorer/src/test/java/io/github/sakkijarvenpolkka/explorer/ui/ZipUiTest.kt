@@ -23,6 +23,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.data.Recent
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
@@ -363,6 +364,43 @@ class ZipUiTest {
         drain()
         assertNull(ui.extract)
         assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
+    }
+
+    @Test
+    fun zipFromHomeRecentsIsJudgedByItsOwnFolder() {
+        putZip(root, "a.zip", zipOf("a.txt" to "a"))
+        Files.createDirectories(root.resolve("Android/data/app"))
+        putZip(root.resolve("Android/data/app"), "b.zip", zipOf("b.txt" to "b"))
+        // Both were opened before (b.zip in another app, as such an archive is), so Home lists them as recent files.
+        settings.addRecent(Recent("primary", "Android/data/app/b.zip", openedAt = 1))
+        settings.addRecent(Recent("primary", "a.zip", openedAt = 2))
+        show()
+        vm.navigate(Location.Home)
+        drain()
+
+        // An archive in a folder Android keeps to an app goes to another app (none serves it), as from its folder.
+        rule.onNodeWithTag(Tags.recent("b.zip")).performClick()
+        drain()
+        assertNull(ui.extract)
+        assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
+
+        // So does one on a drive that is read-only now.
+        vm.dismissMessage()
+        volumes.update("primary") { it.copy(state = VolumeState.MOUNTED_READ_ONLY) }
+        drain()
+        rule.onNodeWithTag(Tags.recent("a.zip")).performClick()
+        drain()
+        assertNull(ui.extract)
+        assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
+
+        // Where a new folder can go next to it, it opens the extract dialog from Home too.
+        vm.dismissMessage()
+        volumes.update("primary") { it.copy(state = VolumeState.MOUNTED) }
+        drain()
+        rule.onNodeWithTag(Tags.recent("a.zip")).performClick()
+        drain()
+        assertEquals(root.resolve("a.zip"), ui.extract?.entry?.path)
+        assertEquals(Location.Home, ui.location)
     }
 
     private companion object {

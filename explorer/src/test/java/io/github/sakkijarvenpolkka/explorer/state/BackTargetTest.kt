@@ -2,7 +2,9 @@
 package io.github.sakkijarvenpolkka.explorer.state
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BackTargetTest {
@@ -35,6 +37,15 @@ class BackTargetTest {
     fun drawerComesBeforeHistory() {
         assertEquals(BackTarget.DRAWER, target(drawer = true, history = true))
         assertEquals(BackTarget.DRAWER, target(drawer = true))
+    }
+
+    @Test
+    fun openEmptySearchBoxComesAfterTheDrawerBeforeHistory() {
+        assertTrue(backClosesSearchBox(BackTarget.HISTORY))
+        assertTrue(backClosesSearchBox(null))
+        for (first in listOf(BackTarget.OVERLAY, BackTarget.SELECTION, BackTarget.DRAWER)) {
+            assertFalse(backClosesSearchBox(first))
+        }
     }
 
     @Test

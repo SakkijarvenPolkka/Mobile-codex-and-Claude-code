@@ -14,7 +14,9 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpOptions
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
+import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.toFsError
+import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -37,12 +39,14 @@ internal fun isZip(entry: FileEntry): Boolean =
 /**
  * The ZIP archives of the view model [shell]: what it asks for goes to the app's runner
  * ([ExplorerDeps.runner]); without it, or without [ExplorerDeps.fileOps] to look into an archive, nothing
- * happens. What a compression made is selected once it ends ([OperationsUi]). Main thread only, in [scope].
+ * happens. What a compression made is selected once it ends ([OperationsUi]). [obbAllowed] tells whether
+ * `Android/obb` is open to the app now. Main thread only, in [scope].
  */
 internal class ZipUi(
     private val deps: ExplorerDeps,
     private val scope: CoroutineScope,
     private val shell: ShellHost,
+    private val obbAllowed: () -> Boolean,
 ) {
     /** How many archives have been asked to be extracted: only the last one asked opens its dialog. */
     private var asked = 0
@@ -59,6 +63,20 @@ internal class ZipUi(
         }
         if (selected.isEmpty()) return
         submit(OperationSpec(newId(), OpKind.COMPRESS, selected.map { it.path.toString() }, target.toString()))
+    }
+
+    /**
+     * Whether opening [entry] opens its extract dialog: a ZIP archive whose own folder takes the new folder,
+     * one on a mounted drive that is not read-only, and not one Android keeps to an app (`Android/data`,
+     * `Android/obb`). Where the archive is decides, not where the active tab is (Home, for a recent file).
+     */
+    fun extracts(entry: FileEntry): Boolean {
+        if (!isZip(entry)) return false
+        val folder = entry.path.parent ?: return false
+        val volume = deps.lookup.volumeOf(folder) ?: return false
+        val readOnly = deps.volumes.volumes.value
+            .any { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY }
+        return !readOnly && !isRestrictedAppDataPath(volume.root, folder, obbAllowed())
     }
 
     /**
