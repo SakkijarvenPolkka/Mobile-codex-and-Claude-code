@@ -1,6 +1,7 @@
 /*
  * Files — the image viewer: the images of a folder side by side to swipe through, each decoded to
- * the size of the screen, zoomed by pinching (up to twice its own pixels) or double tapping (spec §7).
+ * the size of the screen, zoomed by pinching (up to twice its own pixels) or double tapping, and
+ * decoded again in more detail once zoomed in (spec §7).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -61,11 +62,18 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.IntSize
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlin.math.max
+import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /** The test tags of [ImageViewer]. */
 object ImageViewerTags {
@@ -89,12 +97,23 @@ private const val DOUBLE_TAP_ZOOM = 2f
 /** The types whose files may be animated, which are decoded as animations first. */
 private val ANIMATABLE_TYPES = setOf("image/gif", "image/webp")
 
+/** How far past its fit an image is zoomed before it is decoded again in more detail. */
+private const val DETAIL_FROM_ZOOM = 1.5f
+
+/** The longest side of an image decoded again for its zoom, in pixels. */
+private const val DETAIL_MAX_SIDE = 4096
+
+/** The most pixels of an image decoded again for its zoom (16 MP). */
+private const val DETAIL_MAX_AREA = 16.0 * 1024 * 1024
+
 /**
  * The images [files] (the folder's images in its order), from the one at [startIndex], swiped
- * through sideways. Each is decoded by [decoder] at the size of the page, fitted to it (enlarged
- * at most twice its own pixels), and zoomed by pinching, up to twice its own pixels, or by a
- * double tap, which toggles between the fit and a zoom on the tapped point; zoomed, it pans with
- * one finger instead of swiping. GIF and WebP files that are animated play. An image that cannot
+ * through sideways. Each is decoded by [decoder] at the size of the page, the pages on either side
+ * ahead of time (a progress bar shows until it is), fitted to it (enlarged at most twice its own
+ * pixels), and zoomed by pinching, up to twice its own pixels, or by a double tap, which toggles
+ * between the fit and a zoom on the tapped point; zoomed, it pans with one finger instead of
+ * swiping. Once a zoom past 1.5 times the fit settles, the image is decoded again as large as it is
+ * shown ([zoomDecodeSize]). GIF and WebP files that are animated play. An image that cannot
  * be decoded says so, with an "Open with" button when [onOpenWith] is given (for the image
  * shown). [onCurrentChange] hears of the image shown, first the one at [startIndex], so that a host
  * that draws its own top bar ([showTitle] false: no title row, nor window insets) knows it; the
@@ -129,11 +148,32 @@ fun ImageViewer(
             state = pager,
             modifier = Modifier.weight(1f).fillMaxWidth().testTag(ImageViewerTags.PAGER),
             userScrollEnabled = !zoom.zoomed,
+            beyondViewportPageCount = 1,
             key = { files[it].path.toString() },
         ) { page ->
             ImagePage(files[page], decoder, zoom.takeIf { page == pager.settledPage }, onOpenWith)
         }
     }
+}
+
+/**
+ * The size an image of [original] pixels is decoded at again when it is shown [zoom] times its fit
+ * to a page of [viewport] pixels: as large as it is shown, but no larger than its own pixels, no
+ * side longer than 4096 pixels and no more than 16 MP. Null when the bitmap decoded for the page
+ * will do: at 1.5 times the fit or less, or when that one is as large already.
+ */
+fun zoomDecodeSize(original: IntSize, viewport: IntSize, zoom: Float): IntSize? {
+    if (zoom <= DETAIL_FROM_ZOOM || original.width <= 0 || original.height <= 0) return null
+    val page = fitSize(original, viewport.width, viewport.height)
+    val shown = fitSize(original, (viewport.width * zoom).roundToInt(), (viewport.height * zoom).roundToInt())
+    val area = shown.width.toDouble() * shown.height
+    val scale = minOf(1.0, DETAIL_MAX_SIDE.toDouble() / max(shown.width, shown.height), sqrt(DETAIL_MAX_AREA / area))
+    val detail = if (scale < 1.0) {
+        IntSize(max(1, (shown.width * scale).roundToInt()), max(1, (shown.height * scale).roundToInt()))
+    } else {
+        shown
+    }
+    return detail.takeIf { it.width > page.width || it.height > page.height }
 }
 
 /** The zoom of the image on the settled page: [zoom] times its fitted size, moved [offset] pixels from the centre. */
@@ -174,9 +214,9 @@ private fun ImagePage(entry: FileEntry, decoder: ImageDecoderPort, zoom: ZoomSta
             }
         }
         when (val shown = page) {
-            Page.Loading -> Unit
+            Page.Loading -> FluentProgressBar(progress = null)
             Page.Failed -> ViewerNotice(stringResource(R.string.image_error), onOpenWith)
-            is Page.Shown -> ZoomableImage(entry, shown, viewport, zoom)
+            is Page.Shown -> ZoomableImage(entry, shown, viewport, zoom, decoder)
         }
     }
 }
@@ -185,7 +225,8 @@ private fun ImagePage(entry: FileEntry, decoder: ImageDecoderPort, zoom: ZoomSta
 private suspend fun decodePage(entry: FileEntry, decoder: ImageDecoderPort, viewport: IntSize): Page.Shown {
     val original = decoder.sizeOf(entry.path)
     val (width, height) = viewport
-    val animation = if (baseMimeType(entry.mime) in ANIMATABLE_TYPES) decoder.decodeAnimation(entry.path, width, height) else null
+    val animatable = baseMimeType(entry.mime) in ANIMATABLE_TYPES
+    val animation = if (animatable) decoder.decodeAnimation(entry.path, width, height) else null
     val still = if (animation == null) decoder.decode(entry.path, width, height) else null
     return Page.Shown(original, still, animation)
 }
@@ -193,10 +234,18 @@ private suspend fun decodePage(entry: FileEntry, decoder: ImageDecoderPort, view
 /**
  * The image of [shown] fitted to [viewport] (pixels of the screen per pixel of the image: what fits,
  * at most [MAX_SCALE]), zoomed by [zoom] from there up to [MAX_SCALE] pixels of the screen per pixel
- * of the image, and moved no further than keeps it over the page.
+ * of the image, and moved no further than keeps it over the page (again when the page changes size).
+ * A still image zoomed past 1.5 times the fit is decoded again by [decoder] once the zoom settles, and
+ * drawn instead when it is ready, until the zoom comes back down.
  */
 @Composable
-private fun ZoomableImage(entry: FileEntry, shown: Page.Shown, viewport: IntSize, zoom: ZoomState?) {
+private fun ZoomableImage(
+    entry: FileEntry,
+    shown: Page.Shown,
+    viewport: IntSize,
+    zoom: ZoomState?,
+    decoder: ImageDecoderPort,
+) {
     val original = shown.original
     val fit = minOf(viewport.width.toFloat() / original.width, viewport.height.toFloat() / original.height, MAX_SCALE)
     val maxZoom = max(1f, MAX_SCALE / fit)
@@ -213,6 +262,33 @@ private fun ZoomableImage(entry: FileEntry, shown: Page.Shown, viewport: IntSize
         val scale = (zoom.zoom * zoomChange).coerceIn(1f, maxZoom)
         zoom.offset = bounded(zoom.offset * (scale / zoom.zoom) + panChange, scale)
         zoom.zoom = scale
+    }
+    // A page of another size allows another zoom (a window made larger, less).
+    LaunchedEffect(zoom, viewport, original) {
+        if (zoom == null) return@LaunchedEffect
+        zoom.zoom = zoom.zoom.coerceIn(1f, maxZoom)
+        zoom.offset = bounded(zoom.offset, zoom.zoom)
+    }
+    var detail by remember(shown, zoom) { mutableStateOf<ImageBitmap?>(null) }
+    LaunchedEffect(shown, zoom, viewport, decoder) {
+        if (zoom == null || shown.still == null) return@LaunchedEffect
+        snapshotFlow { transform.isTransformInProgress to zoomDecodeSize(original, viewport, zoom.zoom) }
+            .filter { (moving, _) -> !moving }
+            .map { (_, size) -> size }
+            .distinctUntilChanged()
+            .collectLatest { size ->
+                if (size == null) {
+                    detail = null
+                    return@collectLatest
+                }
+                try {
+                    detail = decoder.decode(entry.path, size.width, size.height)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // The bitmap of the page stays.
+                }
+            }
     }
     val center = Offset(viewport.width / 2f, viewport.height / 2f)
     val name = DisplayName.of(entry.name)
@@ -253,9 +329,10 @@ private fun ZoomableImage(entry: FileEntry, shown: Page.Shown, viewport: IntSize
             translationX = zoom?.offset?.x ?: 0f
             translationY = zoom?.offset?.y ?: 0f
         }
+        val still = detail ?: shown.still
         when {
             shown.animation != null -> Animation(shown.animation, size.then(layer))
-            shown.still != null -> Image(shown.still, null, size.then(layer), contentScale = ContentScale.FillBounds)
+            still != null -> Image(still, null, size.then(layer), contentScale = ContentScale.FillBounds)
         }
     }
 }

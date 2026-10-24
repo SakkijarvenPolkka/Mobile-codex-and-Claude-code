@@ -86,6 +86,10 @@ fun previewKindFor(entry: FileEntry): PreviewKind? {
     }
 }
 
+/** [files] when [entry] is among them, else [entry] alone: what a viewer opened on [entry] swipes through. */
+internal fun siblingsOrSelf(entry: FileEntry, files: List<FileEntry>): List<FileEntry> =
+    files.takeIf { list -> list.any { it.path == entry.path } } ?: listOf(entry)
+
 /** [entry] to show full screen, with the files to swipe to from it ([siblings], [entry] among them). */
 data class ViewerRequest(val entry: FileEntry, val siblings: List<FileEntry>)
 
@@ -104,18 +108,18 @@ data class ViewerDeps(
 
 /**
  * The file of [req] full screen, in the viewer its kind has ([previewKindFor]); a picture swipes to the
- * other pictures of [ViewerRequest.siblings]. The top bar has the name of the file shown, then Share,
- * Open with and Properties for it (each when given) and Close ([onClose]); the viewer under it draws no
- * title of its own. Clear of the system bars and the display cutout.
+ * other pictures of [ViewerRequest.siblings]. The top bar has the name of the file shown, then Share
+ * ([onShare]), Open with ([onOpenWith]) and Properties ([onProperties]) for it, and Close ([onClose]);
+ * the viewer under it draws no title of its own. Clear of the system bars and the display cutout.
  */
 @Composable
 fun ViewerScreen(
     req: ViewerRequest,
     deps: ViewerDeps,
     onClose: () -> Unit,
-    onShare: ((FileEntry) -> Unit)? = null,
-    onOpenWith: ((FileEntry) -> Unit)? = null,
-    onProperties: ((FileEntry) -> Unit)? = null,
+    onShare: (FileEntry) -> Unit,
+    onOpenWith: (FileEntry) -> Unit,
+    onProperties: (FileEntry) -> Unit,
 ) {
     // The picture swiped to, else the file opened.
     var current by remember(req) { mutableStateOf(req.entry) }
@@ -133,7 +137,7 @@ fun ViewerScreen(
                 siblings = req.siblings,
                 deps = deps,
                 onClose = onClose,
-                onOpenWith = onOpenWith?.let { open -> { open(current) } },
+                onOpenWith = { onOpenWith(current) },
                 onCurrentChange = { current = it },
             )
         }
@@ -144,9 +148,9 @@ fun ViewerScreen(
 @Composable
 private fun TopBar(
     entry: FileEntry,
-    onShare: ((FileEntry) -> Unit)?,
-    onOpenWith: ((FileEntry) -> Unit)?,
-    onProperties: ((FileEntry) -> Unit)?,
+    onShare: (FileEntry) -> Unit,
+    onOpenWith: (FileEntry) -> Unit,
+    onProperties: (FileEntry) -> Unit,
     onClose: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -157,13 +161,9 @@ private fun TopBar(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        if (onShare != null) BarButton(FluentIcons.Share, stringResource(R.string.cmd_share)) { onShare(entry) }
-        if (onOpenWith != null) {
-            FluentButton(stringResource(R.string.cmd_open_with), { onOpenWith(entry) }, style = ButtonStyle.SUBTLE)
-        }
-        if (onProperties != null) {
-            BarButton(FluentIcons.Info, stringResource(R.string.cmd_properties)) { onProperties(entry) }
-        }
+        BarButton(FluentIcons.Share, stringResource(R.string.cmd_share)) { onShare(entry) }
+        FluentButton(stringResource(R.string.cmd_open_with), { onOpenWith(entry) }, style = ButtonStyle.SUBTLE)
+        BarButton(FluentIcons.Info, stringResource(R.string.cmd_properties)) { onProperties(entry) }
         BarButton(FluentIcons.Close, stringResource(R.string.close), onClose)
     }
 }
@@ -191,7 +191,7 @@ internal fun ViewerContent(
 ) {
     when (val kind = previewKindFor(entry)) {
         PreviewKind.Image -> {
-            val files = siblings.takeIf { list -> list.any { it.path == entry.path } } ?: listOf(entry)
+            val files = siblingsOrSelf(entry, siblings)
             val start = files.indexOfFirst { it.path == entry.path }
             ImageViewer(files, start, deps.images, onClose, showTitle = false, onOpenWith, onCurrentChange)
         }

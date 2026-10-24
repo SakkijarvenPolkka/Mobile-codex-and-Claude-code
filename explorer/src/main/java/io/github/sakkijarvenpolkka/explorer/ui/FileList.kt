@@ -392,7 +392,9 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnail
 @Composable
 private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp) {
     val sizePx = with(LocalDensity.current) { size.roundToPx() }
-    val thumbnail by produceState(thumbnails?.cached(entry, sizePx), thumbnails, entry, sizePx) {
+    // Looked up once, not on every recomposition of the item.
+    val cached = remember(thumbnails, entry, sizePx) { thumbnails?.cached(entry, sizePx) }
+    val thumbnail by produceState(cached, thumbnails, entry, sizePx) {
         value = thumbnails?.get(entry, sizePx)
     }
     val bitmap = thumbnail

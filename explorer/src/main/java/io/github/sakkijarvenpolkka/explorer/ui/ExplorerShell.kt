@@ -108,12 +108,13 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
 /**
  * The file manager for [vm]: on [WidthClass.EXPANDED] the navigation pane is pinned at the
  * start, and the preview pane, when on, at the end; otherwise the navigation pane is a drawer
- * behind ☰. A file open in its viewer takes the whole window ([ViewerScreen]), with the view
- * model's message over it. The bars keep clear of the system bars and the display cutout; Back
- * is handled only while the state has something for it to do. The keyboard shortcuts
- * ([shortcutFor]) are read here first, so the shell keeps the focus while nothing is open over
- * it; the intents the view model asks for are started from here, from the activity. The file
- * operations show from the runner's state ([OperationsDialogs]), which outlives the activity.
+ * behind ☰. A file open in its viewer takes the whole window ([ViewerScreen]), with the app's
+ * notice of the file operations and the view model's message over it. The bars keep clear of the
+ * system bars and the display cutout; Back is handled only while the state has something for it
+ * to do. The keyboard shortcuts ([shortcutFor]) are read here first, so the shell takes the focus
+ * back whenever the list shows with nothing open over it; the intents the view model asks for are
+ * started from here, from the activity. The file operations show from the runner's state
+ * ([OperationsDialogs]), which outlives the activity.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
@@ -132,7 +133,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
     // The shell itself, not a button or row in it, has the focus.
     var focused by remember { mutableStateOf(false) }
     val nothingOpen = ui.overlay == null
-    LaunchedEffect(nothingOpen) { if (nothingOpen && !hasFocus) focus.requestFocus() }
+    val listShown = ui.viewer == null
+    LaunchedEffect(nothingOpen, listShown) { if (nothingOpen && listShown && !hasFocus) focus.requestFocus() }
     Box(
         Modifier
             .fillMaxSize()
@@ -161,10 +163,10 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                 onOpenWith = vm::openWith,
                 onProperties = vm::showProperties,
             )
-            ui.message?.let { message ->
-                val bottom = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
-                val place = Modifier.align(Alignment.BottomCenter).windowInsetsPadding(bottom)
-                MessageBar(message, vm::dismissMessage, place.testTag(Tags.MESSAGE))
+            val bottom = WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal)
+            Column(Modifier.align(Alignment.BottomCenter).windowInsetsPadding(bottom)) {
+                ui.opsNotice?.let { MessageBar(it, vm::dismissOpsNotice) }
+                ui.message?.let { MessageBar(it, vm::dismissMessage, Modifier.testTag(Tags.MESSAGE)) }
             }
         } else {
             val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
@@ -201,7 +203,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass) {
                     }
                     if (expanded && ui.previewPane && viewers != null) {
                         val pane = Modifier.width(PREVIEW_WIDTH).fillMaxHeight()
-                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm::openWith)
+                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm::openWith, onOpen = vm::openFullScreen)
                     }
                 }
                 StatusBar(

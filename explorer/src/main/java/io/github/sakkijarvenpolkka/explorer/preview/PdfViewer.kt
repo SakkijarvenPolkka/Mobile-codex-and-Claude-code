@@ -46,6 +46,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
@@ -91,11 +94,12 @@ private const val MAX_ZOOM = 3f
 /**
  * [file] opened by [opener] (on [io]: it blocks), its pages one under another in a list, each
  * rendered as wide as the list ([pdfRenderWidth]) and as tall as its proportions make it (A4 until
- * its size is known, 60,000 pixels at most); two fingers zoom the list (up to three times) and move
- * it. A password protected document, or one that cannot be read, says so, with an "Open with"
- * button when [onOpenWith] is given. The document is closed when the viewer leaves. The title row
- * has the name and a close button ([onClose]); a host that draws its own top bar sets [showTitle]
- * false (no title row, nor window insets).
+ * it is rendered, 60,000 pixels at most); two fingers zoom the list (up to three times) and move
+ * it, and so does one finger while it is zoomed. A password protected document, one that cannot be
+ * read, or a file gone or not to be read says so, with an "Open with" button when [onOpenWith] is
+ * given. The document is closed when the viewer leaves. The title row has the name and a close
+ * button ([onClose]); a host that draws its own top bar sets [showTitle] false (no title row, nor
+ * window insets).
  */
 @Composable
 fun PdfViewer(
@@ -117,8 +121,7 @@ fun PdfViewer(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            val encrypted = (e as? FsException)?.error == FsError.Encrypted
-            state = PdfState.Failed(if (encrypted) R.string.pdf_encrypted else R.string.pdf_corrupt)
+            state = PdfState.Failed(failureText((e as? FsException)?.error))
         } finally {
             opened?.close()
         }
@@ -140,6 +143,14 @@ fun PdfViewer(
     }
 }
 
+/** The text that says why a document could not be opened, for [error] (the file system's as the shell says them). */
+private fun failureText(error: FsError?): Int = when (error) {
+    FsError.Encrypted -> R.string.pdf_encrypted
+    FsError.NotFound -> R.string.error_not_found
+    FsError.AccessDenied -> R.string.error_access_denied
+    else -> R.string.pdf_corrupt
+}
+
 /** What [PdfViewer] shows while the document opens, once it is open, and when it could not be. */
 private sealed interface PdfState {
     data object Opening : PdfState
@@ -149,7 +160,10 @@ private sealed interface PdfState {
     data class Failed(val message: Int) : PdfState
 }
 
-/** The pages of [pdf] in a list as wide as the view, zoomed by pinching. */
+/**
+ * The pages of [pdf] in a list as wide as the view, zoomed by pinching; zoomed, one finger moves them
+ * sideways, and up and down past the ends of the list. A view made smaller keeps them over it.
+ */
 @Composable
 private fun Pages(file: Path, pdf: PdfPort) {
     val list = rememberSaveable(file, saver = LazyListState.Saver) { LazyListState() }
@@ -158,9 +172,13 @@ private fun Pages(file: Path, pdf: PdfPort) {
     val sizes = remember(pdf) { mutableStateMapOf<Int, IntSize>() }
     BoxWithConstraints(Modifier.fillMaxSize().clipToBounds().pinchToZoom(zoom)) {
         val width = constraints.maxWidth
+        val viewport = IntSize(constraints.maxWidth, constraints.maxHeight)
+        LaunchedEffect(zoom, viewport) { zoom.clamp(viewport) }
+        val edges = remember(zoom, viewport) { zoom.edgeScroll(viewport) }
         LazyColumn(
             Modifier
                 .fillMaxSize()
+                .nestedScroll(edges)
                 .testTag(PdfViewerTags.PAGES)
                 .graphicsLayer {
                     scaleX = zoom.zoom
@@ -177,9 +195,9 @@ private fun Pages(file: Path, pdf: PdfPort) {
 }
 
 /**
- * Page [index] of [pdf], [widthPx] wide: white in the proportions of its size (in [sizes], measured
- * there first; no taller than [MAX_PAGE_HEIGHT_PX]), with the page drawn in its own proportions once
- * it is rendered.
+ * Page [index] of [pdf], [widthPx] wide: white in the proportions of its size (in [sizes], learnt when
+ * it is first rendered; no taller than [MAX_PAGE_HEIGHT_PX]), with the page drawn in its own
+ * proportions once it is rendered.
  */
 @Composable
 private fun Page(pdf: PdfPort, index: Int, widthPx: Int, sizes: SnapshotStateMap<Int, IntSize>) {
@@ -188,8 +206,10 @@ private fun Page(pdf: PdfPort, index: Int, widthPx: Int, sizes: SnapshotStateMap
     LaunchedEffect(pdf, index, widthPx) {
         if (widthPx <= 0) return@LaunchedEffect
         try {
-            val size = sizes[index] ?: pdf.pageSize(index).also { sizes[index] = it }
-            bitmap = pdf.render(index, pdfRenderWidth(size.width, size.height, widthPx)).asImageBitmap()
+            // Rendered first: the page is opened once, for both, and then its size is known.
+            val rendered = pdf.render(index, widthPx)
+            if (sizes[index] == null) sizes[index] = pdf.pageSize(index)
+            bitmap = rendered.asImageBitmap()
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -220,9 +240,11 @@ private fun Page(pdf: PdfPort, index: Int, widthPx: Int, sizes: SnapshotStateMap
 
 /** How far the pages are zoomed in ([zoom] times their width, at least 1) and moved ([offset] pixels from the centre). */
 @Stable
-private class PagesZoom {
+internal class PagesZoom {
     var zoom by mutableFloatStateOf(1f)
     var offset by mutableStateOf(Offset.Zero)
+
+    val zoomed: Boolean get() = zoom > 1f
 
     /**
      * Zooms by [change] about [centroid] and moves by [pan] (pixels of a [viewport]-sized view),
@@ -239,11 +261,34 @@ private class PagesZoom {
         offset = Offset(moved.x.coerceIn(-x, x), moved.y.coerceIn(-y, y))
         zoom = target
     }
+
+    /** Moves the pages by [by] (pixels of a [viewport]-sized view) while that keeps them over it: unzoomed, never. */
+    fun pan(by: Offset, viewport: IntSize) = transform(centreOf(viewport), by, 1f, viewport)
+
+    /** Moves the pages back over a [viewport]-sized view, which may be smaller than the last one. */
+    fun clamp(viewport: IntSize) = transform(centreOf(viewport), Offset.Zero, 1f, viewport)
+
+    /**
+     * Takes what a scroll of the list could not (at its top or bottom) to move the zoomed pages up or
+     * down within a [viewport]-sized view instead. The list scrolls in its own pixels, [zoom] times
+     * smaller than the view's.
+     */
+    fun edgeScroll(viewport: IntSize): NestedScrollConnection = object : NestedScrollConnection {
+        override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
+            if (!zoomed || available.y == 0f) return Offset.Zero
+            val scale = zoom
+            val before = offset.y
+            pan(Offset(0f, available.y * scale), viewport)
+            return Offset(0f, (offset.y - before) / scale)
+        }
+    }
+
+    private fun centreOf(viewport: IntSize) = Offset(viewport.width / 2f, viewport.height / 2f)
 }
 
 /**
  * Two fingers zoom and move [zoom], and then scroll nothing (they are seen before the list sees
- * them); one finger scrolls the list as before.
+ * them); one finger scrolls the list as before, and moves zoomed pages sideways too.
  */
 private fun Modifier.pinchToZoom(zoom: PagesZoom): Modifier = pointerInput(zoom) {
     awaitEachGesture {
@@ -253,6 +298,9 @@ private fun Modifier.pinchToZoom(zoom: PagesZoom): Modifier = pointerInput(zoom)
             if (event.changes.count { it.pressed } >= 2) {
                 zoom.transform(event.calculateCentroid(), event.calculatePan(), event.calculateZoom(), size)
                 event.changes.forEach { if (it.positionChanged()) it.consume() }
+            } else if (zoom.zoomed) {
+                // Left unconsumed: the list scrolls with the same finger.
+                zoom.pan(Offset(event.calculatePan().x, 0f), size)
             }
         } while (event.changes.any { it.pressed })
     }

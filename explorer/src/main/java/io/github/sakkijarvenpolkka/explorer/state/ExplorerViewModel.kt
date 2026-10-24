@@ -247,6 +247,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun closeViewer() = viewing.close()
 
+    /** Opens the file [entry] full screen in its viewer, even while the preview pane shows (its "Open"). */
+    fun openFullScreen(entry: FileEntry) = viewing.open(entry, listedRows(), fullScreen = true)
+
     /** Turns the preview pane of wide windows on or off (⋯ ▸ Preview pane, Alt+P). */
     fun togglePreviewPane() = viewing.togglePane()
 
@@ -333,7 +336,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun launched(intent: Intent, result: OpenResult) {
         val pending = shell.value.launch?.takeIf { it.intent === intent } ?: return
         shell.update { it.copy(launch = null) }
-        handOver.onOpenResult(result, pending.at)
+        handOver.launched(pending, result)
     }
 
     /** What [entries] hold, counted off the main thread while the flow is collected ([countContents]). */

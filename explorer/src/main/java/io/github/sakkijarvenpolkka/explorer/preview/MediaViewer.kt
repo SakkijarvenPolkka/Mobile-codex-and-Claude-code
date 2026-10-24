@@ -74,10 +74,12 @@ private const val TICK_MS = 250L
  * controls: play/pause, the time played, a seek bar to touch or drag, and the length. They work once
  * [port] has prepared the file; it plays when asked to. When the app goes to the background it
  * pauses and keeps the position, which a file prepared anew (a video whose surface came back, the
- * viewer made again after a configuration change) goes back to. A file that cannot be played says so,
- * with an "Open with" button when [onOpenWith] is given. [port] is released when the viewer leaves.
- * The title row has the name and a close button ([onClose]); a host that draws its own top bar sets
- * [showTitle] false (no title row, nor window insets).
+ * viewer made again after a configuration change) goes back to; a video's controls wait for that,
+ * as its player went with its surface. A file that cannot be played says so, with an "Open with"
+ * button when [onOpenWith] is given. [port] is released when the viewer leaves, and one port feeds
+ * one viewer (and so one [MediaPort.VideoSurface]). The title row has the name and a close button
+ * ([onClose]); a host that draws its own top bar sets [showTitle] false (no title row, nor window
+ * insets).
  */
 @Composable
 fun MediaViewer(
@@ -88,9 +90,10 @@ fun MediaViewer(
     showTitle: Boolean = true,
     onOpenWith: (() -> Unit)? = null,
 ) {
-    var state by remember(file, port) { mutableStateOf<MediaState>(MediaState.Preparing) }
-    var playing by remember(file, port) { mutableStateOf(false) }
-    var position by remember(file, port) { mutableIntStateOf(0) }
+    // Made anew whenever the effect below prepares the file anew: it has the same keys.
+    var state by remember(file, video, port) { mutableStateOf<MediaState>(MediaState.Preparing) }
+    var playing by remember(file, video, port) { mutableStateOf(false) }
+    var position by remember(file, video, port) { mutableIntStateOf(0) }
     // Where it was when the app went to the background.
     var resumeAt by rememberSaveable(file) { mutableStateOf<Int?>(null) }
     DisposableEffect(file, video, port) {
@@ -113,12 +116,13 @@ fun MediaViewer(
         onDispose { port.release() }
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
-        if (state is MediaState.Ready) {
-            port.pause()
-            playing = false
-            position = port.positionMs
-            resumeAt = position
-        }
+        val ready = state as? MediaState.Ready ?: return@LifecycleEventEffect
+        port.pause()
+        playing = false
+        position = port.positionMs
+        resumeAt = position
+        // A video's player goes with its surface, and is prepared anew when the app comes back.
+        if (video) state = MediaState.Reopening(ready.durationMs)
     }
     // While it plays, the time played moves on, and it may stop by itself (at the end, or for the
     // audio focus or the headphones).
@@ -146,8 +150,14 @@ fun MediaViewer(
             }
         }
         if (shown != MediaState.Failed) {
+            val length = when (shown) {
+                is MediaState.Ready -> shown.durationMs
+                is MediaState.Reopening -> shown.durationMs
+                else -> null
+            }
             Controls(
-                durationMs = (shown as? MediaState.Ready)?.durationMs,
+                durationMs = length,
+                enabled = shown is MediaState.Ready,
                 playing = playing,
                 positionMs = position,
                 onPlayPause = {
@@ -165,20 +175,25 @@ fun MediaViewer(
     }
 }
 
-/** What [MediaViewer] shows while the file is prepared, once it is ready to play, and when it cannot be played. */
+/**
+ * What [MediaViewer] shows while the file is prepared, once it is ready to play, while a video that was
+ * ready is prepared again after the app was in the background, and when it cannot be played.
+ */
 private sealed interface MediaState {
     data object Preparing : MediaState
     data class Ready(val durationMs: Int) : MediaState
+    data class Reopening(val durationMs: Int) : MediaState
     data object Failed : MediaState
 }
 
 /**
- * Play/pause, the time played ([positionMs]), the seek bar and the length ([durationMs]); all but
- * the times are disabled until there is a length (null while the file is prepared).
+ * Play/pause, the time played ([positionMs]), the seek bar and the length ([durationMs], null while
+ * the file is prepared); all but the times work only while [enabled].
  */
 @Composable
 private fun Controls(
     durationMs: Int?,
+    enabled: Boolean,
     playing: Boolean,
     positionMs: Int,
     onPlayPause: () -> Unit,
@@ -195,22 +210,23 @@ private fun Controls(
             onClick = onPlayPause,
             icon = if (playing) FluentIcons.Pause else FluentIcons.Play,
             style = ButtonStyle.SUBTLE,
-            enabled = durationMs != null,
+            enabled = enabled,
             contentDescription = stringResource(if (playing) R.string.pause else R.string.play),
         )
         BasicText(playbackTime(positionMs), style = timeStyle)
-        SeekBar(positionMs, durationMs ?: 0, onSeek, Modifier.weight(1f))
+        SeekBar(positionMs, durationMs ?: 0, enabled, onSeek, Modifier.weight(1f))
         BasicText(playbackTime(durationMs ?: 0), style = timeStyle)
     }
 }
 
 /**
  * [positionMs] of [durationMs] as a progress bar that a touch or a drag (or an accessibility
- * service) moves: [onSeek] hears the time picked, once the drag ends. Disabled without a length.
+ * service) moves: [onSeek] hears the time picked, once the drag ends. Disabled without a length,
+ * and unless [usable].
  */
 @Composable
-private fun SeekBar(positionMs: Int, durationMs: Int, onSeek: (Int) -> Unit, modifier: Modifier) {
-    val enabled = durationMs > 0
+private fun SeekBar(positionMs: Int, durationMs: Int, usable: Boolean, onSeek: (Int) -> Unit, modifier: Modifier) {
+    val enabled = usable && durationMs > 0
     // Where a drag has got to, a share of the length.
     var dragged by remember { mutableStateOf<Float?>(null) }
     val shown = dragged ?: if (enabled) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f

@@ -197,8 +197,6 @@
 
     <!-- The text viewer -->
     <string name="text_truncated">처음 1MB만 표시합니다</string>
-    <string name="preview_none">미리 볼 파일을 선택하세요</string>
-    <string name="preview_unavailable">미리 보기를 사용할 수 없습니다</string>
     <string name="text_binary">이 파일은 텍스트 파일이 아닙니다</string>
     <string name="encoding_auto">자동</string>
     <string name="encoding_utf8">UTF-8</string>
@@ -216,4 +214,9 @@
     <!-- The PDF viewer -->
     <string name="pdf_encrypted">암호로 보호된 PDF입니다</string>
     <string name="pdf_corrupt">손상된 파일입니다</string>
+
+    <!-- The preview pane -->
+    <string name="preview_none">미리 볼 파일을 선택하세요</string>
+    <string name="preview_unavailable">미리보기를 사용할 수 없습니다</string>
+    <string name="preview_open">열기</string>
 </resources>

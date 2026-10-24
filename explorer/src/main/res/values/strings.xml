@@ -199,8 +199,6 @@
 
     <!-- The text viewer -->
     <string name="text_truncated">Showing the first 1 MB</string>
-    <string name="preview_none">Select a file to preview</string>
-    <string name="preview_unavailable">No preview available</string>
     <string name="text_binary">This file isn\'t a text file</string>
     <string name="encoding_auto">Auto</string>
     <string name="encoding_utf8">UTF-8</string>
@@ -218,4 +216,9 @@
     <!-- The PDF viewer -->
     <string name="pdf_encrypted">This PDF is password protected</string>
     <string name="pdf_corrupt">The file is damaged</string>
+
+    <!-- The preview pane -->
+    <string name="preview_none">Select a file to preview</string>
+    <string name="preview_unavailable">No preview available</string>
+    <string name="preview_open">Open</string>
 </resources>

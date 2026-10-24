@@ -312,6 +312,58 @@ class TextSnifferTest {
         assertNull(TextSniffer.decode(bytes(0x61, 0x80, 0x80), 0, TextEncoding.UTF8, truncated = true, strict = true))
     }
 
+    /**
+     * What strict UTF-8 makes of a truncated head "ab" + [tail], read by the decoder that keeps unfinished
+     * bytes to itself (so nothing but the cut can make it valid).
+     */
+    private fun truncatedTail(vararg tail: Int): String? {
+        val head = "ab".toByteArray() + bytes(*tail)
+        val buffering = BufferingUtf8()
+        return TextSniffer.decode(head, 0, TextEncoding.UTF8, truncated = true, strict = true, charset = buffering)
+    }
+
+    @Test
+    fun unfinishedE0NeedsA0ToBF() {
+        // E0 80 could only begin an overlong form: not a character cut short, but bytes that are not UTF-8.
+        assertEquals("ab\uFFFD", truncatedTail(0xE0, 0xA0))
+        assertEquals("ab\uFFFD", truncatedTail(0xE0, 0xBF))
+        assertNull(truncatedTail(0xE0, 0x80))
+        assertNull(truncatedTail(0xE0, 0x9F))
+        // Other three-byte leads take any continuation byte.
+        assertEquals("ab\uFFFD", truncatedTail(0xE1, 0x80))
+        assertEquals("ab\uFFFD", truncatedTail(0xEF, 0xBF))
+    }
+
+    @Test
+    fun unfinishedEDNeeds80To9F() {
+        // ED A0 to ED BF would begin a surrogate.
+        assertEquals("ab\uFFFD", truncatedTail(0xED, 0x80))
+        assertEquals("ab\uFFFD", truncatedTail(0xED, 0x9F))
+        assertNull(truncatedTail(0xED, 0xA0))
+        assertNull(truncatedTail(0xED, 0xBF))
+    }
+
+    @Test
+    fun unfinishedF0Needs90ToBF() {
+        // F0 80 to F0 8F could only begin an overlong form.
+        assertEquals("ab\uFFFD", truncatedTail(0xF0, 0x90))
+        assertEquals("ab\uFFFD", truncatedTail(0xF0, 0xBF, 0x80))
+        assertNull(truncatedTail(0xF0, 0x80))
+        assertNull(truncatedTail(0xF0, 0x8F, 0x80))
+        // Other four-byte leads take any continuation byte.
+        assertEquals("ab\uFFFD", truncatedTail(0xF1, 0x80))
+        assertEquals("ab\uFFFD", truncatedTail(0xF3, 0xBF, 0xBF))
+    }
+
+    @Test
+    fun unfinishedF4Needs80To8F() {
+        // F4 90 and above would be past U+10FFFF.
+        assertEquals("ab\uFFFD", truncatedTail(0xF4, 0x80))
+        assertEquals("ab\uFFFD", truncatedTail(0xF4, 0x8F, 0xBF))
+        assertNull(truncatedTail(0xF4, 0x90))
+        assertNull(truncatedTail(0xF4, 0xBF, 0x80))
+    }
+
     @Test
     fun readHeadRefusesNegativeLimit() {
         assertThrows(IllegalArgumentException::class.java) {

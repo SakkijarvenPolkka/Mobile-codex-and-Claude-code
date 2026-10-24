@@ -23,11 +23,13 @@ import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
+import androidx.compose.ui.test.requestFocus
 import androidx.compose.ui.test.withKeyDown
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.viewModelScope
@@ -43,7 +45,9 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.TextEncoding
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
@@ -61,6 +65,8 @@ import io.github.sakkijarvenpolkka.explorer.ui.WidthClass
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -76,6 +82,7 @@ import org.robolectric.annotation.Config
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.attribute.BasicFileAttributes
 
 /** Which files open in which viewer, full screen or in the preview pane, and what closes them (a wide window). */
 @RunWith(RobolectricTestRunner::class)
@@ -135,12 +142,16 @@ class ViewerRoutingTest {
     }
 
     /** A view model on [root] as the primary volume and [extra] volumes, with the viewers above; folders are read at once. */
-    private fun start(fs: FsBackend = NioFsBackend, extra: List<Volume> = emptyList()) {
+    private fun start(
+        fs: FsBackend = NioFsBackend,
+        extra: List<Volume> = emptyList(),
+        notice: StateFlow<OpsNotice?> = MutableStateFlow(null),
+    ) {
         volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
         val mime = MimeResolver()
         val deps = ExplorerDeps(
             fs, settings, volumes, volumes, mime, Dispatchers.Unconfined, openWith = OpenWith(app, mime),
-            viewers = viewers, clock = { OPENED_AT },
+            opsNotice = notice, viewers = viewers, clock = { OPENED_AT },
         )
         vm = ExplorerViewModel(app, deps)
         settle()
@@ -196,6 +207,9 @@ class ViewerRoutingTest {
     /** A file the FileProvider serves (on an SD card), which the backend says is there. */
     private fun backendWith(file: Path): FsBackend = object : FsBackend by NioFsBackend {
         override fun exists(path: Path): Boolean = path == file || NioFsBackend.exists(path)
+
+        override fun attributes(path: Path): BasicFileAttributes =
+            NioFsBackend.attributes(if (path == file) root else path)
     }
 
     private fun entryAt(path: Path, mime: String?) =
@@ -287,11 +301,17 @@ class ViewerRoutingTest {
         assertNotNull(ui.viewer)
         assertEquals(listOf(Recent("primary", "Docs/notes.txt", OPENED_AT)), settings.recents.value)
 
-        // Opened in another app, it is a recent file too, the newest.
+        // Handed to another app, it is a recent file too, the newest: once an app has it.
         vm.closeViewer()
         vm.open(entryAt(data, null))
         settle()
-        assertNotNull(ui.launch)
+        vm.launched(checkNotNull(ui.launch), OpenResult.NoApp)
+        settle()
+        assertEquals(listOf(Recent("primary", "Docs/notes.txt", OPENED_AT)), settings.recents.value)
+        vm.open(entryAt(data, null))
+        settle()
+        vm.launched(checkNotNull(ui.launch), OpenResult.Started)
+        settle()
         assertEquals(
             listOf(Recent(SD, "Download/data.bin", OPENED_AT), Recent("primary", "Docs/notes.txt", OPENED_AT)),
             settings.recents.value,
@@ -427,6 +447,105 @@ class ViewerRoutingTest {
         assertEquals(Location.Folder(root), ui.location)
         assertNull(ui.backTarget)
     }
+
+    @Test
+    fun siblingsFallBackToTheEntryAlone() {
+        val a = entryAt(Paths.get("/storage/emulated/0/a.jpg"), "image/jpeg")
+        val b = entryAt(Paths.get("/storage/emulated/0/b.jpg"), "image/jpeg")
+        assertEquals(listOf(a, b), siblingsOrSelf(b, listOf(a, b)))
+        // Pictures it is not among would start the viewer on another one.
+        assertEquals(listOf(b), siblingsOrSelf(b, listOf(a)))
+        assertEquals(listOf(b), siblingsOrSelf(b, emptyList()))
+    }
+
+    @Test
+    fun previewPaneOpensItsFileFullScreen() {
+        listOf("a.jpg", "b.jpg", "c.zip").forEach(::file)
+        start()
+        show(WidthClass.EXPANDED)
+        vm.togglePreviewPane()
+        row("b.jpg").performClick()
+        rule.waitForIdle()
+        assertNull(ui.viewer)
+
+        inside(ViewerTags.PANE, hasText(str(R.string.preview_open))).performClick()
+        rule.waitForIdle()
+        // Full screen, with the folder's pictures to swipe through, though the pane is on.
+        assertEquals(ViewerRequest(entry("b.jpg"), listOf(entry("a.jpg"), entry("b.jpg"))), ui.viewer)
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
+
+        // A file no viewer shows has nothing to open there.
+        vm.closeViewer()
+        rule.waitForIdle()
+        row("c.zip").performTouchInput { longClick() }
+        rule.waitForIdle()
+        inside(ViewerTags.PANE, hasText(str(R.string.preview_unavailable))).assertIsDisplayed()
+        inside(ViewerTags.PANE, hasText(str(R.string.preview_open))).assertDoesNotExist()
+    }
+
+    @Test
+    fun topBarSharesAndOpensWith() {
+        val sd = Paths.get("/storage/1A2B-3C4D")
+        val notes = sd.resolve("Download/notes.txt")
+        start(backendWith(notes), extra = listOf(FakeVolumes.removable(SD, "SD card", sd)))
+        show(WidthClass.COMPACT)
+        vm.open(entryAt(notes, "text/plain"))
+        rule.waitForIdle()
+        inside(ViewerTags.SCREEN, hasText("text of notes.txt")).assertIsDisplayed()
+        val started = shadowOf(rule.activity)
+
+        inside(ViewerTags.SCREEN, hasContentDescription(str(R.string.cmd_share))).performClick()
+        rule.waitForIdle()
+        val share = checkNotNull(started.nextStartedActivity) { "Nothing shared" }
+        assertEquals(Intent.ACTION_CHOOSER, share.action)
+        assertEquals(Intent.ACTION_SEND, chosen(share).action)
+
+        inside(ViewerTags.SCREEN, hasText(str(R.string.cmd_open_with))).performClick()
+        rule.waitForIdle()
+        val openWith = checkNotNull(started.nextStartedActivity) { "Nothing opened" }
+        assertEquals(Intent.ACTION_CHOOSER, openWith.action)
+        assertEquals(Intent.ACTION_VIEW, chosen(openWith).action)
+        assertEquals(notes.toString(), chosen(openWith).data?.path)
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun shortcutsWorkAfterTheViewerCloses() {
+        file("notes.txt")
+        file("other.txt")
+        start()
+        show(WidthClass.COMPACT)
+
+        // Enter on the focused row opens it: the row, and the focus with it, goes.
+        row("notes.txt").requestFocus()
+        row("notes.txt").performKeyInput { pressKey(Key.Enter) }
+        rule.waitForIdle()
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
+        vm.closeViewer()
+        rule.waitForIdle()
+
+        // Back on the list, the shell has the keys again.
+        rule.onRoot().performKeyInput { withKeyDown(Key.CtrlLeft) { pressKey(Key.A) } }
+        rule.waitForIdle()
+        assertEquals(setOf(root.resolve("notes.txt"), root.resolve("other.txt")), ui.tabs.active.selection.items)
+    }
+
+    @Test
+    fun opsNoticeShowsOverTheViewer() {
+        file("notes.txt")
+        start(notice = MutableStateFlow(OpsNotice.ForegroundRefused))
+        show(WidthClass.COMPACT)
+        rule.onNodeWithText(str(R.string.fgs_refused)).assertIsDisplayed()
+
+        row("notes.txt").performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
+        rule.onNodeWithText(str(R.string.fgs_refused)).assertIsDisplayed()
+    }
+
+    /** The intent [chooser] lets the user pick an app for. */
+    @Suppress("DEPRECATION")
+    private fun chosen(chooser: Intent): Intent = checkNotNull(chooser.getParcelableExtra(Intent.EXTRA_INTENT))
 
     private companion object {
         const val SD = "1A2B-3C4D"

@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.data.Recent
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
@@ -36,9 +37,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.attribute.BasicFileAttributes
 
 /** Opening files in other apps, with the real [OpenWith] (its FileProvider serves `/storage` and `/mnt/media_rw`). */
 @RunWith(RobolectricTestRunner::class)
@@ -49,6 +52,7 @@ class OpenFlowTest {
     val folder = TemporaryFolder()
 
     private val app: Application = ApplicationProvider.getApplicationContext()
+    private val settings = SettingsStore(null)
     private lateinit var root: Path
     private lateinit var vm: ExplorerViewModel
 
@@ -63,11 +67,11 @@ class OpenFlowTest {
         if (::vm.isInitialized) vm.viewModelScope.cancel()
     }
 
-    /** A view model on [root] as the primary volume; folders are read on the main thread. */
+    /** A view model on [root] as the primary volume and an SD card at [SD]; folders are read on the main thread. */
     private fun start(fs: FsBackend = NioFsBackend, io: CoroutineDispatcher = Dispatchers.Unconfined) {
-        val volumes = FakeVolumes(FakeVolumes.primary(root))
+        val volumes = FakeVolumes(FakeVolumes.primary(root), FakeVolumes.removable("1A2B-3C4D", "SD card", SD))
         val mime = MimeResolver()
-        val deps = ExplorerDeps(fs, SettingsStore(null), volumes, volumes, mime, io, openWith = OpenWith(app, mime))
+        val deps = ExplorerDeps(fs, settings, volumes, volumes, mime, io, openWith = OpenWith(app, mime))
         vm = ExplorerViewModel(app, deps)
         settle()
     }
@@ -89,6 +93,17 @@ class OpenFlowTest {
     private fun entry(name: String): FileEntry = ui.rows.first { it.entry.name == name }.entry
 
     private fun names(): List<String> = ui.rows.map { it.entry.name }
+
+    /** [file], which the FileProvider serves (it is on the SD card), as there to the backend; the rest as it is. */
+    private fun backendWith(file: Path): FsBackend = object : FsBackend by NioFsBackend {
+        override fun exists(path: Path): Boolean = path == file || NioFsBackend.exists(path)
+
+        override fun attributes(path: Path): BasicFileAttributes =
+            NioFsBackend.attributes(if (path == file) root else path)
+    }
+
+    private fun photo(path: Path) =
+        FileEntry(path, "photo.jpg", EntryKind.FILE, 1, 0, "image/jpeg", hidden = false, fileKey = null)
 
     @Test
     fun openingVanishedFileShowsNotFoundAndRefreshes() {
@@ -145,12 +160,9 @@ class OpenFlowTest {
     @Test
     fun tapFileStartsViewIntentAndReportsNoApp() {
         // A file on an SD card: the FileProvider serves it, and the backend says it is there.
-        val photo = Paths.get("/storage/1A2B-3C4D/DCIM/photo.jpg")
-        val fs = object : FsBackend by NioFsBackend {
-            override fun exists(path: Path): Boolean = path == photo || NioFsBackend.exists(path)
-        }
-        start(fs)
-        vm.open(FileEntry(photo, "photo.jpg", EntryKind.FILE, 1, 0, "image/jpeg", hidden = false, fileKey = null))
+        val photo = SD.resolve("DCIM/photo.jpg")
+        start(backendWith(photo))
+        vm.open(photo(photo))
         settle()
         val view = ui.launch!!
         assertEquals(Intent.ACTION_VIEW, view.action)
@@ -162,6 +174,38 @@ class OpenFlowTest {
         settle()
         assertNull(ui.launch)
         assertEquals(UiText.res(R.string.open_no_app), ui.message?.text)
+        // No app opened it: it is no recent file.
+        assertEquals(emptyList<Recent>(), settings.recents.value)
+    }
+
+    @Test
+    fun fileAnotherAppOpenedIsRecent() {
+        val photo = SD.resolve("DCIM/photo.jpg")
+        start(backendWith(photo))
+        vm.open(photo(photo))
+        settle()
+        // Asked for, not yet started.
+        assertEquals(emptyList<Recent>(), settings.recents.value)
+
+        vm.launched(ui.launch!!, OpenResult.Started)
+        settle()
+        assertEquals(listOf("DCIM/photo.jpg"), settings.recents.value.map { it.rel })
+    }
+
+    @Test
+    fun unreadableFileIsNotReportedGone() {
+        // The backend can tell it is there, but may not read it.
+        val photo = SD.resolve("DCIM/photo.jpg")
+        start(object : FsBackend by NioFsBackend {
+            override fun exists(path: Path): Boolean = path != photo && NioFsBackend.exists(path)
+
+            override fun attributes(path: Path): BasicFileAttributes =
+                if (path == photo) throw AccessDeniedException(path.toString()) else NioFsBackend.attributes(path)
+        })
+        vm.open(photo(photo))
+        settle()
+        assertNull(ui.launch)
+        assertEquals(UiText.res(R.string.error_access_denied), ui.message?.text)
     }
 
     @Test
@@ -188,5 +232,9 @@ class OpenFlowTest {
         settle()
         assertFalse(ui.restricted)
         assertTrue(Command.NEW_FOLDER in ui.commands)
+    }
+
+    private companion object {
+        val SD: Path = Paths.get("/storage/1A2B-3C4D")
     }
 }

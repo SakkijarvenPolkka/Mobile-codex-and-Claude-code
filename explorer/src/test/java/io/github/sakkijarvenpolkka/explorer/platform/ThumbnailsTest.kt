@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
@@ -209,6 +210,43 @@ class ThumbnailsTest {
         assertNull(request.await())
         assertNotNull(thumbnails.get(photo, 96))
         assertEquals(2, port.loads.size)
+    }
+
+    @Test
+    fun evictUnderCancelsLoadsOnThatVolumeOnly() = runBlocking {
+        val card = entry("/storage/1A2B-3C4D/DCIM/a.mp4", mime = "video/mp4")
+        val phone = entry("/storage/emulated/0/DCIM/b.mp4", mime = "video/mp4")
+        val started = CountDownLatch(2)
+        val evicted = CountDownLatch(1)
+        val signals = listOf(card, phone).associate { it.path to CopyOnWriteArrayList<CancellationSignal>() }
+        val port = FakePort { file, size, signal ->
+            signals.getValue(file) += signal
+            started.countDown()
+            if (file == card.path) {
+                // Like ThumbnailUtils: it reads the file until the signal stops it.
+                val stopped = CountDownLatch(1)
+                signal.setOnCancelListener { stopped.countDown() }
+                await(stopped)
+                throw OperationCanceledException()
+            }
+            await(evicted)
+            bitmap(size)
+        }
+        val thumbnails = thumbnails(port)
+
+        val fromCard = async(Dispatchers.Default) { thumbnails.get(card, 96) }
+        val fromPhone = async(Dispatchers.Default) { thumbnails.get(phone, 96) }
+        await(started)
+        thumbnails.evictUnder(Paths.get("/storage/1A2B-3C4D"))
+        evicted.countDown()
+
+        // The card's load let go of its file at once, and nothing of it is kept; the phone's is.
+        assertNull(withTimeout(10_000) { fromCard.await() })
+        assertTrue(signals.getValue(card.path).single().isCanceled)
+        assertNotNull(withTimeout(10_000) { fromPhone.await() })
+        assertFalse(signals.getValue(phone.path).single().isCanceled)
+        assertNotNull(thumbnails.cached(phone, 96))
+        assertNull(thumbnails.cached(card, 96))
     }
 
     @Test

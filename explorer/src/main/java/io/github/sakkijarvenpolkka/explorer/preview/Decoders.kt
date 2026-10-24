@@ -27,6 +27,7 @@ import java.io.Closeable
 import java.nio.file.Path
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 /** A file as [TextViewer] shows it. */
@@ -86,6 +87,17 @@ interface ImageDecoderPort {
     suspend fun decodeAnimation(file: Path, maxWidth: Int, maxHeight: Int): AnimatedImageDrawable? = null
 }
 
+/**
+ * The size an image of [original] pixels is decoded at to fit [maxWidth] × [maxHeight] ([ImageDecoderPort.decode]):
+ * scaled down to the side that limits it, keeping its proportions, at least a pixel a side; an image that
+ * fits keeps its size, never enlarged.
+ */
+fun fitSize(original: IntSize, maxWidth: Int, maxHeight: Int): IntSize {
+    val scale = minOf(maxWidth.toFloat() / original.width, maxHeight.toFloat() / original.height)
+    if (scale >= 1f) return original
+    return IntSize(max(1, (original.width * scale).roundToInt()), max(1, (original.height * scale).roundToInt()))
+}
+
 /** An open PDF document for [PdfViewer], its pages counted from 0; [close] lets go of the file. */
 interface PdfPort : Closeable {
     val pageCount: Int
@@ -93,14 +105,19 @@ interface PdfPort : Closeable {
     /** The size of page [index] in points, the unit of the document. */
     suspend fun pageSize(index: Int): IntSize
 
-    /** Page [index] drawn [widthPx] pixels wide (as [pdfRenderWidth] picks), as tall as its proportions make it, on white. */
+    /**
+     * Page [index] drawn for a view [widthPx] pixels wide: that wide, or narrower when [pdfRenderWidth]
+     * caps a page of its size, as tall as its proportions make it, on white. Rendering a page tells its
+     * size too: [pageSize] asked after it has it at once.
+     */
     suspend fun render(index: Int, widthPx: Int): Bitmap
 }
 
 /**
  * Opens PDF documents for [PdfViewer]. It blocks while it reads the file, so it is called off the
  * main thread. A password protected document is an [FsException] of [FsError.Encrypted], one that
- * cannot be read one of [FsError.Corrupt].
+ * cannot be read as a PDF one of [FsError.Corrupt]; a file that cannot be opened at all fails as the
+ * file system says ([FsError.NotFound], [FsError.AccessDenied], ...).
  */
 fun interface PdfOpener {
     fun open(file: Path): PdfPort
@@ -151,7 +168,10 @@ interface MediaPort {
     /** Stops playing and lets go of the file and the player. */
     fun release()
 
-    /** Where a video file is drawn, filling [modifier]'s bounds; ports that draw no video draw nothing. */
+    /**
+     * Where a video file is drawn, filling [modifier]'s bounds; ports that draw no video draw nothing.
+     * One port feeds one VideoSurface: a view can be in one place only, so each viewer has a port of its own.
+     */
     @Composable
     fun VideoSurface(modifier: Modifier) {
     }

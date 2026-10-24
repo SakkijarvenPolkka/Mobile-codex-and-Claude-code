@@ -28,7 +28,7 @@ import java.nio.file.Path
  * drawn by [VideoSurface]), an audio file in a [MediaPlayer] given its file descriptor. Playing asks
  * for the audio focus ([AudioFocusRequest]) and pauses when it is lost or the headphones are unplugged
  * ([AudioManager.ACTION_AUDIO_BECOMING_NOISY]). [context] is the activity's, which the video view is
- * made with.
+ * made with. One port feeds one [VideoSurface]: its one video view cannot be shown in two places.
  */
 class AndroidMediaPort(private val context: Context) : MediaPort {
 

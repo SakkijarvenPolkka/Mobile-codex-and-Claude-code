@@ -1,6 +1,7 @@
 /*
  * Files — opening files: in the built-in viewers, full screen or in the preview pane of a wide window,
- * else in another app; either way the file becomes the most recent one opened (spec §7).
+ * else in another app; a file a viewer shows, or another app was started for, becomes the most recent
+ * one opened (spec §7).
  *
  * SPDX-License-Identifier: MIT
  */
@@ -16,6 +17,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.OpenResult
 import io.github.sakkijarvenpolkka.explorer.preview.PreviewKind
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerRequest
 import io.github.sakkijarvenpolkka.explorer.preview.previewKindFor
+import io.github.sakkijarvenpolkka.explorer.preview.siblingsOrSelf
 import io.github.sakkijarvenpolkka.explorer.ui.errorText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -68,11 +70,12 @@ internal class Viewers(
 
     /**
      * Opens the file [entry], one of the active tab's [rows]: a file the viewers show goes in the preview
-     * pane while it shows, else full screen (a picture with the other pictures of [rows], in their order,
-     * to swipe to); any other file goes to another app. A file gone since its folder was read shows "not
-     * found" and the folder is read again. Either way an opened file becomes a recent one.
+     * pane while it shows, unless [fullScreen], else full screen (a picture with the other pictures of
+     * [rows], in their order, to swipe to); any other file goes to another app. A file gone since its
+     * folder was read shows "not found" and the folder is read again. A file a viewer shows becomes a
+     * recent one, as does one another app was started for.
      */
-    fun open(entry: FileEntry, rows: List<Row>) {
+    fun open(entry: FileEntry, rows: List<Row>, fullScreen: Boolean = false) {
         val kind = previewKindFor(entry)
         if (deps.viewers == null || kind == null) return handOver.open(entry)
         val at = shell.here()
@@ -89,7 +92,7 @@ internal class Viewers(
                 error != null -> shell.showError(at, errorText(error))
                 // The tab went elsewhere meanwhile.
                 shell.here() != at -> Unit
-                else -> show(entry, kind, rows)
+                else -> show(entry, kind, rows, fullScreen)
             }
         }
     }
@@ -130,10 +133,10 @@ internal class Viewers(
         else -> state.picked?.let { picked -> rows.firstOrNull { it.entry.path == picked.path }?.entry }
     }
 
-    private fun show(entry: FileEntry, kind: PreviewKind, rows: List<Row>) {
+    private fun show(entry: FileEntry, kind: PreviewKind, rows: List<Row>, fullScreen: Boolean) {
         deps.addRecent(entry.path)
         val volume = deps.lookup.volumeOf(entry.path)?.uuid
-        if (state.value.paneShown) {
+        if (state.value.paneShown && !fullScreen) {
             pickedVolume = volume
             mutableState.update { it.copy(picked = entry) }
             return
@@ -142,8 +145,7 @@ internal class Viewers(
             PreviewKind.Image -> rows.map { it.entry }.filter { previewKindFor(it) == PreviewKind.Image }
             else -> emptyList()
         }
-        val siblings = pictures.takeIf { list -> list.any { it.path == entry.path } } ?: listOf(entry)
         viewerVolume = volume
-        mutableState.update { it.copy(viewer = ViewerRequest(entry, siblings)) }
+        mutableState.update { it.copy(viewer = ViewerRequest(entry, siblingsOrSelf(entry, pictures))) }
     }
 }

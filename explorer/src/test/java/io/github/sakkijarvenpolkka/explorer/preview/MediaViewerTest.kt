@@ -7,6 +7,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -183,6 +184,66 @@ class MediaViewerTest {
         // It stays paused until asked to play.
         rule.onNodeWithContentDescription("재생").assertIsDisplayed()
         rule.runOnIdle { assertFalse(player.isPlaying) }
+    }
+
+    @Test
+    fun videoControlsWaitForThePlayerAfterTheBackground() {
+        val player = FakePlayer()
+        val lifecycle = TestLifecycle()
+        show(player, video = true, lifecycle = lifecycle)
+        rule.runOnIdle { player.ready(120_000) }
+        rule.onNodeWithContentDescription("재생").assertIsEnabled()
+
+        // In the background the video's surface goes, and its player with it: nothing to play until it
+        // is prepared again (pressed now, play would be put off, and the button would not show it).
+        rule.runOnIdle {
+            player.positionMs = 42_000
+            lifecycle.registry.currentState = Lifecycle.State.CREATED
+        }
+        rule.runOnIdle { lifecycle.registry.currentState = Lifecycle.State.RESUMED }
+        rule.onNodeWithContentDescription("재생").assertIsNotEnabled()
+        rule.onNodeWithTag(MediaViewerTags.SEEK_BAR).assertIsNotEnabled()
+        // The times stay as they were.
+        rule.onNodeWithText("0:42").assertIsDisplayed()
+        rule.onNodeWithText("2:00").assertIsDisplayed()
+
+        rule.runOnIdle { player.ready(120_000) }
+        rule.onNodeWithContentDescription("재생").assertIsEnabled()
+        rule.onNodeWithContentDescription("재생").performClick()
+        rule.runOnIdle { assertTrue(player.isPlaying) }
+    }
+
+    @Test
+    fun audioStaysPlayableAfterTheBackground() {
+        // An audio player is not made again: it stays ready.
+        val player = FakePlayer()
+        val lifecycle = TestLifecycle()
+        show(player, video = false, lifecycle = lifecycle)
+        rule.runOnIdle { player.ready(120_000) }
+
+        rule.runOnIdle { lifecycle.registry.currentState = Lifecycle.State.CREATED }
+        rule.runOnIdle { lifecycle.registry.currentState = Lifecycle.State.RESUMED }
+        rule.onNodeWithContentDescription("재생").assertIsEnabled()
+    }
+
+    @Test
+    fun anotherKindOfFileStartsOver() {
+        // The same player told the file is a video now prepares it anew: until then, nothing to play.
+        val player = FakePlayer()
+        var video by mutableStateOf(false)
+        rule.setContent {
+            FluentTheme(dark = false, accent = null) {
+                MediaViewer(file, video, player, onClose = {})
+            }
+        }
+        rule.runOnIdle { player.ready(60_000) }
+        rule.onNodeWithContentDescription("재생").assertIsEnabled()
+
+        video = true
+        rule.runOnIdle { assertEquals(file to true, player.prepared) }
+        rule.onNodeWithContentDescription("재생").assertIsNotEnabled()
+        rule.runOnIdle { player.ready(60_000) }
+        rule.onNodeWithContentDescription("재생").assertIsEnabled()
     }
 
     @Test

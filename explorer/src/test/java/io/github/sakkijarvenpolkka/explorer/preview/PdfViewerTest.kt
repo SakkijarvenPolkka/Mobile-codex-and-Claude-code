@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -36,21 +37,30 @@ class PdfViewerTest {
     @get:Rule
     val rule = createComposeRule()
 
-    /** A document of [pages] (sizes in points); records the pages rendered, at which widths, and whether it was closed. */
+    /**
+     * A document of [pages] (sizes in points); records the pages rendered, at which widths, what was asked
+     * of it in order, and whether it was closed.
+     */
     private class FakePdf(private val pages: List<IntSize>) : PdfPort {
         val rendered = CopyOnWriteArrayList<Pair<Int, Int>>()
+        val asked = CopyOnWriteArrayList<String>()
 
         @Volatile
         var closed = false
 
         override val pageCount: Int get() = pages.size
 
-        override suspend fun pageSize(index: Int): IntSize = pages[index]
+        override suspend fun pageSize(index: Int): IntSize {
+            asked += "size $index"
+            return pages[index]
+        }
 
         override suspend fun render(index: Int, widthPx: Int): Bitmap {
+            asked += "render $index"
             rendered += index to widthPx
             val page = pages[index]
-            return Bitmap.createBitmap(widthPx, height(widthPx, page.width, page.height), Bitmap.Config.ARGB_8888)
+            val width = pdfRenderWidth(page.width, page.height, widthPx)
+            return Bitmap.createBitmap(width, height(width, page.width, page.height), Bitmap.Config.ARGB_8888)
         }
 
         override fun close() {
@@ -118,6 +128,87 @@ class PdfViewerTest {
     }
 
     @Test
+    fun eachPageIsRenderedBeforeItsSizeIsAsked() {
+        // The port learns a page's size when it renders it: asked first, it would open the page twice.
+        val pdf = FakePdf(threePages)
+        show({ pdf })
+        waitFor { pdf.rendered.size == 3 }
+
+        for (index in 0..2) {
+            val render = pdf.asked.indexOf("render $index")
+            val size = pdf.asked.indexOf("size $index")
+            assertTrue(pdf.asked.toString(), render >= 0 && (size < 0 || size > render))
+        }
+    }
+
+    @Test
+    fun missingFileSaysNotFound() {
+        var openedWith = 0
+        show({ throw FsException(FsError.NotFound) }, onOpenWith = { openedWith++ })
+        waitFor { textShown("위치를 찾을 수 없습니다") }
+        assertFalse(textShown("손상된 파일입니다"))
+
+        rule.onNodeWithText("연결 프로그램").performClick()
+        rule.runOnIdle { assertEquals(1, openedWith) }
+    }
+
+    @Test
+    fun unreadableFileSaysAccessDenied() {
+        show({ throw FsException(FsError.AccessDenied) })
+        waitFor { textShown("이 폴더에 접근할 수 없습니다") }
+        assertFalse(textShown("손상된 파일입니다"))
+    }
+
+    @Test
+    fun pagesZoomTransformKeepsThePointUnderTheFingers() {
+        val view = IntSize(1000, 2000)
+        val zoom = PagesZoom()
+        // Twice as large about a point 100 pixels right of and 200 below the centre: that point stays put.
+        zoom.transform(Offset(600f, 1200f), Offset.Zero, 2f, view)
+        assertEquals(2f, zoom.zoom)
+        assertNear(Offset(-100f, -200f), zoom.offset)
+
+        // No further than three times, and never smaller than the view.
+        zoom.transform(Offset(500f, 1000f), Offset.Zero, 10f, view)
+        assertEquals(3f, zoom.zoom)
+        zoom.transform(Offset(500f, 1000f), Offset.Zero, 0.01f, view)
+        assertEquals(1f, zoom.zoom)
+        assertNear(Offset.Zero, zoom.offset)
+
+        // Moved no further than keeps the pages over the view: (zoom - 1) / 2 of it on each side.
+        zoom.transform(Offset(500f, 1000f), Offset(5_000f, -5_000f), 3f, view)
+        assertNear(Offset(1000f, -2000f), zoom.offset)
+    }
+
+    @Test
+    fun pagesZoomPansOnlyWhenZoomed() {
+        val view = IntSize(1000, 2000)
+        val zoom = PagesZoom()
+        zoom.pan(Offset(100f, 100f), view)
+        assertNear(Offset.Zero, zoom.offset)
+
+        zoom.transform(Offset(500f, 1000f), Offset.Zero, 2f, view)
+        zoom.pan(Offset(100f, -50f), view)
+        assertNear(Offset(100f, -50f), zoom.offset)
+        // As far as the edges.
+        zoom.pan(Offset(1_000f, -5_000f), view)
+        assertNear(Offset(500f, -1000f), zoom.offset)
+        assertEquals(2f, zoom.zoom)
+    }
+
+    @Test
+    fun pagesZoomReclampsForASmallerView() {
+        val zoom = PagesZoom()
+        zoom.transform(Offset(500f, 1000f), Offset(5_000f, 5_000f), 3f, IntSize(1000, 2000))
+        assertNear(Offset(1000f, 2000f), zoom.offset)
+
+        // The window was made smaller: the pages are moved back over it.
+        zoom.clamp(IntSize(500, 600))
+        assertEquals(3f, zoom.zoom)
+        assertNear(Offset(500f, 600f), zoom.offset)
+    }
+
+    @Test
     fun veryTallPageLaysOut() {
         // As wide as the view (320 pixels) the page would be 460,800 pixels tall, more than Compose can measure.
         showVeryTallPage()
@@ -175,6 +266,12 @@ class PdfViewerTest {
 
         shown = false
         waitFor { pdf.closed }
+    }
+
+    /** [actual] is [expected], give or take a hundredth of a pixel (and the sign of a zero). */
+    private fun assertNear(expected: Offset, actual: Offset) {
+        assertEquals("x of $actual", expected.x, actual.x, 0.01f)
+        assertEquals("y of $actual", expected.y, actual.y, 0.01f)
     }
 
     private companion object {

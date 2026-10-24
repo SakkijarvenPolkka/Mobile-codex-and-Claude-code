@@ -20,7 +20,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import java.nio.file.Path
 import java.nio.file.Paths
-import java.util.concurrent.atomic.AtomicInteger
 
 /** What a thumbnail is made from: a picture, a video's frame, or the art a song embeds. */
 enum class ThumbKind { IMAGE, VIDEO, AUDIO }
@@ -63,51 +62,76 @@ class Thumbnails(private val port: ThumbnailPort, dispatcher: CoroutineDispatche
     /** A cached thumbnail; [bitmap] is null for a file that has none. */
     private class Thumb(val bitmap: Bitmap?)
 
+    /** A load of the thumbnail of [file], stopped by [signal]; [evicted] (guarded by [lock]) once its volume went. */
+    private class Load(val file: Path) {
+        val signal = CancellationSignal()
+        var evicted = false
+    }
+
     private val loads = dispatcher.limitedParallelism(PARALLEL_LOADS)
 
     private val cache = object : LruCache<ThumbKey, Thumb>(maxBytes) {
         override fun sizeOf(key: ThumbKey, value: Thumb): Int = value.bitmap?.allocationByteCount ?: NONE_BYTES
     }
 
-    /** Counts the calls of [evictUnder], so that what was loaded meanwhile is not cached. */
-    private val evictions = AtomicInteger()
+    /** Held to put a load's result in the cache, and to evict: what a volume that went loaded is never kept. */
+    private val lock = Any()
+
+    /** The loads running now (guarded by [lock]). */
+    private val running = HashSet<Load>()
 
     /**
      * The thumbnail of [entry], [sizePx] pixels a side, from the cache or made now; null when it has
      * none ([thumbKindFor], or the port made none or failed). Cancelling the call cancels the port's
-     * signal; the cancelled load is not remembered.
+     * signal; the cancelled load is not remembered, nor one [evictUnder] stopped.
      */
     suspend fun get(entry: FileEntry, sizePx: Int): Bitmap? {
         val kind = thumbKindFor(entry) ?: return null
         val key = keyOf(entry, sizePx)
         cache.get(key)?.let { return it.bitmap }
-        val epoch = evictions.get()
-        val bitmap = load(entry.path, kind, sizePx)
-        if (evictions.get() == epoch) cache.put(key, Thumb(bitmap))
+        val load = Load(entry.path)
+        synchronized(lock) { running += load }
+        var loaded = false
+        var bitmap: Bitmap? = null
+        try {
+            bitmap = load(load, kind, sizePx)
+            loaded = true
+        } finally {
+            synchronized(lock) {
+                running -= load
+                if (loaded && !load.evicted) cache.put(key, Thumb(bitmap))
+            }
+        }
         return bitmap
     }
 
     /** The thumbnail of [entry] if [get] has it cached, without making one; null otherwise. */
     fun cached(entry: FileEntry, sizePx: Int): Bitmap? = cache.get(keyOf(entry, sizePx))?.bitmap
 
-    /** Forgets the thumbnails of the files under [root] (a volume that went), those it has none of too. */
+    /**
+     * Forgets the thumbnails of the files under [root] (a volume that went), those it has none of too,
+     * and stops the loads that read files there, so that they let go of them; their results are not kept.
+     */
     fun evictUnder(root: Path) {
-        evictions.incrementAndGet()
-        for (key in cache.snapshot().keys) {
-            if (Paths.get(key.path).startsWith(root)) cache.remove(key)
+        val stopped = synchronized(lock) {
+            for (key in cache.snapshot().keys) {
+                if (Paths.get(key.path).startsWith(root)) cache.remove(key)
+            }
+            running.filter { it.file.startsWith(root) }.onEach { it.evicted = true }
         }
+        // Outside the lock: a signal runs its listeners at once.
+        stopped.forEach { it.signal.cancel() }
     }
 
     /**
-     * [ThumbnailPort.load] on [loads]; null when it throws. This waits for it in a way that can be
-     * cancelled ([async]/await), and cancels the port's signal then, which the blocking load needs to
+     * [ThumbnailPort.load] of [load] on [loads]; null when it throws. This waits for it in a way that can
+     * be cancelled ([async]/await), and cancels the port's signal then, which the blocking load needs to
      * stop; the load's own exception never takes the cancellation's place, since it is caught in there.
      */
-    private suspend fun load(file: Path, kind: ThumbKind, sizePx: Int): Bitmap? = coroutineScope {
-        val signal = CancellationSignal()
+    private suspend fun load(load: Load, kind: ThumbKind, sizePx: Int): Bitmap? = coroutineScope {
         val loading = async(loads) {
             try {
-                port.load(file, kind, sizePx, signal)
+                port.load(load.file, kind, sizePx, load.signal)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -117,7 +141,7 @@ class Thumbnails(private val port: ThumbnailPort, dispatcher: CoroutineDispatche
         try {
             loading.await()
         } catch (e: CancellationException) {
-            signal.cancel()
+            load.signal.cancel()
             throw e
         }
     }

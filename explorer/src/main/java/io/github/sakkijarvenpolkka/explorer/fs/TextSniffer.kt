@@ -157,8 +157,10 @@ object TextSniffer {
 
     /**
      * How many bytes at the end of [bytes] (from [start] to [end]) begin a UTF-8 character they do not
-     * finish: a lead byte followed by fewer continuation bytes than it announces (1 to 3). 0 for a whole
-     * last character, and for bytes that are not valid anyway, which the decoder tells of.
+     * finish: a lead byte followed by fewer continuation bytes than it announces (1 to 3), the first of
+     * them in the range that lead allows (E0: A0–BF, ED: 80–9F, F0: 90–BF, F4: 80–8F, else 80–BF). 0 for
+     * a whole last character, and for bytes that begin none (a lead byte no character has, continuation
+     * bytes without one, a second byte out of its lead's range): the decoder finds those invalid.
      */
     private fun unfinishedUtf8(bytes: ByteArray, start: Int, end: Int): Int {
         for (back in 1..minOf(3, end - start)) {
@@ -171,9 +173,25 @@ object TextSniffer {
                 in 0xF0..0xF4 -> 4
                 else -> return 0
             }
-            return if (back < length) back else 0
+            if (back >= length) return 0
+            // A lead byte alone may begin any of its characters.
+            if (back == 1) return 1
+            val second = bytes[end - back + 1].toInt() and 0xFF
+            return if (second in secondByteRange(byte)) back else 0
         }
         return 0
+    }
+
+    /**
+     * The bytes that may follow the UTF-8 lead byte [lead]: none that would make an overlong form, a
+     * surrogate, or a code point past U+10FFFF.
+     */
+    private fun secondByteRange(lead: Int): IntRange = when (lead) {
+        0xE0 -> 0xA0..0xBF
+        0xED -> 0x80..0x9F
+        0xF0 -> 0x90..0xBF
+        0xF4 -> 0x80..0x8F
+        else -> 0x80..0xBF
     }
 
     /** [bytes] from [start] decoded with [encoding], what is not valid in it shown as U+FFFD. */
