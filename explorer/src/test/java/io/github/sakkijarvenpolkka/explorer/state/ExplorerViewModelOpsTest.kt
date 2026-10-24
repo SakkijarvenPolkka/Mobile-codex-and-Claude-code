@@ -380,6 +380,31 @@ class ExplorerViewModelOpsTest {
     }
 
     @Test
+    fun finishedOpSearchesResultsAgain() {
+        dir("docs")
+        file("docs/plan.txt")
+        file("plan.md")
+        file("notes.txt")
+        start()
+        vm.searchNow("plan")
+        drain()
+        assertEquals(Location.SearchResults(root, "plan"), ui.location)
+        assertEquals(listOf("plan.md", "plan.txt"), names())
+
+        // A result deleted from them: the search runs again, without it.
+        select("plan.txt")
+        vm.delete(permanent = false)
+        drain()
+        assertEquals(listOf("plan.md"), names())
+        // A result renamed: found again under its new name, which is selected.
+        vm.startRename(entry("plan.md"))
+        vm.commitRename(entry("plan.md"), "plan-2.md")
+        drain()
+        assertEquals(listOf("plan-2.md"), names())
+        assertEquals(listOf(root.resolve("plan-2.md")), ui.selected.map { it.path })
+    }
+
+    @Test
     fun interruptedOpShowsRetryBar() {
         val a = file("a.txt")
         val b = file("b.txt")

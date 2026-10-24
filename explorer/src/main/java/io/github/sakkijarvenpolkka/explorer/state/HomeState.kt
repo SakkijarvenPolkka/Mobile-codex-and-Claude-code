@@ -22,6 +22,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,14 +46,20 @@ data class DriveUsage(val volume: Volume, val total: Long, val free: Long)
 /**
  * What Home shows: [quickAccess], the favorites in the user's order, then the default folders there are
  * that are not pinned; the mounted [drives] whose size is known; the [recents], newest first, that are
- * still there; and [binSize], the bytes in the Recycle Bins.
+ * still there; and [binSize], the bytes in the Recycle Bins, which hold [binItems] items.
  */
 data class HomeData(
     val quickAccess: List<QuickItem>,
     val drives: List<DriveUsage>,
     val recents: List<FileEntry>,
     val binSize: Long,
-)
+    val binItems: Int,
+) {
+    companion object {
+        /** Home with nothing to show. */
+        val EMPTY = HomeData(emptyList(), emptyList(), emptyList(), binSize = 0L, binItems = 0)
+    }
+}
 
 /**
  * A favorite as the navigation pane shows it: at [path] on its volume while that is mounted ([available]),
@@ -90,6 +97,19 @@ fun pinnedFolders(favorites: List<Favorite>, codec: VolumeLocationCodec): List<P
     }
     .distinctBy { it.path }
 
+/** The [favorites] as stored, and where each is ([folders], see [pinnedFolders]). */
+internal data class Pins(val favorites: List<Favorite>, val folders: List<PinnedFolder>) {
+    constructor(favorites: List<Favorite>, codec: VolumeLocationCodec) :
+        this(favorites, pinnedFolders(favorites, codec))
+}
+
+/** The favorites stored now, as [Pins]. */
+internal fun pinsOf(deps: ExplorerDeps, codec: VolumeLocationCodec): Pins = Pins(deps.settings.favorites.value, codec)
+
+/** The favorites as [Pins], again whenever they or the volumes change, and only then. */
+internal fun pins(deps: ExplorerDeps, codec: VolumeLocationCodec): Flow<Pins> =
+    combine(deps.settings.favorites, deps.volumes.volumes) { favorites, _ -> Pins(favorites, codec) }
+
 /**
  * Reads Home on [ExplorerDeps.io] (see [HomeData]); [ExplorerDeps.usage] tells how full each drive is. A
  * recent file gone from its mounted volume, or one whose entry does not decode, is forgotten as well
@@ -106,8 +126,9 @@ suspend fun loadHome(deps: ExplorerDeps, codec: VolumeLocationCodec): HomeData =
         val usage = volume.root?.let(deps.usage)?.takeIf { (total, _) -> total > 0 }
         usage?.let { (total, free) -> DriveUsage(volume, total, free) }
     }
-    val binSize = deps.bin?.totalSize(volumes.mapNotNull { it.root }) ?: 0L
-    HomeData(quickAccess, drives, recentFiles(deps, codec), binSize)
+    // The size of each item in the Recycle Bins.
+    val binned = deps.bin?.let { bin -> bin.list(volumes.mapNotNull { it.root }).map(bin::sizeOf) }.orEmpty()
+    HomeData(quickAccess, drives, recentFiles(deps, codec), binned.sum(), binned.size)
 }
 
 /** The recent files that are there, newest first; see [loadHome] for those that are not. */
@@ -162,11 +183,17 @@ internal fun ExplorerDeps.unpin(paths: List<Path>) {
 /** Unpins [favorite], also while its volume is out. */
 internal fun ExplorerDeps.unpin(favorite: Favorite) = unpinWhere { it == favorite }
 
-/** Moves the favorite at [from] to [to], the others keeping their order; nothing when either is outside the list. */
-internal fun ExplorerDeps.reorderFavorites(from: Int, to: Int) {
+/**
+ * Moves the favorite [moved] to where the favorite [to] is, which moves one place toward where [moved]
+ * was, the others keeping their order: by what they are, not by where they are shown, which leaves out
+ * the favorites that lead nowhere. Nothing when either is not a favorite.
+ */
+internal fun ExplorerDeps.reorderFavorites(moved: Favorite, to: Favorite) {
     val favorites = settings.favorites.value.toMutableList()
-    if (from !in favorites.indices || to !in favorites.indices || from == to) return
-    favorites.add(to, favorites.removeAt(from))
+    val from = favorites.indexOf(moved)
+    val at = favorites.indexOf(to)
+    if (from < 0 || at < 0 || from == at) return
+    favorites.add(at, favorites.removeAt(from))
     settings.setFavorites(favorites)
 }
 
@@ -180,7 +207,8 @@ private fun ExplorerDeps.unpinWhere(gone: (Favorite) -> Boolean) {
  * Home's content ([state]), the same for every tab at Home: read when a tab comes to Home or reads it
  * again ([load]), and while one shows it, whenever the favorites, the recent files or the volumes change
  * ([follow]); a change while none shows it makes it [stale]. A load cancels the one before; until it is
- * done, what was read before stays. Main thread only, in [scope].
+ * done, what was read before stays. One that fails keeps it too, or, before anything was read, shows
+ * Home with nothing in it ([HomeData.EMPTY]). Main thread only, in [scope].
  */
 internal class HomeLoader(
     private val deps: ExplorerDeps,
@@ -208,6 +236,7 @@ internal class HomeLoader(
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "Could not read Home; what was read before stays", e)
+                if (mutableState.value == null) mutableState.value = HomeData.EMPTY
             }
         }
     }

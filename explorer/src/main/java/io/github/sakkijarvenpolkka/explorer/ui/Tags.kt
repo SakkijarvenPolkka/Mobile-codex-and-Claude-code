@@ -70,6 +70,13 @@ object Tags {
     const val FAVORITE_UP = "favorite_up"
     const val FAVORITE_DOWN = "favorite_down"
 
+    const val CMD_SEARCH = "cmd_search"
+    const val SEARCH_BOX = "search_box"
+    const val SEARCH_CLEAR = "search_clear"
+    const val SEARCH_STATUS = "search_status"
+    const val SEARCH_NONE = "search_none"
+    const val SEARCH_AGAIN = "search_again"
+
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"
 

@@ -1,6 +1,7 @@
 /*
  * Files — a folder's items in the four views (details, list, tiles, large icons), selection
- * by long press and by dragging along the check column.
+ * by long press and by dragging along the check column; search results with the folder of each
+ * and how the search goes.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -75,16 +76,20 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.SortKey
 import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
 import io.github.sakkijarvenpolkka.explorer.platform.Thumbnails
+import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerUiState
 import io.github.sakkijarvenpolkka.explorer.state.HistoryEntry
+import io.github.sakkijarvenpolkka.explorer.state.ListingState
 import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.state.Row
+import io.github.sakkijarvenpolkka.explorer.state.RowExtra
 import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.TabId
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcon
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcons
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ListRow
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.MinTouchTarget
@@ -147,7 +152,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
  * column (inset by the system gesture area) toggles a row when tapped and selects from the
  * anchor when dragged along. [contextMenu] is placed with the row of
  * [ExplorerUiState.contextMenuFor], so that it opens next to it. The item being renamed
- * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view.
+ * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view. Search results show the
+ * folder each is in, under a line of how the search goes ([SearchStatus]); none found says so.
  */
 @Composable
 fun FileList(
@@ -181,14 +187,18 @@ fun FileList(
     val reportScroll by rememberUpdatedState(onScrolled)
     val location = ui.location
     val renamed = ui.renaming?.path?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
+    val internal = stringResource(R.string.volume_internal)
     val cell: @Composable (Row) -> Unit = { row ->
         Box {
             val selected = row.entry.path in selection.items
-            if (mode == ViewMode.DETAILS || mode == ViewMode.LIST) EntryRow(row.entry, selected, look)
-            else EntryTile(row.entry, selected, look, thumbnails)
+            val folder = (row.extra as? RowExtra.SearchInfo)?.let { folderPath(it.parentDir, ui.volumes, internal) }
+            if (mode == ViewMode.DETAILS || mode == ViewMode.LIST) EntryRow(row.entry, selected, look, folder)
+            else EntryTile(row.entry, selected, look, thumbnails, folder)
             if (ui.contextMenuFor?.path == row.entry.path) contextMenu()
         }
     }
+    val search = ui.listing as? ListingState.Streaming
+    val nothingFound = search?.done == true && rows.isEmpty()
     when (mode) {
         ViewMode.DETAILS, ViewMode.LIST -> {
             val state = positions.list(tab.id, tab.current)
@@ -200,6 +210,7 @@ fun FileList(
                 if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
             }
             Column(modifier) {
+                if (search != null) SearchStatus(search, ui.volumes)
                 if (mode == ViewMode.DETAILS) {
                     DetailsHeader(ui.viewSetting.sort, widthClass, selection.active, gesturePad, onSort)
                 }
@@ -207,6 +218,7 @@ fun FileList(
                     LazyColumn(listModifier, state) {
                         items(rows, key = { it.entry.path.toString() }) { cell(it) }
                     }
+                    if (nothingFound) NoResults()
                     if (selection.active) {
                         CheckStrip(
                             state = state,
@@ -228,13 +240,19 @@ fun FileList(
             LaunchedEffect(state, renamed) {
                 if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
             }
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(if (mode == ViewMode.TILES) 220.dp else 104.dp),
-                modifier = modifier.then(listModifier),
-                state = state,
-                contentPadding = PaddingValues(4.dp),
-            ) {
-                gridItems(rows, key = { it.entry.path.toString() }) { cell(it) }
+            Column(modifier) {
+                if (search != null) SearchStatus(search, ui.volumes)
+                Box(Modifier.weight(1f)) {
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(if (mode == ViewMode.TILES) 220.dp else 104.dp),
+                        modifier = listModifier,
+                        state = state,
+                        contentPadding = PaddingValues(4.dp),
+                    ) {
+                        gridItems(rows, key = { it.entry.path.toString() }) { cell(it) }
+                    }
+                    if (nothingFound) NoResults()
+                }
             }
         }
     }
@@ -310,8 +328,9 @@ private fun stem(name: String): String {
     return if (dot < 0) name else name.substring(0, dot)
 }
 
+/** A row of the details or list view; a search result's [folder] shows under its name. */
 @Composable
-private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look) {
+private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look, folder: String?) {
     ListRow(
         selected = selected,
         selectionMode = look.selectionMode,
@@ -328,13 +347,14 @@ private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look) {
         EntryIcon(entry, Modifier)
         Spacer(Modifier.width(12.dp))
         when {
-            look.mode == ViewMode.LIST -> Name(look.name(entry), Modifier.weight(1f))
+            look.mode == ViewMode.LIST -> NameIn(look.name(entry), folder, Modifier.weight(1f))
             look.widthClass == WidthClass.COMPACT -> Column(Modifier.weight(1f).padding(vertical = 4.dp)) {
                 Name(look.name(entry))
                 Secondary(listOfNotNull(look.date(entry), look.size(entry)).joinToString(" · "))
+                folder?.let { Secondary(it) }
             }
             else -> {
-                Name(look.name(entry), Modifier.weight(1f))
+                NameIn(look.name(entry), folder, Modifier.weight(1f))
                 Secondary(look.date(entry), Modifier.width(DATE_COLUMN).padding(start = 8.dp))
                 Secondary(look.type(entry), Modifier.width(TYPE_COLUMN).padding(start = 8.dp))
                 Secondary(look.size(entry).orEmpty(), Modifier.width(SIZE_COLUMN).padding(start = 8.dp), TextAlign.End)
@@ -351,9 +371,12 @@ private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look) {
     }
 }
 
-/** An item of the tiles or large icons grid, with its thumbnail from [thumbnails] where it has one. */
+/**
+ * An item of the tiles or large icons grid, with its thumbnail from [thumbnails] where it has one; a
+ * search result's [folder] shows under its name.
+ */
 @Composable
-private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnails: Thumbnails?) {
+private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnails: Thumbnails?, folder: String?) {
     ListRow(
         selected = selected,
         selectionMode = look.selectionMode,
@@ -372,6 +395,7 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnail
                 Name(look.name(entry))
                 Secondary(look.type(entry))
                 look.size(entry)?.let { Secondary(it) }
+                folder?.let { Secondary(it) }
             }
         } else {
             Column(
@@ -386,6 +410,7 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnail
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+                folder?.let { Secondary(it, align = TextAlign.Center) }
             }
         }
     }
@@ -421,6 +446,51 @@ private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp) {
 internal fun EntryIcon(entry: FileEntry, modifier: Modifier) {
     val tint = if (entry.kind == EntryKind.DIR) FolderTint else FluentTheme.colors.text
     FluentIcon(iconFor(entry), contentDescription = null, modifier = modifier, tint = tint)
+}
+
+/** [name] ([Name]), with the [folder] of a search result under it. */
+@Composable
+private fun NameIn(name: String, folder: String?, modifier: Modifier) {
+    if (folder == null) return Name(name, modifier)
+    Column(modifier.padding(vertical = 4.dp)) {
+        Name(name)
+        Secondary(folder)
+    }
+}
+
+/**
+ * The line over search results: while the search goes on, a bar and the folder it is in; then, or once
+ * done, that only the first results show and how many folders could not be read.
+ */
+@Composable
+private fun SearchStatus(search: ListingState.Streaming, volumes: List<Volume>) {
+    val res = LocalResources.current
+    val internal = stringResource(R.string.volume_internal)
+    val current = search.currentDir?.takeIf { !search.done }
+    val lines = listOfNotNull(
+        current?.let { folderPath(it, volumes, internal) }?.let {
+            res.getString(R.string.search_searching, DisplayName.inSentence(it))
+        },
+        res.getString(R.string.search_capped).takeIf { search.capped },
+        res.getString(R.string.search_skipped, search.skippedDirs).takeIf { search.skippedDirs > 0 },
+    )
+    if (search.done && lines.isEmpty()) return
+    Column(Modifier.fillMaxWidth().testTag(Tags.SEARCH_STATUS)) {
+        if (!search.done) FluentProgressBar(progress = null, modifier = Modifier.fillMaxWidth())
+        for (line in lines) Secondary(line, Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+    }
+}
+
+/** In place of search results that found nothing. */
+@Composable
+private fun NoResults() {
+    Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+        BasicText(
+            stringResource(R.string.search_none),
+            modifier = Modifier.testTag(Tags.SEARCH_NONE),
+            style = FluentTheme.type.body.copy(color = FluentTheme.colors.textSecondary, textAlign = TextAlign.Center),
+        )
+    }
 }
 
 /** A name on one line, cut in the middle so that the extension stays visible. */

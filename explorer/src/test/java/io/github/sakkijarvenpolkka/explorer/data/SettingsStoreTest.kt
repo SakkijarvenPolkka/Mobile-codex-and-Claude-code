@@ -183,6 +183,11 @@ class SettingsStoreTest {
         assertEquals(folder("DCIM"), tab.current.location)
         assertEquals(listOf(HistoryEntry(folder("DCIM"))), tab.back)
         assertEquals(listOf(HistoryEntry(folder("DCIM/Camera"))), tab.forward)
+        // Not searched again: the words are kept for the folder to offer to.
+        assertEquals("cat", tab.current.searched)
+        // Kept as long as the tab stays there, also through the next run.
+        SettingsStore(context).saveSession(SettingsStore(context).loadSession(codec)!!.model, codec)
+        assertEquals("cat", SettingsStore(context).loadSession(codec)!!.model.active.current.searched)
     }
 
     @Test

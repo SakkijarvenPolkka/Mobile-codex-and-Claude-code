@@ -133,9 +133,18 @@ private val PRIMARY_ROOT: Path = Paths.get("/storage/emulated/0")
 /** Where the volume [uuid] is usually mounted. */
 private fun usualRoot(uuid: String): Path = if (uuid == PRIMARY_UUID) PRIMARY_ROOT else STORAGE.resolve(uuid)
 
-/** A tab: its current [location] and its [back] and [forward] stacks (nearest last), as tags. */
+/**
+ * A tab: its current [location] and its [back] and [forward] stacks (nearest last), as tags; [search] is the
+ * words its search results were for when it showed them (they are saved as the folder searched).
+ */
 @Serializable
-data class PersistedTab(val id: Long, val location: String, val back: List<String>, val forward: List<String>)
+data class PersistedTab(
+    val id: Long,
+    val location: String,
+    val back: List<String>,
+    val forward: List<String>,
+    val search: String? = null,
+)
 
 /** The open tabs in strip order and the [active] one's id. [v] is the format version, always written. */
 @Serializable

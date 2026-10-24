@@ -243,4 +243,10 @@
     <string name="folder_movies">Videos</string>
     <string name="favorite_move_up">Move up</string>
     <string name="favorite_move_down">Move down</string>
+    <string name="search_hint">Search %s</string>
+    <string name="search_searching">Searching: %s</string>
+    <string name="search_skipped">%d folders skipped</string>
+    <string name="search_capped">Too many results; showing the first 10,000</string>
+    <string name="search_none">No items match your search</string>
+    <string name="search_again">Search again</string>
 </resources>

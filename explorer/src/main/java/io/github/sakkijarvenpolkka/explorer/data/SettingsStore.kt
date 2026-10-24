@@ -77,7 +77,9 @@ class SettingsStore(context: Context?) {
     /**
      * The saved tabs, or null when there are none or none decodes. A tab whose current location
      * does not decode is left out, as is any history entry that does not; if the active tab is
-     * left out, the first tab left is active. New tabs get ids above every restored one.
+     * left out, the first tab left is active. New tabs get ids above every restored one. A tab
+     * saved at search results is at the folder searched, which keeps the words
+     * ([HistoryEntry.searched]): the search is not run again.
      */
     @Synchronized
     fun loadSession(codec: LocationCodec): RestoredSession? {
@@ -91,7 +93,8 @@ class SettingsStore(context: Context?) {
             val current = codec.decode(tab.location)
             val location = current.locationOrNull() ?: return@mapNotNull null
             if (current is DecodedLocation.Unavailable) unavailable[id] = current
-            TabState(id, HistoryEntry(location), tab.back.history(codec), tab.forward.history(codec), SelectionState())
+            val entry = HistoryEntry(location, searched = tab.search?.takeIf { location is Location.Folder })
+            TabState(id, entry, tab.back.history(codec), tab.forward.history(codec), SelectionState())
         }
         if (tabs.isEmpty()) return null
         val active = (session["active"] as? JsonPrimitive)?.longOrNull
@@ -101,13 +104,15 @@ class SettingsStore(context: Context?) {
 
     /**
      * Saves the tabs and their history as [codec] tags; a location it cannot tag is left out
-     * (a tab whose current one it cannot tag, with that tab's history).
+     * (a tab whose current one it cannot tag, with that tab's history). Of a tab at search
+     * results, or at the folder restored for them, the words searched for are saved too.
      */
     @Synchronized
     fun saveSession(m: TabsModel, codec: LocationCodec) {
         val tabs = m.tabs.mapNotNull { tab ->
             val location = codec.encode(tab.current.location) ?: return@mapNotNull null
-            PersistedTab(tab.id.value, location, tab.back.tags(codec), tab.forward.tags(codec))
+            val search = (tab.current.location as? Location.SearchResults)?.query ?: tab.current.searched
+            PersistedTab(tab.id.value, location, tab.back.tags(codec), tab.forward.tags(codec), search)
         }
         val session = PersistedSession(tabs = tabs, active = m.activeId.value)
         write(K_SESSION, json.encodeToString(PersistedSession.serializer(), session))

@@ -32,7 +32,8 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcons
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.MenuFlyout
 
 /**
- * New ▾, Cut, Copy, Paste, Rename, Share, Delete, Sort ▾ and View ▾, then "⋯" with the
+ * With [onSearch] (narrow windows), 🔍, which opens the search box; New ▾, Cut, Copy, Paste, Rename,
+ * Share, Delete, Sort ▾ and View ▾, then "⋯" with the
  * selection commands, Delete permanently, Compress, Extract, Pin or Unpin, Properties,
  * Refresh, the hidden items and file name extensions switches, the preview pane switch (with
  * [onTogglePreviewPane], wide windows) and Options; in the Recycle Bin, Restore, Delete
@@ -48,16 +49,19 @@ fun CommandsUi(
     onSetGlobal: ((GlobalSettings) -> GlobalSettings) -> Unit,
     modifier: Modifier = Modifier,
     onTogglePreviewPane: (() -> Unit)? = null,
+    onSearch: (() -> Unit)? = null,
 ) {
     val res = LocalResources.current
     var menu by remember { mutableStateOf<BarMenu?>(null) }
     val offered = ui.commands
     fun item(c: Command) =
         CommandItem(Tags.command(c), res.getString(c.label()), c.icon(), c in offered) { onCommand(c) }
-    val canView = ui.location is Location.Folder && ui.unavailable == null
+    val canView = (ui.location is Location.Folder || ui.location is Location.SearchResults) && ui.unavailable == null
     val canCreate = NEW_COMMANDS.any { it in offered }
     val inBin = ui.location == Location.RecycleBin
-    val primary = if (inBin) BIN_COMMANDS.map(::item) else listOf(
+    val search = onSearch?.let { CommandItem(Tags.CMD_SEARCH, searchHint(ui), FluentIcons.Search, ui.canSearch, it) }
+    val primary = if (inBin) BIN_COMMANDS.map(::item) else listOfNotNull(
+        search,
         CommandItem(Tags.CMD_NEW, res.getString(R.string.cmd_new), FluentIcons.Add, canCreate) {
             menu = BarMenu.NEW
         },

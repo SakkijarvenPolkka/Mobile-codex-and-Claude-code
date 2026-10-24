@@ -45,8 +45,8 @@ import java.nio.file.Paths
 
 /**
  * ☰ (with [showMenuButton]), ←, →, ↑ and the breadcrumb of the active tab's folder (or Home, or the
- * Recycle Bin). The first segment is the volume's name; its real path shows only while typing
- * ([Overlay.AddressEdit]).
+ * Recycle Bin; search results after the folder searched). The first segment is the volume's name; its
+ * real path shows only while typing ([Overlay.AddressEdit]).
  * A segment's chevron asks for its subfolders ([onSubfolders]), listed while
  * [Overlay.Subfolders] is open.
  */
@@ -78,10 +78,15 @@ fun AddressBar(
                 AddressEditor((ui.location as? Location.Folder)?.path?.toString().orEmpty(), onSubmit, onCloseOverlay)
             } else {
                 val internal = stringResource(R.string.volume_internal)
-                val crumbs = when (ui.location) {
+                val crumbs = when (val location = ui.location) {
                     Location.Home -> listOf(Crumb(stringResource(R.string.nav_home), Location.Home))
                     Location.RecycleBin -> listOf(Crumb(stringResource(R.string.nav_recycle_bin), Location.RecycleBin))
-                    else -> crumbsOf(ui, internal)
+                    is Location.Folder -> crumbsOf(ui, location.path, internal)
+                    is Location.SearchResults -> {
+                        val query = DisplayName.inSentence(location.query)
+                        val searched = Crumb(stringResource(R.string.tab_search_results, query), location)
+                        crumbsOf(ui, location.root, internal) + searched
+                    }
                 }
                 Breadcrumb(
                     crumbs = crumbs,
@@ -141,11 +146,10 @@ private fun AddressEditor(path: String, onSubmit: (String) -> Unit, onCancel: ()
 }
 
 /**
- * The segments of the active tab's folder, each keyed by its path: the volume (by name, also
+ * The segments of [path], the active tab's folder, each keyed by its path: the volume (by name, also
  * while it is not mounted), then each folder below its root.
  */
-private fun crumbsOf(ui: ExplorerUiState, internalLabel: String): List<Crumb> {
-    val path = (ui.location as? Location.Folder)?.path ?: return emptyList()
+private fun crumbsOf(ui: ExplorerUiState, path: Path, internalLabel: String): List<Crumb> {
     val gone = ui.unavailable
     val root: Path
     val label: String

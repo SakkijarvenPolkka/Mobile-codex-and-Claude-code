@@ -71,6 +71,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val handOver = HandOver(app, deps, viewModelScope, host)
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
     private val home = HomeLoader(deps, codec, viewModelScope)
+    private val searches = Searches(deps, viewModelScope, host) { shell.value.obbAllowed }
 
     /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
     internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
@@ -109,8 +110,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     val ui: StateFlow<ExplorerUiState> = combine(
         combine(tabs, activeListing, volumeTracking.unavailable, shell) { t, l, u, s -> Core(t, l, u, s) },
-        combine(settings.global, deps.volumes.volumes, clipboard.state, settings.favorites) { g, v, c, f ->
-            Env(g, v, c, f)
+        combine(settings.global, deps.volumes.volumes, clipboard.state, pins(deps, codec)) { g, v, c, p ->
+            Env(g, v, c, p)
         },
         ops.state,
         viewing.state,
@@ -123,7 +124,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Core(
                 tabs.value, tabs.value.activeId to ListingState.Loading, volumeTracking.unavailable.value, shell.value,
             ),
-            Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, settings.favorites.value),
+            Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, pinsOf(deps, codec)),
             ops.state.value,
             viewing.state.value,
             home.state.value,
@@ -226,7 +227,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun unpin(favorite: Favorite) = deps.unpin(favorite)
 
-    fun reorderFavorites(from: Int, to: Int) = deps.reorderFavorites(from, to)
+    fun reorderFavorites(moved: Favorite, to: Favorite) = deps.reorderFavorites(moved, to)
+
+    // The search box (spec §6.1): SearchState.kt tells what each of these does.
+
+    fun search(query: String, includeSubfolders: Boolean = true) = searches.search(query, includeSubfolders)
+
+    fun searchNow(query: String, includeSubfolders: Boolean = true) = searches.searchNow(query, includeSubfolders)
+
+    fun cancelSearch() = searches.cancel()
 
     /** Sets the view of the active tab's folder; folders without a view of their own take it from now on. */
     fun setView(v: ViewSetting) {
@@ -249,13 +258,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         goTo(typed, base = (tabs.value.active.current.location as? Location.Folder)?.path, showFile = true)
     }
 
-    /** The app came back: the active tab is read again, the others are marked out of date. */
+    /** The app came back: the active tab is read again, the others are marked out of date (search results neither). */
     fun onResume() {
         // The user may have let the app install apps in the settings meanwhile.
         shell.update { it.copy(obbAllowed = installsAllowed()) }
-        val model = tabs.value
-        model.tabs.filter { it.id != model.activeId }.forEach { loader.markStale(it.id) }
-        ensureLoaded(refresh = true)
+        // Search results stay as they were found: searching again may take long.
+        val reread = tabs.value.tabs.filter { it.current.location !is Location.SearchResults }
+        reread.filter { it.id != tabs.value.activeId }.forEach { loader.markStale(it.id) }
+        if (here() !is Location.SearchResults) ensureLoaded(refresh = true)
     }
 
     fun dismissMessage() {
@@ -358,16 +368,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val options = ListOptions(showHidden = settings.global.value.showHidden)
         val at = here()
         viewModelScope.launch {
-            val children = try {
-                withContext(deps.io) {
-                    Listing.list(deps.fs, folder, options) { null }.filter { it.kind == EntryKind.DIR }
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                host.showError(at, errorText(e.toFsError()))
-                return@launch
-            }
+            val listed = readOrTell(at) { Listing.list(deps.fs, folder, options) { null } } ?: return@launch
+            val children = listed.filter { it.kind == EntryKind.DIR }
             if (children.isNotEmpty()) shell.update { it.copy(overlay = Overlay.Subfolders(folder, children)) }
         }
     }
@@ -450,15 +452,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun leavingEntry(): HistoryEntry = tabs.value.active.let { scrollOf(it.id, it.current) }
 
     /**
-     * Reads the active tab's folder, the Recycle Bin or Home, when it is not read for its current options
-     * yet, or always with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
+     * Reads the active tab's folder, the Recycle Bin or Home, or searches, when it is not read for its current
+     * options yet, or always with [refresh]; a folder on no mounted volume is never read (see [placeOffVolume]).
      */
     private fun ensureLoaded(refresh: Boolean = false) {
         val tab = tabs.value.active
         val location = tab.current.location
         if (location == Location.Home) return loadHome(tab.id, refresh)
         val folder = (location as? Location.Folder)?.path
-        if (folder == null && location != Location.RecycleBin) return
+        val search = location as? Location.SearchResults
         if (tab.id in volumeTracking.unavailable.value) return
         if (folder != null && deps.lookup.volumeOf(folder) == null) return placeOffVolume(tab.id, folder)
         val global = settings.global.value
@@ -468,6 +470,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val stale = loader.isStale(tab.id)
         if (!refresh && !stale && key == previous) return
         loadedFor[tab.id] = key
+        if (search != null) return loader.setSource(tab.id, searches.results(tab.id, search, options))
         if (folder == null) return loader.setSource(tab.id, ops.binListing())
         loader.load(tab.id, folder, options, refresh = refresh || stale || previous?.location == location)
     }
@@ -509,14 +512,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun goTo(text: String, base: Path?, showFile: Boolean) {
         val at = here()
         viewModelScope.launch {
-            val target = try {
-                withContext(deps.io) { resolvePath(deps.fs, deps.lookup, text, base) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Resolved.Failed(e.toFsError())
-            }
-            when (target) {
+            when (val target = readOrTell(at) { resolvePath(deps.fs, deps.lookup, text, base) } ?: return@launch) {
                 is Resolved.Folder -> {
                     closeOverlay()
                     navigate(Location.Folder(target.path))
@@ -534,6 +530,16 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     private fun here(): Location = tabs.value.active.current.location
 
+    /** What [read] returns, read on [ExplorerDeps.io]; null when it fails, and a message about [at] says why. */
+    private suspend fun <T : Any> readOrTell(at: Location, read: () -> T): T? = try {
+        withContext(deps.io) { read() }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        host.showError(at, errorText(e.toFsError()))
+        null
+    }
+
     /**
      * Shows [message] about [at], where the active tab was when the user asked for what it
      * answers: not at all when the tab has left it since, and it goes when the tab leaves it.
@@ -549,14 +555,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val at = here()
         val folder = (at as? Location.Folder)?.path ?: return
         viewModelScope.launch {
-            val entry = try {
-                withContext(deps.io) { Listing.entry(deps.fs, folder, deps.mime::mimeOf) }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                host.showError(at, errorText(e.toFsError()))
-                return@launch
-            }
+            val entry = readOrTell(at) { Listing.entry(deps.fs, folder, deps.mime::mimeOf) } ?: return@launch
             if (here() == at) shell.update { it.copy(overlay = Overlay.Properties(listOf(entry))) }
         }
     }
@@ -619,9 +618,11 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val rows = listing.rows()
         val selected = rows.mapNotNull { row -> row.entry.takeIf { it.path in tab.selection.items } }
         val folder = (location as? Location.Folder)?.path?.takeIf { unavailable == null }
-        val volume = folder?.let(deps.lookup::volumeOf)
-        val restricted = folder != null && volume != null &&
-            isRestrictedAppDataPath(volume.root, folder, obbAllowed = core.shell.obbAllowed)
+        // Search results are of the folder searched: on its volume, restricted with it.
+        val place = folder ?: (location as? Location.SearchResults)?.root
+        val volume = place?.let(deps.lookup::volumeOf)
+        val restricted = place != null && volume != null &&
+            isRestrictedAppDataPath(volume.root, place, obbAllowed = core.shell.obbAllowed)
         val roots = env.volumes.mapNotNull { it.root }
         val inBin = location == Location.RecycleBin
         val commands = if (unavailable != null) {
@@ -636,7 +637,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     // The Recycle Bin is on every volume; an item on a read-only one fails by itself.
                     volumeWritable = inBin || volume != null &&
                         env.volumes.none { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY },
-                    pinned = allPinned(selected, folder, env.favorites, deps.lookup),
+                    pinned = allPinned(selected, folder, env.pins.favorites, deps.lookup),
                     binEmpty = !inBin || rows.isEmpty(),
                     hasEntries = rows.isNotEmpty(),
                 ),
@@ -670,7 +671,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             previewPane = viewed.pane,
             previewed = viewing.previewed(viewed, rows, selected),
             home = homeData,
-            favorites = pinnedFolders(env.favorites, codec),
+            favorites = env.pins.folders,
             unavailableTabs = core.unavailable,
         )
     }
@@ -683,9 +684,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         canGoBack = tab.back.isNotEmpty(),
     )
 
-    /** What [handOver] and [ops] need of the view model. */
-    private inner class Host : ShellHost {
+    /** What [handOver], [ops] and [searches] need of the view model. */
+    private inner class Host : ShellHost, SearchHost {
         override fun here(): Location = this@ExplorerViewModel.here()
+
+        override fun searchedTab(): TabState? = tabs.value.active.takeIf { it.id !in volumeTracking.unavailable.value }
+
+        override fun navigate(l: Location) = this@ExplorerViewModel.navigate(l)
+
+        override fun replaceHere(l: Location) = reduce(TabAction.ReplaceCurrent(tabs.value.activeId, l))
 
         override fun showAt(at: Location, message: UiMessage) = this@ExplorerViewModel.showAt(at, message)
 
@@ -722,7 +729,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val global: GlobalSettings,
         val volumes: List<Volume>,
         val clipboard: Clipboard?,
-        val favorites: List<Favorite>,
+        val pins: Pins,
     )
 
     private data class LoadKey(val location: Location, val options: ListOptions)

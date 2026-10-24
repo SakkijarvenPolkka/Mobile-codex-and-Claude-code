@@ -5,6 +5,7 @@ import android.app.Application
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
@@ -14,6 +15,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -32,6 +34,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
+import io.github.sakkijarvenpolkka.explorer.state.HomeData
 import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.state.QuickItem
 import io.github.sakkijarvenpolkka.explorer.state.defaultFolders
@@ -216,6 +219,27 @@ class HomeViewTest {
         assertEquals(2048L, ui.home!!.binSize)
         click(rule.onNodeWithTag(Tags.HOME_BIN).assert(hasText(str(R.string.bin_size, "2.00 KB"))))
         assertEquals(Location.RecycleBin, location())
+    }
+
+    @Test
+    fun firstReadFailureShowsEmptyHome() {
+        dir("Music")
+        show(usage = { error("statfs failed") })
+        // Not an endless progress bar: Home with nothing in it.
+        assertEquals(HomeData(emptyList(), emptyList(), emptyList(), 0L, 0), ui.home)
+        rule.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo.Indeterminate) and hasAnyAncestor(hasTestTag(Tags.HOME)))
+            .assertDoesNotExist()
+    }
+
+    @Test
+    fun binRowShowsWhileItHoldsItemsOfNoBytes() {
+        val volumes = FakeVolumes(FakeVolumes.primary(root))
+        val bin = RecycleBin(NioFsBackend, volumes, clock = { 1L }, ids = { "b1" })
+        runBlocking { bin.moveToBin(dir("empty")) }
+        show(bin = bin)
+        assertEquals(0L, ui.home!!.binSize)
+        assertEquals(1, ui.home!!.binItems)
+        rule.onNodeWithTag(Tags.HOME_BIN).assert(hasText(str(R.string.bin_size, "0바이트"))).assertIsDisplayed()
     }
 
     @Test

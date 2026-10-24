@@ -411,9 +411,9 @@ internal class OperationsUi(
     }
 
     /**
-     * [op] ended: the runner forgets it, the tabs showing a folder it changed are read again, what a copy
-     * or a move made is the new selection where the active tab shows it, the items a move moved leave a
-     * cut clipboard, and how it ended is told ([tell]).
+     * [op] ended: the runner forgets it, the tabs showing a folder it changed (or search results of a folder
+     * above it) are read again, what a copy or a move made is the new selection where the active tab shows
+     * it, the items a move moved leave a cut clipboard, and how it ended is told ([tell]).
      */
     private suspend fun onFinished(op: FinishedOp) {
         deps.runner?.dismiss(op.spec.id)
@@ -425,9 +425,15 @@ internal class OperationsUi(
         if (spec.kind in TAKES_SOURCES) spec.sources.mapNotNullTo(folders) { Paths.get(it).parent }
         (result as? OpResult.Done)?.created?.mapNotNullTo(folders) { it.parent }
         val binChanged = spec.kind in CHANGES_BIN
-        // Home shows the Recycle Bin's size and the recent files, which any operation may have moved.
-        shell.refreshShowing {
-            it is Location.Folder && it.path in folders || binChanged && it == Location.RecycleBin || it == Location.Home
+        shell.refreshShowing { location ->
+            when (location) {
+                is Location.Folder -> location.path in folders
+                // Searched again when a folder under the one searched changed.
+                is Location.SearchResults -> folders.any { it.startsWith(location.root) }
+                Location.RecycleBin -> binChanged
+                // Home shows the Recycle Bin's size and the recent files, which any operation may have moved.
+                Location.Home -> true
+            }
         }
         val target = spec.target?.let { Paths.get(it) }
         if (result is OpResult.Done && target != null && (spec.kind == OpKind.COPY || spec.kind == OpKind.MOVE)) {

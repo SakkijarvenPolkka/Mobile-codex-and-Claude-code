@@ -14,13 +14,16 @@ value class TabId(val value: Long)
 /**
  * A place in a tab's history: the [location], and where its list was scrolled to when it was
  * left (first visible item [scrollIndex], its [scrollOffset] in pixels, the focused item's
- * [focusName]), so that going back restores the view. Kept in memory only.
+ * [focusName]), so that going back restores the view. Kept in memory only. [searched] is set on
+ * the folder a saved session restored in place of search results: the words searched for, offered
+ * to search again (a search is not run again by itself).
  */
 data class HistoryEntry(
     val location: Location,
     val scrollIndex: Int = 0,
     val scrollOffset: Int = 0,
     val focusName: String? = null,
+    val searched: String? = null,
 )
 
 /**

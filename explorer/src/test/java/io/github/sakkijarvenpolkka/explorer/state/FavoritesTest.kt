@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -174,17 +175,20 @@ class FavoritesTest {
         dir("c")
         show()
         vm.pin(listOf("a", "b", "c").map(root::resolve))
-        vm.reorderFavorites(from = 2, to = 0)
+        val (a, b, c) = settings.favorites.value
+        // A favorite takes the place of the one it is moved to.
+        vm.reorderFavorites(c, to = a)
         rule.waitForIdle()
         assertEquals(listOf("c", "a", "b"), settings.favorites.value.map { it.rel })
         assertEquals(listOf("c", "a", "b"), SettingsStore(app).favorites.value.map { it.rel })
         assertEquals(listOf("c", "a", "b").map(root::resolve), ui.favorites.map { it.path })
 
-        vm.reorderFavorites(from = 0, to = 1)
+        vm.reorderFavorites(c, to = a)
         rule.waitForIdle()
         assertEquals(listOf("a", "c", "b"), settings.favorites.value.map { it.rel })
-        // A place outside the list moves nothing.
-        vm.reorderFavorites(from = 0, to = 3)
+        // One that is not a favorite moves nothing.
+        vm.reorderFavorites(Favorite("primary", "d", "d"), to = b)
+        vm.reorderFavorites(a, to = Favorite("primary", "d", "d"))
         assertEquals(listOf("a", "c", "b"), settings.favorites.value.map { it.rel })
 
         // Home lists them in that order.
@@ -203,6 +207,42 @@ class FavoritesTest {
         choose(Tags.FAVORITE_DOWN)
         assertEquals(listOf("b", "a", "c"), settings.favorites.value.map { it.rel })
         assertEquals(listOf("b", "a", "c").map(root::resolve), ui.home!!.quickAccess.map { it.path })
+    }
+
+    @Test
+    fun reorderMovesTheFavoriteShown() {
+        dir("a")
+        dir("b")
+        // Stored between them: one that leads nowhere, which is not shown.
+        val stored = listOf(Favorite("primary", "a", "a"), Favorite("primary", "../x", "x"), Favorite("primary", "b", "b"))
+        settings.setFavorites(stored)
+        show()
+        go(Location.Home)
+        assertEquals(listOf("a", "b").map(root::resolve), ui.favorites.map { it.path })
+
+        // Up moves b above a, the one shown above it.
+        longPress(quick("b"))
+        choose(Tags.FAVORITE_UP)
+        assertEquals(listOf("b", "a").map(root::resolve), ui.favorites.map { it.path })
+        assertEquals(listOf("b", "a").map(root::resolve), ui.home!!.quickAccess.map { it.path })
+        assertEquals(listOf(stored[2], stored[0], stored[1]), settings.favorites.value)
+    }
+
+    @Test
+    fun pinnedVolumeRootShowsTheVolumeName() {
+        dir("Music")
+        show()
+        vm.pin(listOf(root))
+        rule.waitForIdle()
+        // Pinned under the system's label, shown under the app's name for the drive.
+        assertEquals(listOf(Favorite("primary", "", "Internal shared storage")), settings.favorites.value)
+        openDrawer()
+        val inDrawer = hasAnyAncestor(hasTestTag(Tags.DRAWER))
+        inside(Tags.DRAWER, hasText("Internal shared storage")).assertDoesNotExist()
+        rule.onAllNodes(hasText(str(R.string.volume_internal)) and inDrawer).assertCountEquals(2)
+        inside(Tags.DRAWER, hasText(str(R.string.nav_home))).performClick()
+        rule.waitForIdle()
+        quick(root.fileName.toString()).assert(hasText(str(R.string.volume_internal)))
     }
 
     @Test

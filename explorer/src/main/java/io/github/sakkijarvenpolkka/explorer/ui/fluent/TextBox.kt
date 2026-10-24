@@ -37,9 +37,9 @@ import androidx.compose.ui.unit.dp
 /**
  * A text box that fills the available width: 40 dp drawn inside a 48 dp touch target, a
  * thin border and a bottom line that turns into a 2 dp accent line while focused.
- * [placeholder] shows while it is empty. With [onSubmit] the keyboard's action key is "Done"
- * and calls it. An [error] colours the border, is shown below the box and is reported to
- * accessibility services.
+ * [placeholder] shows while it is empty. With [onSubmit] the keyboard's action key is
+ * [submitAction] ("Done", or "Search" for a search box) and calls it. An [error] colours the
+ * border, is shown below the box and is reported to accessibility services.
  */
 @Composable
 fun FluentTextBox(
@@ -50,6 +50,7 @@ fun FluentTextBox(
     singleLine: Boolean = true,
     onSubmit: (() -> Unit)? = null,
     error: String? = null,
+    submitAction: ImeAction = ImeAction.Done,
 ) {
     val colors = FluentTheme.colors
     val type = FluentTheme.type
@@ -68,8 +69,12 @@ fun FluentTextBox(
         modifier = modifier.then(if (error != null) Modifier.semantics { error(error) } else Modifier),
         textStyle = type.body.copy(color = colors.text),
         singleLine = singleLine,
-        keyboardOptions = KeyboardOptions(imeAction = if (onSubmit != null) ImeAction.Done else ImeAction.Default),
-        keyboardActions = if (onSubmit != null) KeyboardActions(onDone = { onSubmit() }) else KeyboardActions.Default,
+        keyboardOptions = KeyboardOptions(imeAction = if (onSubmit != null) submitAction else ImeAction.Default),
+        keyboardActions = if (onSubmit != null) {
+            KeyboardActions(onDone = { onSubmit() }, onSearch = { onSubmit() })
+        } else {
+            KeyboardActions.Default
+        },
         interactionSource = interaction,
         cursorBrush = SolidColor(colors.accent),
         decorationBox = { innerTextField ->

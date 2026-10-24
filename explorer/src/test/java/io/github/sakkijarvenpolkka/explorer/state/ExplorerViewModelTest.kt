@@ -31,6 +31,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -372,7 +373,7 @@ class ExplorerViewModelTest {
         vm.navigate(Location.Home)
         settle()
         val homeTab = ui.tabs.activeId
-        assertEquals(HomeData(emptyList(), emptyList(), emptyList(), 0L), ui.home)
+        assertEquals(HomeData(emptyList(), emptyList(), emptyList(), 0L, 0), ui.home)
 
         // In a folder tab meanwhile: a folder pinned, a file opened, a drive mounted.
         vm.newTab()
@@ -394,6 +395,25 @@ class ExplorerViewModelTest {
         assertEquals(listOf(QuickItem(root.resolve("a"), "a", pinned = true)), home.quickAccess)
         assertEquals(listOf(root.resolve("a/notes.txt")), home.recents.map { it.path })
         assertEquals(listOf(DriveUsage(volumes.volumes.value[1], 8L, 2L)), home.drives)
+    }
+
+    @Test
+    fun pinnedFoldersKeptWhileTheyDoNotChange() {
+        dir("a")
+        file("b.txt")
+        start()
+        vm.pin(listOf(root.resolve("a")))
+        settle()
+        val pinned = ui.favorites
+        assertEquals(listOf(root.resolve("a")), pinned.map { it.path })
+        // Not worked out again for a change of anything else.
+        vm.onLongPress(entry("b.txt"))
+        settle()
+        assertTrue(ui.tabs.active.selection.active)
+        assertSame(pinned, ui.favorites)
+        vm.unpin(pinned.single().favorite)
+        settle()
+        assertTrue(ui.favorites.isEmpty())
     }
 
     @Test

@@ -241,4 +241,10 @@
     <string name="folder_movies">동영상</string>
     <string name="favorite_move_up">위로 이동</string>
     <string name="favorite_move_down">아래로 이동</string>
+    <string name="search_hint">%s 검색</string>
+    <string name="search_searching">검색 중: %s</string>
+    <string name="search_skipped">폴더 %d개 건너뜀</string>
+    <string name="search_capped">결과가 너무 많아 처음 10,000개만 표시합니다</string>
+    <string name="search_none">검색 결과가 없습니다</string>
+    <string name="search_again">다시 검색</string>
 </resources>

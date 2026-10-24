@@ -77,6 +77,7 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoBar
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.InfoSeverity
+import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.text
 
 /** How wide the window is: [EXPANDED] from 840 dp, which pins the navigation pane. */
@@ -114,13 +115,15 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
  * start, and the preview pane, when on, at the end; otherwise the navigation pane is a drawer
  * behind ☰. A file open in its viewer takes the whole window ([ViewerScreen]), with the app's
  * notice of the file operations and the view model's message over it. The tab strip is on top; it
- * and the bars keep clear of the system bars and the display cutout. Back is handled only while the
- * state has something for it to do. The keyboard shortcuts ([shortcutFor]) are read here first, so
- * the shell takes the focus back whenever the list shows with nothing open over it; the intents the
- * view model asks for are started from here, from the activity. The file operations show from the
- * runner's state ([OperationsDialogs]), which outlives the activity. [viewers] read the files the
- * built-in viewers and the preview pane show, for a view model that opens files in them (its deps'
- * `builtInViewers`); without them, neither shows.
+ * and the bars keep clear of the system bars and the display cutout. The search box is at the end of
+ * the address bar, or on [WidthClass.COMPACT] under the command bar, opened by its 🔍 and shown with
+ * search results. Back is handled only while the state has something for it to do. The keyboard
+ * shortcuts ([shortcutFor]) are read here first, so the shell takes the focus back whenever the list
+ * shows with nothing open over it; the intents the view model asks for are started from here, from
+ * the activity. The file operations show from the runner's state ([OperationsDialogs]), which
+ * outlives the activity. [viewers] read the files the built-in viewers and the preview pane show,
+ * for a view model that opens files in them (its deps' `builtInViewers`); without them, neither
+ * shows.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: ViewerDeps? = null) {
@@ -143,13 +146,21 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
     val nothingOpen = ui.overlay == null
     val listShown = ui.viewer == null
     LaunchedEffect(nothingOpen, listShown) { if (nothingOpen && listShown && !hasFocus) focus.requestFocus() }
+    var searchFocused by remember { mutableStateOf(false) }
+    // Narrow windows: the search box opened by its 🔍, until the tab goes elsewhere than search results.
+    var searchOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(ui.location) { if (ui.location !is Location.SearchResults) searchOpen = false }
+    val searchBox = @Composable { modifier: Modifier ->
+        val focusChange = { focused: Boolean -> searchFocused = focused }
+        SearchBox(ui, vm::search, vm::searchNow, vm::cancelSearch, focusChange, modifier, autoFocus = searchOpen)
+    }
     Box(
         Modifier
             .fillMaxSize()
             .background(FluentTheme.colors.background)
             .onPreviewKeyEvent { event ->
-                // The address box is the shell's only text field.
-                val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit)
+                // The shell's text fields: the address box and the search box.
+                val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit || searchFocused)
                 action != null && vm.onShortcut(action, ui, focused, expanded, builtInViewers = viewers != null)
             }
             .onFocusChanged {
@@ -179,33 +190,41 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
             val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             Column(Modifier.fillMaxSize().then(sides)) {
                 TabsBar(ui, vm, Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)))
-                AddressBar(
-                    ui = ui,
-                    showMenuButton = !expanded,
-                    onMenu = { vm.setDrawerOpen(true) },
-                    onBack = vm::back,
-                    onForward = vm::forward,
-                    onUp = vm::up,
-                    onNavigate = vm::navigate,
-                    onSubfolders = vm::showSubfolders,
-                    onEdit = vm::editAddress,
-                    onSubmit = vm::typedPath,
-                    onCloseOverlay = vm::closeOverlay,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AddressBar(
+                        ui = ui,
+                        showMenuButton = !expanded,
+                        onMenu = { vm.setDrawerOpen(true) },
+                        onBack = vm::back,
+                        onForward = vm::forward,
+                        onUp = vm::up,
+                        onNavigate = vm::navigate,
+                        onSubfolders = vm::showSubfolders,
+                        onEdit = vm::editAddress,
+                        onSubmit = vm::typedPath,
+                        onCloseOverlay = vm::closeOverlay,
+                        modifier = Modifier.weight(1f),
+                    )
+                    if (expanded && ui.canSearch) searchBox(Modifier.width(SEARCH_WIDTH).padding(end = 8.dp))
+                }
                 CommandsUi(
                     ui,
                     onCommand = vm::command,
                     onSetView = vm::setView,
                     onSetGlobal = vm::setGlobal,
                     onTogglePreviewPane = if (expanded && viewers != null) vm.viewing::togglePane else null,
+                    onSearch = if (expanded) null else ({ searchOpen = true }),
                 )
+                if (!expanded && ui.canSearch && (searchOpen || ui.location is Location.SearchResults)) {
+                    searchBox(Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                }
                 Row(Modifier.weight(1f)) {
                     if (expanded) {
                         val pane = Modifier.width(NAV_WIDTH).fillMaxHeight()
                         NavContent(ui.volumes, ui.favorites, ui.location, vm::navigate, pane)
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
-                        Banners(ui, onDismiss = vm::dismissMessage, onDismissNotice = vm::dismissOpsNotice)
+                        Banners(ui, vm::dismissMessage, vm::dismissOpsNotice, onSearchAgain = vm::searchNow)
                         Contents(ui, widthClass, positions, vm, Modifier.weight(1f))
                     }
                     if (expanded && ui.previewPane && viewers != null) {
@@ -315,18 +334,33 @@ private fun ExplorerViewModel.onShortcut(
 
 private val NAV_WIDTH = 240.dp
 private val PREVIEW_WIDTH = 320.dp
+private val SEARCH_WIDTH = 280.dp
 
 /**
  * The app's notice of the file operations ([ExplorerUiState.opsNotice], closed with [onDismissNotice]),
- * the message of the view model (closed with [onDismiss]), then the restricted-folder warning.
+ * the message of the view model (closed with [onDismiss]), then the restricted-folder warning; at the
+ * folder a restored tab had its search results at, what they were for, with a button that searches for
+ * it again ([onSearchAgain]).
  */
 @Composable
-private fun Banners(ui: ExplorerUiState, onDismiss: () -> Unit, onDismissNotice: () -> Unit) {
+private fun Banners(
+    ui: ExplorerUiState,
+    onDismiss: () -> Unit,
+    onDismissNotice: () -> Unit,
+    onSearchAgain: (String) -> Unit,
+) {
     ui.opsNotice?.let { MessageBar(it, onDismissNotice) }
     ui.message?.let { MessageBar(it, onDismiss, Modifier.testTag(Tags.MESSAGE)) }
     if (ui.restricted) {
         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.RESTRICTED_BANNER)) {
             InfoBar(InfoSeverity.WARNING, stringResource(R.string.restricted_banner))
+        }
+    }
+    val searched = ui.tabs.active.current.searched?.takeIf { ui.location is Location.Folder && ui.canSearch }
+    if (searched != null) {
+        Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.SEARCH_AGAIN)) {
+            val text = stringResource(R.string.tab_search_results, DisplayName.inSentence(searched))
+            InfoBar(InfoSeverity.INFO, text, action = stringResource(R.string.search_again) to { onSearchAgain(searched) })
         }
     }
 }
@@ -376,7 +410,7 @@ private fun Contents(
                 onUnpin = vm::unpin,
                 onMoveFavorite = vm::reorderFavorites,
             )
-            ui.location !is Location.Folder -> Unit
+            ui.location !is Location.Folder && ui.location !is Location.SearchResults -> Unit
             listing is ListingState.Loading -> LoadingBar()
             else -> {
                 FileList(

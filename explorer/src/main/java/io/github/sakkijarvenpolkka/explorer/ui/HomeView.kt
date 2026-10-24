@@ -67,11 +67,11 @@ import java.nio.file.Path
 /**
  * Home of [ui] ([ExplorerUiState.home]), a progress bar until it is first read: quick access (the
  * favorites, then the default folders there are), the drives, each with a bar of how full it is, the
- * recent files and, while it holds anything, the Recycle Bin's size; a section with nothing in it is left
- * out. A folder, a drive or the Recycle Bin opens with [onNavigate] (a favorite whose drive is out is
- * dimmed), a recent file with [onOpen]. A long press on a quick access folder opens its menu: Pin to
- * Favorites ([onPin]) for a default folder; Unpin ([onUnpin]), Move up and Move down ([onMoveFavorite],
- * from and to its place in [ExplorerUiState.favorites]) for a favorite.
+ * recent files and, while it holds any items (of no bytes too), the Recycle Bin's size; a section with
+ * nothing in it is left out. A folder, a drive or the Recycle Bin opens with [onNavigate] (a favorite whose
+ * drive is out is dimmed), a recent file with [onOpen]. A long press on a quick access folder opens its
+ * menu: Pin to Favorites ([onPin]) for a default folder; Unpin ([onUnpin]), Move up and Move down
+ * ([onMoveFavorite], to the place of the one above or below it in [ExplorerUiState.favorites]) for a favorite.
  */
 @Composable
 fun HomeView(
@@ -80,7 +80,7 @@ fun HomeView(
     onOpen: (FileEntry) -> Unit,
     onPin: (Path) -> Unit,
     onUnpin: (Favorite) -> Unit,
-    onMoveFavorite: (from: Int, to: Int) -> Unit,
+    onMoveFavorite: (moved: Favorite, to: Favorite) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val home = ui.home
@@ -111,7 +111,7 @@ fun HomeView(
                 RecentRow(entry, ui.volumes) { onOpen(entry) }
             }
         }
-        if (home.binSize > 0) {
+        if (home.binItems > 0) {
             item(key = "bin") {
                 HomeRow(onClick = { onNavigate(Location.RecycleBin) }, modifier = Modifier.testTag(Tags.HOME_BIN)) {
                     FluentIcon(FluentIcons.RecycleBin, contentDescription = null)
@@ -124,14 +124,20 @@ fun HomeView(
 
 /**
  * What a folder of quick access or of Favorites at [path] is called: a default folder of the primary
- * volume (one of [volumes]) by its name in the app's language, any other by [label].
+ * volume (one of [volumes]) by its name in the app's language, the root of a mounted volume by the
+ * volume's name, as This PC shows it, any other by [label].
  */
 @Composable
 internal fun folderLabel(path: Path, label: String, volumes: List<Volume>): String {
     val primary = volumes.firstOrNull { it.isPrimary }?.root
     val name = path.fileName?.toString()
     val own = DEFAULT_FOLDERS.firstOrNull { it.first == name }?.second
-    return if (own != null && primary != null && path.parent == primary) stringResource(own) else DisplayName.of(label)
+    val volume = volumes.firstOrNull { it.root == path }
+    return when {
+        own != null && primary != null && path.parent == primary -> stringResource(own)
+        volume != null -> volumeLabel(volume, stringResource(R.string.volume_internal))
+        else -> DisplayName.of(label)
+    }
 }
 
 /** A section's heading. */
@@ -180,7 +186,7 @@ private fun QuickRow(
 
 /**
  * The menu of [item]: Pin to Favorites for a default folder; for a favorite, Unpin, Move up and Move
- * down, by its place in [favorites] (each disabled when there is nowhere to go).
+ * down, to the place of the one before or after it in [favorites] (each disabled when there is none).
  */
 private fun quickMenu(
     item: QuickItem,
@@ -188,7 +194,7 @@ private fun quickMenu(
     res: Resources,
     onPin: (Path) -> Unit,
     onUnpin: (Favorite) -> Unit,
-    onMove: (from: Int, to: Int) -> Unit,
+    onMove: (moved: Favorite, to: Favorite) -> Unit,
 ): List<CommandItem> {
     if (!item.pinned) {
         return listOf(
@@ -199,6 +205,8 @@ private fun quickMenu(
     }
     val at = favorites.indexOfFirst { it.path == item.path }
     val favorite = favorites.getOrNull(at)?.favorite
+    val above = favorites.getOrNull(at - 1)?.favorite?.takeIf { favorite != null }
+    val below = favorites.getOrNull(at + 1)?.favorite?.takeIf { favorite != null }
     val unpin = res.getString(R.string.cmd_unpin)
     val up = res.getString(R.string.favorite_move_up)
     val down = res.getString(R.string.favorite_move_down)
@@ -206,8 +214,12 @@ private fun quickMenu(
         CommandItem(Tags.contextCommand(Command.UNPIN), unpin, FluentIcons.Star, enabled = favorite != null) {
             favorite?.let(onUnpin)
         },
-        CommandItem(Tags.FAVORITE_UP, up, null, enabled = at > 0) { onMove(at, at - 1) },
-        CommandItem(Tags.FAVORITE_DOWN, down, null, enabled = at in 0 until favorites.lastIndex) { onMove(at, at + 1) },
+        CommandItem(Tags.FAVORITE_UP, up, null, enabled = above != null) {
+            if (favorite != null && above != null) onMove(favorite, above)
+        },
+        CommandItem(Tags.FAVORITE_DOWN, down, null, enabled = below != null) {
+            if (favorite != null && below != null) onMove(favorite, below)
+        },
     )
 }
 
