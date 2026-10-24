@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.ConcurrentHashMap
 
 /** A volume's state, from `StorageVolume.getState()`. */
 enum class VolumeState { MOUNTED, MOUNTED_READ_ONLY, EJECTING, UNMOUNTED, OTHER }
@@ -53,9 +54,10 @@ data class Volume(
  * A [Volume] from a `StorageVolume`'s fields: [state] is its `getState()` string, [directory]
  * its `getDirectory()`, and [fsType] its file system type if known ([fsTypeFor]). A secondary
  * volume without a file system UUID is keyed by its directory's name, which, unlike its [label],
- * is the same in every language and differs between two drives; Android reports no directory
- * unless the volume is mounted, so then only the [label] is left. Removable volumes get the FAT
- * naming rules; only a volume known to be vfat gets FAT32's size limit, since exFAT has none.
+ * is the same in every language and differs between two drives. Android reports no directory
+ * unless the volume is mounted, so then it keeps [mountedKey], the key it had while mounted, and
+ * only a volume never seen mounted is keyed by its [label]. Removable volumes get the FAT naming
+ * rules; only a volume known to be vfat gets FAT32's size limit, since exFAT has none.
  */
 fun volumeFrom(
     uuid: String?,
@@ -65,6 +67,7 @@ fun volumeFrom(
     primary: Boolean,
     removable: Boolean,
     fsType: String? = null,
+    mountedKey: String? = null,
 ): Volume {
     val volumeState = when (state) {
         "mounted" -> VolumeState.MOUNTED
@@ -76,7 +79,7 @@ fun volumeFrom(
     val path = directory?.toPath()
     val mounted = volumeState == VolumeState.MOUNTED || volumeState == VolumeState.MOUNTED_READ_ONLY
     return Volume(
-        uuid = if (primary) PRIMARY_UUID else uuid ?: directory?.name ?: label,
+        uuid = if (primary) PRIMARY_UUID else uuid ?: directory?.name ?: mountedKey ?: label,
         label = label,
         root = if (mounted) path else null,
         state = volumeState,
@@ -164,6 +167,13 @@ class VolumeRegistry(
 
     private val context: Context = context.applicationContext
     private val storage: StorageManager = this.context.getSystemService(StorageManager::class.java)
+
+    /**
+     * The key of each volume from when it was last seen mounted, so that a volume without a file
+     * system UUID keeps it once Android stops reporting its directory. `StorageVolume.equals`
+     * compares the volumes' paths, which they keep in every state.
+     */
+    private val mountedKeys = ConcurrentHashMap<StorageVolume, String>()
 
     private val _volumes = MutableStateFlow(read())
     override val volumes: StateFlow<List<Volume>> = _volumes.asStateFlow()
@@ -265,7 +275,8 @@ class VolumeRegistry(
             primary = volume.isPrimary,
             removable = volume.isRemovable,
             fsType = fsType,
-        )
+            mountedKey = mountedKeys[volume],
+        ).also { if (directory != null) mountedKeys[volume] = it.uuid }
     }
 
     private fun send(event: VolumeEvent) {

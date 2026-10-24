@@ -40,6 +40,7 @@ import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.ops.ServiceStarter
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbKind
 import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.platform.deliverBroadcast
 import io.github.sakkijarvenpolkka.explorer.preview.ImageDecoderPort
 import io.github.sakkijarvenpolkka.explorer.preview.MediaPort
@@ -253,25 +254,25 @@ class ExplorerAppTest {
         cancel("t1", "t2")
     }
 
-    /** The SD card "1A2B-3C4D" mounted at [card] in [state]. */
-    private fun cardIn(card: Path, state: String): StorageVolume =
+    /** The SD card [fsUuid] (none if null) mounted at [card] in [state]. */
+    private fun cardIn(card: Path, state: String, fsUuid: String? = "1A2B-3C4D"): StorageVolume =
         StorageVolumeBuilder("public:1A2B-3C4D", card.toFile(), "SD card", Process.myUserHandle(), state)
             .setIsPrimary(false)
             .setIsRemovable(true)
-            .setFsUuid("1A2B-3C4D")
+            .setFsUuid(fsUuid)
             .build()
 
     private val storage get() = shadowOf(app.getSystemService(StorageManager::class.java))
 
-    /** Mounts the SD card at [card]. */
-    private fun mount(card: Path) {
-        storage.addStorageVolume(cardIn(card, "mounted"))
+    /** Mounts the SD card [fsUuid] at [card]. */
+    private fun mount(card: Path, fsUuid: String? = "1A2B-3C4D") {
+        storage.addStorageVolume(cardIn(card, "mounted", fsUuid))
         app.volumes.refresh()
     }
 
-    /** The card at [card] goes: its root is gone from the volumes before the event comes. */
-    private fun eject(card: Path) {
-        val ejecting = cardIn(card, "ejecting")
+    /** The card [fsUuid] at [card] goes: its root is gone from the volumes before the event comes. */
+    private fun eject(card: Path, fsUuid: String? = "1A2B-3C4D") {
+        val ejecting = cardIn(card, "ejecting", fsUuid)
         storage.resetStorageVolumeList()
         storage.addStorageVolume(ejecting)
         deliverBroadcast(
@@ -295,6 +296,28 @@ class ExplorerAppTest {
 
         eject(card)
 
+        val finished = runBlocking {
+            withTimeout(10_000) { app.runner.state.first { it.finished.isNotEmpty() } }
+        }.finished.single()
+        assertEquals(OpResult.Failed(FsError.VolumeRemoved, 0, 1), finished.result)
+        assertEquals("old", String(Files.readAllBytes(card.resolve("a.txt"))))
+    }
+
+    @Test
+    fun ejectingAVolumeWithoutFsUuidStopsTheOperationsOnIt() {
+        val dir = folder.root.toPath().toRealPath()
+        val card = Files.createDirectory(dir.resolve("card"))
+        mount(card, fsUuid = null)
+        assertEquals("card", app.volumes.volumeOf(card)?.uuid)
+        val a = write(dir, "a.txt", "new")
+        write(card, "a.txt", "old")
+        app.runner.submit(OperationSpec("t1", OpKind.COPY, listOf(a.toString()), card.toString()))
+        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+
+        // The ejecting volume reports no directory; its event still carries the key it had while mounted.
+        eject(card, fsUuid = null)
+
+        assertEquals(VolumeState.EJECTING, app.volumes.byUuid("card")?.state)
         val finished = runBlocking {
             withTimeout(10_000) { app.runner.state.first { it.finished.isNotEmpty() } }
         }.finished.single()

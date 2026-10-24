@@ -24,6 +24,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.StorageVolumeBuilder
+import org.robolectric.util.ReflectionHelpers
 import java.io.File
 import java.nio.file.Paths
 
@@ -48,6 +49,27 @@ class VolumeRegistryTest {
             .setIsRemovable(true)
             .setFsUuid(uuid)
             .build()
+
+    /** A USB drive without a file system UUID, in [state]: keyed by its directory, `usbotg`. */
+    private fun usbVolume(state: String): StorageVolume =
+        StorageVolumeBuilder("public:8,1", File("/storage/usbotg"), "USB drive", Process.myUserHandle(), state)
+            .setIsPrimary(false)
+            .setIsRemovable(true)
+            .setFsUuid(null)
+            .build()
+
+    /**
+     * Delivers [volume]'s new state to the storage volume callbacks registered with StorageManager.
+     * Main thread; the callbacks run at once rather than on the executor they were registered with.
+     */
+    private fun deliverVolumeState(volume: StorageVolume) {
+        val manager = context.getSystemService(StorageManager::class.java)
+        val delegates: List<Any> = ReflectionHelpers.getField(manager, "mDelegates")
+        for (delegate in delegates.toList()) {
+            ReflectionHelpers.getField<StorageManager.StorageVolumeCallback?>(delegate, "mCallback")
+                ?.onStateChanged(volume)
+        }
+    }
 
     private fun sdState(state: String): Volume =
         volumeFrom("1A2B-3C4D", "SD card", File("/storage/1A2B-3C4D"), state, primary = false, removable = true)
@@ -96,15 +118,17 @@ class VolumeRegistryTest {
 
     @Test
     fun secondaryVolumeWithoutFsUuidIsKeyedByItsDirectory() {
-        fun usb(label: String, directory: File?, state: String = "mounted") =
-            volumeFrom(null, label, directory, state, primary = false, removable = true)
+        fun usb(label: String, directory: File?, state: String = "mounted", mountedKey: String? = null) =
+            volumeFrom(null, label, directory, state, primary = false, removable = true, mountedKey = mountedKey)
 
         // The directory's name, not the localized description: the same in every language, and two
         // drives both described as "USB drive" do not collide.
         assertEquals("usbotg", usb("USB drive", File("/storage/usbotg")).uuid)
         assertEquals("usbotg", usb("USB 드라이브", File("/storage/usbotg")).uuid)
         assertEquals("usbotg2", usb("USB drive", File("/storage/usbotg2")).uuid)
-        // Without a directory (Android reports none unless mounted), only the description is left.
+        // Without a directory (Android reports none unless mounted), it keeps the key it had while
+        // mounted; only a volume never seen mounted falls back to its description.
+        assertEquals("usbotg", usb("USB drive", null, "ejecting", mountedKey = "usbotg").uuid)
         assertEquals("USB drive", usb("USB drive", null, "unmounted").uuid)
     }
 
@@ -215,6 +239,51 @@ class VolumeRegistryTest {
         broadcast(Intent.ACTION_MEDIA_MOUNTED, "mounted")
         assertEquals(listOf(VolumeEvent.Ejecting("1A2B-3C4D"), VolumeEvent.Mounted("1A2B-3C4D")), events)
         assertEquals(Paths.get("/storage/1A2B-3C4D"), registry.byUuid("1A2B-3C4D")?.root)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun volumeWithoutFsUuidKeepsItsKeyWhileItEjects() = runTest {
+        storage.addStorageVolume(primaryVolume())
+        storage.addStorageVolume(usbVolume("mounted"))
+        val registry = VolumeRegistry(context)
+        registry.start()
+        assertEquals(Paths.get("/storage/usbotg"), registry.byUuid("usbotg")?.root)
+        val events = mutableListOf<VolumeEvent>()
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { registry.events.toList(events) }
+
+        // The drive goes to state, told by the broadcast action or, without one, by the callback.
+        fun change(state: String, action: String? = null) {
+            val volume = usbVolume(state)
+            storage.resetStorageVolumeList()
+            storage.addStorageVolume(primaryVolume())
+            storage.addStorageVolume(volume)
+            if (action == null) {
+                deliverVolumeState(volume)
+            } else {
+                deliverBroadcast(
+                    context,
+                    Intent(action, Uri.fromFile(File("/storage/usbotg")))
+                        .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, volume),
+                )
+            }
+            shadowOf(Looper.getMainLooper()).idle()
+        }
+
+        change("mounted")
+        // Android reports no directory once the drive is no longer mounted.
+        assertNull(usbVolume("ejecting").directory)
+        change("ejecting", Intent.ACTION_MEDIA_EJECT)
+        assertEquals(VolumeState.EJECTING, registry.byUuid("usbotg")?.state)
+        change("mounted", Intent.ACTION_MEDIA_MOUNTED)
+        change("ejecting")
+        change("unmounted")
+        assertEquals(VolumeState.UNMOUNTED, registry.byUuid("usbotg")?.state)
+        change("mounted")
+
+        val mounted = VolumeEvent.Mounted("usbotg")
+        val ejecting = VolumeEvent.Ejecting("usbotg")
+        assertEquals(listOf(mounted, ejecting, mounted, ejecting, mounted), events)
     }
 
     private companion object {
