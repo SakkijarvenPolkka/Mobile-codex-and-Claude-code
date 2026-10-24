@@ -33,6 +33,7 @@ internal data class Telling(
  * - one that stopped, how far it got and why;
  * - one out of space, also what emptying the bin would free, when that is anything;
  * - a move that left items in its sources, how many;
+ * - an extraction that gave entries a ` (2)` name, theirs being taken, how many (to know, not a success);
  * - a cancelled one, nothing.
  *
  * Its failures are listed, but for a delete to the Recycle Bin: the items the bin could not take (all of
@@ -67,6 +68,8 @@ private fun tellingOfDone(op: FinishedOp, result: OpResult.Done): Telling {
     val message = when {
         result.leftInSource > 0 ->
             UiMessage(UiText.res(R.string.left_in_source, result.leftInSource), MessageSeverity.WARNING)
+        result.renamedDuplicates > 0 ->
+            UiMessage(UiText.res(R.string.zip_duplicates, result.renamedDuplicates), MessageSeverity.INFO)
         result.failed.isEmpty() -> UiMessage(UiText.res(R.string.op_done, op.spec.sources.size), MessageSeverity.SUCCESS)
         else -> null
     }

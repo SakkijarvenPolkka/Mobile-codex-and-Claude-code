@@ -42,8 +42,11 @@ fun chooseZipCharset(open: (Charset) -> List<String>): Charset {
 /** Whether any of [names] has U+FFFD, which a decoder puts for bytes it could not read. */
 fun hasReplacementChar(names: List<String>): Boolean = names.any { REPLACEMENT in it }
 
-/** The character sets [chooseZipCharset] tries, in order. */
-private fun zipCharsets(): List<Charset> {
+/**
+ * The character sets [chooseZipCharset] tries, in order: UTF-8, then [koreanCharset] when this runtime has
+ * it. These are what an extraction can be told to read the names with.
+ */
+fun zipCharsets(): List<Charset> {
     val korean = try {
         koreanCharset()
     } catch (e: UnsupportedCharsetException) {

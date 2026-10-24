@@ -412,8 +412,9 @@ internal class OperationsUi(
 
     /**
      * [op] ended: the runner forgets it, the tabs showing a folder it changed (or search results of a folder
-     * above it) are read again, what a copy or a move made is the new selection where the active tab shows
-     * it, the items a move moved leave a cut clipboard, and how it ended is told ([tell]).
+     * above it) are read again, what a copy, a move or a compression made is the new selection where the
+     * active tab shows it ([selectMade]), the items a move moved leave a cut clipboard, and how it ended is
+     * told ([tell]).
      */
     private suspend fun onFinished(op: FinishedOp) {
         deps.runner?.dismiss(op.spec.id)
@@ -436,12 +437,26 @@ internal class OperationsUi(
             }
         }
         val target = spec.target?.let { Paths.get(it) }
-        if (result is OpResult.Done && target != null && (spec.kind == OpKind.COPY || spec.kind == OpKind.MOVE)) {
-            val made = result.created.filter { it.parent == target }
-            if (made.isNotEmpty()) shell.selectAt(Location.Folder(target), made)
-        }
+        if (result is OpResult.Done && target != null) selectMade(spec.kind, target, result.created)
         if (spec.kind == OpKind.MOVE) afterMove(spec.sources.map { Paths.get(it) })
         tell(op)
+    }
+
+    /**
+     * What an operation of [kind] [created] in its [target] folder is the new selection: of a copy or a move
+     * where the active tab shows that folder; of a compression, the archive, also where the tab shows search
+     * results of that folder (where it was asked for), and the list scrolls to it.
+     */
+    private fun selectMade(kind: OpKind, target: Path, created: List<Path>) {
+        val made = created.filter { it.parent == target }
+        if (made.isEmpty()) return
+        val here = shell.here()
+        val showsTarget = here == Location.Folder(target) || (here as? Location.SearchResults)?.root == target
+        when (kind) {
+            OpKind.COPY, OpKind.MOVE -> shell.selectAt(Location.Folder(target), made)
+            OpKind.COMPRESS -> if (showsTarget) shell.selectAt(here, made, reveal = true)
+            else -> Unit
+        }
     }
 
     /** The [sources] of a move that are gone leave a cut clipboard; when that cannot be told, it stays as it is. */

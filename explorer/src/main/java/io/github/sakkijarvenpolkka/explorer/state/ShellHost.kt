@@ -34,8 +34,17 @@ internal interface ShellHost {
     /** Reads again every tab at a location that is [affected]: the active one now, the others when shown. */
     fun refreshShowing(affected: (Location) -> Boolean)
 
-    /** Selects exactly [paths] when the active tab is still at [at]. */
-    fun selectAt(at: Location, paths: List<Path>)
+    /**
+     * Selects exactly [paths] when the active tab is still at [at]; with [reveal], its list scrolls to the first
+     * once that is listed.
+     */
+    fun selectAt(at: Location, paths: List<Path>, reveal: Boolean = false)
+
+    /** Opens [overlay] when the active tab is still at [at]. */
+    fun openAt(at: Location, overlay: Overlay)
+
+    /** Closes what is open over the shell. */
+    fun closeOverlay()
 
     /** Asks the shell to start [launch] from the activity. */
     fun setLaunch(launch: PendingLaunch)

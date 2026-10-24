@@ -102,7 +102,7 @@ private fun themeLabel(choice: ThemeChoice): Int = when (choice) {
 
 /** A radio button row: a ring, filled with the accent around a dot when [selected]. */
 @Composable
-private fun RadioRow(label: String, selected: Boolean, tag: String, onSelect: () -> Unit) {
+internal fun RadioRow(label: String, selected: Boolean, tag: String, onSelect: () -> Unit) {
     val colors = FluentTheme.colors
     Row(
         Modifier

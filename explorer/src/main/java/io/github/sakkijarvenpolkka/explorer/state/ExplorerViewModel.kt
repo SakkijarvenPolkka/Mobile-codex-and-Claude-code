@@ -72,6 +72,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
     private val home = HomeLoader(deps, codec, viewModelScope)
     private val searches = Searches(deps, viewModelScope, host) { shell.value.obbAllowed }
+    private val zips = ZipUi(deps, viewModelScope, host)
 
     /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
     internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
@@ -162,15 +163,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun refresh() = ensureLoaded(refresh = true)
 
     /**
-     * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a
-     * file in its built-in viewer or else another app ([Viewers.open]). An APK needs the user to
-     * let this app install apps first, which a message offers to do.
+     * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a ZIP
+     * archive in the extract dialog, a file in its built-in viewer or else another app ([Viewers.open]).
+     * An APK needs the user to let this app install apps first, which a message offers to do.
      */
     fun open(entry: FileEntry) {
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            EntryKind.FILE -> viewing.open(entry, listedRows())
+            EntryKind.FILE -> if (isZip(entry)) requestExtract(entry) else viewing.open(entry, listedRows())
             // A pipe, socket or device: no app reads it as a file.
             EntryKind.OTHER -> host.showError(here(), UiText.res(R.string.open_unsupported))
         }
@@ -321,7 +322,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun dismissFailures(op: FinishedOp) = ops.dismissFailures(op)
 
-    /** Runs a command of the command bar or a menu; commands of later phases do nothing yet. */
+    // ZIP archives (spec §6.2): ZipUi.kt tells what each of these does.
+
+    fun compress() = zips.compress(selectedEntries())
+
+    fun requestExtract(entry: FileEntry) = zips.requestExtract(entry)
+
+    fun extract(entry: FileEntry, charset: String?) = zips.extract(entry, charset)
+
+    /** Runs a command of the command bar or a menu. */
     fun command(c: Command) {
         when (c) {
             Command.CUT -> cut()
@@ -345,7 +354,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Command.PROPERTIES -> showProperties()
             Command.PIN -> deps.pin(pinTargets(selectedEntries(), here()))
             Command.UNPIN -> deps.unpin(pinTargets(selectedEntries(), here()))
-            else -> Unit
+            Command.COMPRESS -> compress()
+            Command.EXTRACT -> selectedEntries().singleOrNull()?.let(::requestExtract)
         }
     }
 
@@ -401,6 +411,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         scrollSpots[tabs.value.activeId] = ScrollSpot(location, index, offset)
     }
 
+    /** The list scrolled to [ExplorerUiState.reveal]. */
+    fun revealed() = shell.update { it.copy(reveal = null) }
+
     /**
      * [entry] with where [tab]'s list was last scrolled to at its location, or [entry] as it is
      * when the list has not been there since. A list built again for the same place (the activity
@@ -428,7 +441,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val keepOverlay = a is TabAction.ReplaceCurrent
         shell.update {
             val here = it.at(after.active.current.location)
-            if (keepOverlay) here else here.copy(overlay = null)
+            if (keepOverlay) here else here.copy(overlay = null, reveal = null)
         }
         settings.saveSession(after, codec)
     }
@@ -670,6 +683,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             home = homeData,
             favorites = env.pins.folders,
             unavailableTabs = core.unavailable,
+            reveal = core.shell.reveal,
         )
     }
 
@@ -681,7 +695,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         canGoBack = tab.back.isNotEmpty(),
     )
 
-    /** What [handOver], [ops] and [searches] need of the view model. */
+    /** What [handOver], [ops], [searches] and [zips] need of the view model. */
     private inner class Host : ShellHost, SearchHost {
         override fun here(): Location = this@ExplorerViewModel.here()
 
@@ -708,9 +722,17 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             }
         }
 
-        override fun selectAt(at: Location, paths: List<Path>) {
-            if (here() == at) reduce(TabAction.SetSelection(paths))
+        override fun selectAt(at: Location, paths: List<Path>, reveal: Boolean) {
+            if (here() != at) return
+            reduce(TabAction.SetSelection(paths))
+            if (reveal) shell.update { it.copy(reveal = paths.firstOrNull()) }
         }
+
+        override fun openAt(at: Location, overlay: Overlay) {
+            if (here() == at) shell.update { it.copy(overlay = overlay) }
+        }
+
+        override fun closeOverlay() = this@ExplorerViewModel.closeOverlay()
 
         override fun setLaunch(launch: PendingLaunch) = shell.update { it.copy(launch = launch) }
     }

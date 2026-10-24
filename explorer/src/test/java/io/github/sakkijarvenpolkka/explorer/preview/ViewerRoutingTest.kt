@@ -277,7 +277,7 @@ class ViewerRoutingTest {
     @Test
     fun tapUnknownUsesOpenWith() {
         val data = Paths.get("/storage/1A2B-3C4D/Download/data.bin")
-        file("photos.zip")
+        file("photos.7z")
         start(backendWith(data))
         vm.open(entryAt(data, null))
         settle()
@@ -286,8 +286,9 @@ class ViewerRoutingTest {
         assertEquals(Intent.ACTION_VIEW, view.action)
         assertEquals(data.toString(), view.data?.path)
 
-        // An archive goes to another app too (this one is outside the folders the FileProvider serves).
-        vm.onTap(entry("photos.zip"))
+        // An archive this app does not extract goes to another app too (this one is outside the folders the
+        // FileProvider serves).
+        vm.onTap(entry("photos.7z"))
         settle()
         assertNull(ui.viewer)
         assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)

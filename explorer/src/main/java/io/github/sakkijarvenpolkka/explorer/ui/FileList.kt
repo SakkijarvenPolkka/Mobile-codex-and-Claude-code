@@ -152,7 +152,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
  * column (inset by the system gesture area) toggles a row when tapped and selects from the
  * anchor when dragged along. [contextMenu] is placed with the row of
  * [ExplorerUiState.contextMenuFor], so that it opens next to it. The item being renamed
- * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view. Search results show the
+ * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view, and so is the item to reveal
+ * ([ExplorerUiState.reveal]) once it is listed, which then [onRevealed] reports. Search results show the
  * folder each is in, under a line of how the search goes ([SearchStatus]); none found says so.
  */
 @Composable
@@ -169,6 +170,7 @@ fun FileList(
     contextMenu: @Composable () -> Unit,
     modifier: Modifier = Modifier,
     thumbnails: Thumbnails? = null,
+    onRevealed: () -> Unit = {},
 ) {
     val tab = ui.tabs.active
     val mode = ui.viewSetting.mode
@@ -185,8 +187,10 @@ fun FileList(
         .testTag(Tags.fileList(mode))
         .semantics { if (selection.active) stateDescription = modeLabel }
     val reportScroll by rememberUpdatedState(onScrolled)
+    val reportRevealed by rememberUpdatedState(onRevealed)
     val location = ui.location
     val renamed = ui.renaming?.path?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
+    val revealed = ui.reveal?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
     val internal = stringResource(R.string.volume_internal)
     val cell: @Composable (Row) -> Unit = { row ->
         Box {
@@ -206,8 +210,11 @@ fun FileList(
                 snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
                     .collect { (index, offset) -> reportScroll(location, index, offset) }
             }
-            LaunchedEffect(state, renamed) {
-                if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
+            LaunchedEffect(state, renamed) { if (renamed >= 0) state.show(renamed) }
+            LaunchedEffect(state, revealed) {
+                if (revealed < 0) return@LaunchedEffect
+                state.show(revealed)
+                reportRevealed()
             }
             Column(modifier) {
                 if (search != null) SearchStatus(search, ui.volumes)
@@ -237,8 +244,11 @@ fun FileList(
                 snapshotFlow { state.firstVisibleItemIndex to state.firstVisibleItemScrollOffset }
                     .collect { (index, offset) -> reportScroll(location, index, offset) }
             }
-            LaunchedEffect(state, renamed) {
-                if (renamed >= 0 && state.layoutInfo.visibleItemsInfo.none { it.index == renamed }) state.scrollToItem(renamed)
+            LaunchedEffect(state, renamed) { if (renamed >= 0) state.show(renamed) }
+            LaunchedEffect(state, revealed) {
+                if (revealed < 0) return@LaunchedEffect
+                state.show(revealed)
+                reportRevealed()
             }
             Column(modifier) {
                 if (search != null) SearchStatus(search, ui.volumes)
@@ -256,6 +266,16 @@ fun FileList(
             }
         }
     }
+}
+
+/** Scrolls the list to the item at [index], unless it shows already. */
+private suspend fun LazyListState.show(index: Int) {
+    if (layoutInfo.visibleItemsInfo.none { it.index == index }) scrollToItem(index)
+}
+
+/** Scrolls the grid to the item at [index], unless it shows already. */
+private suspend fun LazyGridState.show(index: Int) {
+    if (layoutInfo.visibleItemsInfo.none { it.index == index }) scrollToItem(index)
 }
 
 /** The width of the check column, which also takes the drag that selects a range. */

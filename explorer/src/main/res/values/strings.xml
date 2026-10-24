@@ -180,6 +180,10 @@
     <string name="zip_corrupt">The ZIP file is damaged or password protected</string>
     <string name="zip_encoding">The file name encoding isn\'t supported</string>
     <string name="zip_duplicates">%d items with duplicate names were kept as copies</string>
+    <string name="extract_title">Extract Compressed (Zipped) Folders</string>
+    <string name="extract_to">Files will be extracted to this folder:</string>
+    <string name="extract_encoding">File name encoding</string>
+    <string name="extract_button">Extract</string>
 
     <!-- Names, renaming -->
     <string name="name_fat_chars">A file name can\'t contain any of the following characters: \\ / : * ? \" &lt; &gt; |</string>

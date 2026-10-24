@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer.state
 
+import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.ItemFailure
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
+import io.github.sakkijarvenpolkka.explorer.util.UiText
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -42,5 +44,17 @@ class OpsMessagesTest {
 
         // No Recycle Bin at all: every item is asked about, and nothing else is told.
         assertEquals(Telling(question = ConfirmRequest.BinUnavailable(paths)), told)
+    }
+
+    @Test
+    fun extractWithRenamedDuplicatesSaysHowMany() {
+        val spec = OperationSpec("op", OpKind.EXTRACT, listOf(root.resolve("a.zip").toString()), root.toString())
+        val done = OpResult.Done(listOf(root.resolve("a")), emptyList(), renamedDuplicates = 2)
+
+        val told = tellingOf(FinishedOp(spec, done))
+
+        // Not a plain success: the entries kept under a " (2)" name are told of, and the bar stays.
+        assertEquals(UiMessage(UiText.res(R.string.zip_duplicates, 2), MessageSeverity.INFO), told.message)
+        assertNull(told.listed)
     }
 }

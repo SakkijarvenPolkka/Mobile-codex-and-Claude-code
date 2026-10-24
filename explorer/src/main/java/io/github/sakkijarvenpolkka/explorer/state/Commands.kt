@@ -130,7 +130,7 @@ private fun folderCommands(c: CommandContext): Set<Command> = buildSet {
     if (single != null) add(RENAME)
     if (single?.kind == EntryKind.FILE) {
         add(OPEN_WITH)
-        if (single.name.endsWith(".zip", ignoreCase = true)) add(EXTRACT)
+        if (isZip(single)) add(EXTRACT)
     }
     if (selection.all { it.kind == EntryKind.FILE }) add(SHARE)
     if (selection.all { it.kind == EntryKind.DIR }) add(pinOrUnpin(c.pinned))

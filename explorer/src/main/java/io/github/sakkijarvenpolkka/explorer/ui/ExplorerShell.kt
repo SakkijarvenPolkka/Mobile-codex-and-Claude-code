@@ -253,6 +253,10 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
             val contents = remember(overlay) { vm.contentsOf(overlay.entries) }
             PropertiesDialog(overlay.entries, contents, onDismiss = vm::closeOverlay)
         }
+        is Overlay.Extract -> {
+            val entry = overlay.request.entry
+            ExtractDialog(overlay.request, ui.volumes, { vm.extract(entry, it) }, onDismiss = vm::closeOverlay)
+        }
         else -> Unit
     }
     OperationsDialogs(ui, runner, vm)
@@ -424,6 +428,7 @@ private fun Contents(
                     onDispatch = vm::dispatch,
                     onSort = { key -> vm.setView(ui.viewSetting.copy(sort = nextSort(ui.viewSetting.sort, key))) },
                     onScrolled = vm::onScrolled,
+                    onRevealed = vm::revealed,
                     contextMenu = { EntryMenu(ui, onCommand = vm::command, onDismiss = vm::closeOverlay) },
                     thumbnails = vm.thumbnails,
                 )

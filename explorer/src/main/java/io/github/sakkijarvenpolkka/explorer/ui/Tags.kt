@@ -61,6 +61,7 @@ object Tags {
     const val PROGRESS_CHIP = "progress_chip"
     const val FAILURES = "failures"
     const val RECYCLE_BIN = "recycle_bin"
+    const val EXTRACT_FOLDER = "extract_folder"
 
     const val TAB_MENU_CLOSE = "tab_menu_close"
     const val TAB_MENU_CLOSE_OTHERS = "tab_menu_close_others"
@@ -115,6 +116,9 @@ object Tags {
 
     /** The file [name] in Home's recent files. */
     fun recent(name: String): String = "recent:$name"
+
+    /** The choice of the character set named [charset] (null: Auto) in the extract dialog. */
+    fun extractEncoding(charset: String?): String = "extract_encoding:${charset ?: "auto"}"
 
     /** The theme [choice] in the options dialog. */
     fun theme(choice: ThemeChoice): String = "theme_${choice.name.lowercase(Locale.ROOT)}"

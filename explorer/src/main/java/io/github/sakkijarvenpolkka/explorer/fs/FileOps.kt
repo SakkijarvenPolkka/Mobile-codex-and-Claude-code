@@ -10,6 +10,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import java.io.IOException
+import java.nio.charset.Charset
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -150,6 +151,12 @@ class FileOps(
     /** What [block] makes of [zip], or [FsError.Unsupported] after 0 of 0 items without it. */
     private inline fun withZip(block: (ZipOps) -> OpResult): OpResult =
         zip?.let(block) ?: OpResult.Failed(FsError.Unsupported, 0, 0)
+
+    /**
+     * The character set the entry names of [archive] are in ([ZipOps.detectCharset]), for an extraction to
+     * offer. Fails with [FsException] as that does, and as [FsError.Unsupported] without [zip].
+     */
+    fun zipCharset(archive: Path): Charset = (zip ?: throw FsException(FsError.Unsupported)).detectCharset(archive)
 
     /**
      * What [run] would find before writing anything for a copy or a move: what the target cannot store,

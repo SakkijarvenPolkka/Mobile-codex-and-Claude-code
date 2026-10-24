@@ -120,6 +120,9 @@ sealed interface Overlay {
 
     /** The menu of the tab [id]: Close, Close other tabs, Duplicate. */
     data class TabMenu(val id: TabId) : Overlay
+
+    /** The extract dialog of an archive ([ExtractRequest]). */
+    data class Extract(val request: ExtractRequest) : Overlay
 }
 
 /**
@@ -138,7 +141,9 @@ sealed interface Overlay {
  * screen; [previewPane] whether the preview pane is on (a wide window shows it), and [previewed] the file
  * it shows: the one item selected, else the file last opened into it. [home] is what Home shows (null
  * until it is read), [favorites] the pinned folders, in the user's order, and [unavailableTabs] every tab
- * whose folder is on a volume that is not mounted, with where on it.
+ * whose folder is on a volume that is not mounted, with where on it. [reveal] is an item to scroll the list
+ * to once it is listed (such as the archive a compression made), and to report as done
+ * ([ExplorerViewModel.revealed]).
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -170,6 +175,7 @@ data class ExplorerUiState(
     val home: HomeData? = null,
     val favorites: List<PinnedFolder> = emptyList(),
     val unavailableTabs: Map<TabId, DecodedLocation.Unavailable> = emptyMap(),
+    val reveal: Path? = null,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location
@@ -179,6 +185,9 @@ data class ExplorerUiState(
 
     /** The item whose context menu is open. */
     val contextMenuFor: FileEntry? get() = (overlay as? Overlay.ContextMenu)?.entry
+
+    /** What the extract dialog is open for. */
+    val extract: ExtractRequest? get() = (overlay as? Overlay.Extract)?.request
 }
 
 /** The rows of a loaded or streaming listing; none otherwise. */
