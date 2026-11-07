@@ -222,7 +222,7 @@ class PickActivityTest {
             val uris = listOf("a.jpg", "doc.pdf").map { openWith.uriFor(STORAGE.resolve(it)) }
             val clip = checkNotNull(result.resultData.clipData)
             assertEquals(uris, (0 until clip.itemCount).map { clip.getItemAt(it).uri })
-            assertEquals(uris.first(), result.resultData.data)
+            assertNull(result.resultData.data)
             assertEquals("*/*", result.resultData.type)
         }
     }
@@ -274,6 +274,20 @@ class PickActivityTest {
             waitFor { shown(Tags.row("a.jpg")) }
             rule.onNodeWithTag(Tags.PICK_TITLE_BAR).assertIsDisplayed()
             rule.onNodeWithTag(Tags.PERMISSION_SCREEN).assertDoesNotExist()
+        }
+    }
+
+    @Test
+    fun comingBackReadsTheFolderAgain() {
+        file("a.jpg")
+        startIn(root)
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            waitFor { shown(Tags.row("a.jpg")) }
+            // Made meanwhile, as by another app.
+            file("b.jpg")
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            waitFor { shown(Tags.row("b.jpg")) }
         }
     }
 

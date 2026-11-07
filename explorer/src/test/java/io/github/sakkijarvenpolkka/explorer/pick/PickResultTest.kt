@@ -55,7 +55,8 @@ class PickResultTest {
         val clip = checkNotNull(intent.clipData)
         assertEquals(3, clip.itemCount)
         assertEquals(uris, (0 until clip.itemCount).map { clip.getItemAt(it).uri })
-        assertEquals(uris.first(), intent.data)
+        // No data: an app that finds it reads no clip data (Chrome), and would get the first file alone.
+        assertNull(intent.data)
         // The type that covers them all, as sharing has it.
         assertEquals("image/*", intent.type)
         assertEquals("image/jpeg", result("a.jpg", "c.jpg").type)

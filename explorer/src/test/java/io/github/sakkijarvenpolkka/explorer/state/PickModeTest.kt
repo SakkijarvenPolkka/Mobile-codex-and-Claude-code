@@ -10,6 +10,8 @@ import io.github.sakkijarvenpolkka.explorer.data.Recent
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
@@ -32,8 +34,10 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 
 /** Picking files for another app (pick spec §2.2, §2.3): the real view model, on temporary volumes. */
 @RunWith(RobolectricTestRunner::class)
@@ -62,19 +66,18 @@ class PickModeTest {
     fun tearDown() = made.forEach { it.viewModelScope.cancel() }
 
     /**
-     * A view model picking files of [types] (several of them, if [multiple]) for another app; folders are read on
-     * [io], by default at once. A file opened is stamped by [clock].
+     * A view model picking files of [types] (several of them, if [multiple]) for another app; folders are read from
+     * [fs] on [io], by default at once. A file opened is stamped by [clock].
      */
     private fun pick(
         vararg types: String,
         multiple: Boolean = false,
+        fs: FsBackend = NioFsBackend,
         io: CoroutineDispatcher = Dispatchers.Unconfined,
         clock: () -> Long = System::currentTimeMillis,
     ): ExplorerViewModel {
         val request = PickRequest(types.toList(), multiple)
-        val deps = ExplorerDeps(
-            NioFsBackend, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request,
-        )
+        val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request)
         vm = ExplorerViewModel(app, deps).also { made += it }
         settle()
         return vm
@@ -306,6 +309,25 @@ class PickModeTest {
         vm.choose()
         settle()
         assertEquals(500, (outcome() as? PickOutcome.Chosen)?.paths?.size)
+    }
+
+    @Test
+    fun usbAccessDeniedOffersNoRestart() {
+        // A USB drive this process cannot read: it was started before it had all files access.
+        val usb = Paths.get("/mnt/media_rw/1A2B-3C4D")
+        val fs = object : FsBackend by NioFsBackend {
+            override fun list(dir: Path): List<Path> =
+                if (dir.startsWith(usb)) throw AccessDeniedException(dir.toString()) else NioFsBackend.list(dir)
+        }
+        volumes.volumes.value += FakeVolumes.removable("1A2B-3C4D", "USB drive", usb)
+        pick("image/*", fs = fs)
+        vm.navigate(Location.Folder(usb))
+        settle()
+
+        // Starting the app again would end the picking, with nothing for the app that asked: only the denial shows.
+        assertEquals(ListingState.Error(FsError.AccessDenied), ui.listing)
+        assertNull(ui.message)
+        assertNull(outcome())
     }
 
     @Test

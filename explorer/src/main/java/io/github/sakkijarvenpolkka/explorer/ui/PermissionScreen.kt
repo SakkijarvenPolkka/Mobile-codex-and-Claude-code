@@ -1,5 +1,6 @@
 /*
- * Files — the screen shown instead of everything else until the app has all files access.
+ * Files — the screen shown instead of everything else until the app has all files access, which is checked again
+ * whenever the activity comes back.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -26,6 +27,8 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.platform.PermissionGate
+import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.ButtonStyle
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentButton
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcon
@@ -69,4 +72,15 @@ fun PermissionScreen(onOpenSettings: () -> Unit) {
             )
         }
     }
+}
+
+/**
+ * Whether the app has all files access ([PermissionGate.granted]), checked again as an activity showing the shell of
+ * [model] comes back: with it, the view model reads again what it shows ([ExplorerViewModel.onResume]).
+ */
+fun recheckAccess(model: Lazy<ExplorerViewModel>): Boolean {
+    val granted = PermissionGate.granted()
+    // A view model created for this activity has just read everything; one that was already there reads again.
+    if (granted && model.isInitialized()) model.value.onResume()
+    return granted
 }

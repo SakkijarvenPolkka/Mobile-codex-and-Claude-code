@@ -18,8 +18,8 @@ private const val OCTET_STREAM = "application/octet-stream"
 /**
  * The result for the app that asked for files, of the [paths] chosen (at least one): each as the content URI
  * [uriFor] makes of it, of the type [typeOf] tells (bytes when it tells none). One file is the result's data, with
- * its type. Several are its clip data, in their order, the first of them its data too, with the type that covers
- * them all ([commonType], as sharing has it). The app may read them, never write them.
+ * its type. Several are its clip data alone, in their order, with the type that covers them all ([commonType], as
+ * sharing has it). The app may read them, never write them.
  */
 fun pickResultIntent(paths: List<Path>, uriFor: (Path) -> Uri, typeOf: (Path) -> String?): Intent {
     require(paths.isNotEmpty()) { "Nothing chosen" }
@@ -32,7 +32,8 @@ fun pickResultIntent(paths: List<Path>, uriFor: (Path) -> Uri, typeOf: (Path) ->
         val clip = ClipData.newRawUri(null, uris.first())
         uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
         result.clipData = clip
-        result.setDataAndType(uris.first(), commonType(types))
+        // No data: an app that finds it reads no clip data (Chrome does so), and would get the first file alone.
+        result.type = commonType(types)
     }
     return result.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
 }

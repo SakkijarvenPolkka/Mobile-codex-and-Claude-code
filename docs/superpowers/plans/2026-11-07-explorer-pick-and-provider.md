@@ -139,12 +139,12 @@ explorer/src/test/java/.../state/PickRequestTest.kt, state/PickModeTest.kt, pick
 - Produces:
   ```kotlin
   fun pickResultIntent(paths: List<Path>, uriFor: (Path) -> Uri, typeOf: (Path) -> String?): Intent
-  // single: setDataAndType(uri, type ?: "application/octet-stream"); multiple: ClipData of all uris, data = first, type = commonType
+  // single: setDataAndType(uri, type ?: "application/octet-stream"); multiple: ClipData of all uris, no data, type = commonType
   // always FLAG_GRANT_READ_URI_PERMISSION, never WRITE
   class PickActivity : ComponentActivity()   // MainActivity's permission gate + ExplorerShell with deps.pick; finishes on outcome
   ```
 - [ ] **Step 1: 테스트 작성**
-  - `PickResultTest`(Robolectric): `singleResultHasDataTypeAndReadGrant`(authority `io.github.sakkijarvenpolkka.explorer.files`, 플래그에 READ 있고 WRITE 없음, type `image/jpeg`); `multipleResultUsesClipData`(3개 → `clipData.itemCount == 3`, `data == 첫 주소`, type 공통 규칙); `unknownTypeIsOctetStream`.
+  - `PickResultTest`(Robolectric): `singleResultHasDataTypeAndReadGrant`(authority `io.github.sakkijarvenpolkka.explorer.files`, 플래그에 READ 있고 WRITE 없음, type `image/jpeg`); `multipleResultUsesClipData`(3개 → `clipData.itemCount == 3`, `data == null`, type 공통 규칙); `unknownTypeIsOctetStream`.
   - `PickActivityTest`(Robolectric + `createEmptyComposeRule`, AppOps로 권한 허용): `intentFilterMatchesGetContent`(`queryIntentActivities(Intent(ACTION_GET_CONTENT).addCategory(CATEGORY_OPENABLE).setType("image/*"), 0)`과 `setType("*/*")` 둘 다 `PickActivity` 포함); `pickingReturnsOk`(`launchActivityForResult(GET_CONTENT, type image/*)` → 임시 볼륨의 `a.jpg` 탭 → `result.resultCode == RESULT_OK`, `result.resultData.data`가 `.files` 주소); `cancelReturnsCanceled`(취소 버튼 → `RESULT_CANCELED`); `withoutPermissionShowsPermissionScreen`; `doesNotTouchAppSession`.
 - [ ] **Step 2:** FAIL. **Step 3: 구현**(`PickActivity`는 `MainActivity`의 권한 확인·테마·`enableEdgeToEdge` 구조를 따른다. 결과는 `ui.pick.outcome`을 수집해 `setResult` 후 `finish()`). **Step 4:** PASS, 통과 기준.
 - [ ] **Step 5: 커밋** `Answer other apps' requests for files`

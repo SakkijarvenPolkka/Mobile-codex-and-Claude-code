@@ -87,8 +87,8 @@ provider/  DocumentIds(문서 ID ↔ 경로, 검증), DocumentRows(커서 행), 
 ### 2.3 결과
 - 돌려주는 주소: 이미 있는 FileProvider(`${applicationId}.files`)의 `content://` 주소. 읽기 권한만
   (`FLAG_GRANT_READ_URI_PERMISSION`). 받는 앱은 `OpenableColumns`로 이름·크기를 읽는다.
-- 한 개: `setDataAndType(uri, mime ?: "application/octet-stream")`. 여러 개: `ClipData`에 모든 주소, `data`는 첫 주소,
-  `type`은 공통 MIME(본 사양 §7의 공유와 같은 규칙).
+- 한 개: `setDataAndType(uri, mime ?: "application/octet-stream")`. 여러 개: `ClipData`에 모든 주소, `data`는 비우고,
+  `type`은 공통 MIME(본 사양 §7의 공유와 같은 규칙). `data`가 있으면 `ClipData`를 읽지 않는 앱(크롬)이 있다.
 - `RESULT_OK`로 끝내고, 고른 파일의 폴더를 `pick_last`에 저장하고, 고른 파일을 최근 항목에 넣는다.
 - 고르는 순간 파일이 사라졌으면(경합) `error_not_found`를 보이고 목록을 새로 읽는다(돌려주지 않음).
 - 취소·뒤로: `RESULT_CANCELED`.
@@ -223,5 +223,6 @@ provider/  DocumentIds(문서 ID ↔ 경로, 검증), DocumentRows(커서 행), 
 | 볼륨 루트·Download의 폴더 선택 차단 | Android 11 이후 플랫폼과 같은 제한. 다른 앱이 이 앱을 우회로 삼아 저장소 전체 권한을 얻지 못하게 |
 | 선택기에서 obb 예외 없음 | 다른 앱의 데이터를 제3의 앱에 내주지 않기 위해 |
 | `GET_CONTENT` 결과는 FileProvider 주소(읽기 전용) | 이미 있는 공급자, 받는 앱이 이름·크기를 읽을 수 있음, 쓰기 권한을 줄 이유가 없음 |
+| 여러 개 결과는 `ClipData`만(`data` 없음) | 크롬은 `data`가 없을 때만 `ClipData`를 읽어, `data`가 있으면 `<input type="file" multiple>`에 첫 파일만 올린다. AOSP DocumentsUI도 여러 개면 `ClipData`만 둔다 |
 | `"wa"`/`"rw"`는 직접 열기 | 덧붙이기와 임의 위치 쓰기는 임시 파일 교체로 표현할 수 없음 |
 | 선택 결과 500개 상한 | 바인더 거래 크기 한도(최종 검토의 공유 지적과 같은 원인) |

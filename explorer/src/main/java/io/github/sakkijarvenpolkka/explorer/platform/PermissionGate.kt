@@ -1,10 +1,12 @@
 /*
- * Files — the all-files access the app needs before it shows anything else.
+ * Files — the all-files access the app needs before it shows anything else, and the settings screens that grant it.
  *
  * SPDX-License-Identifier: MIT
  */
 package io.github.sakkijarvenpolkka.explorer.platform
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
@@ -28,5 +30,17 @@ object PermissionGate {
             Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION),
             Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, app),
         )
+    }
+}
+
+/** Opens the first of the settings screens that grant all files access that this device has; none, if it has none. */
+fun Activity.openAllFilesAccessSettings() {
+    for (intent in PermissionGate.settingsIntents(packageName)) {
+        try {
+            startActivity(intent)
+            return
+        } catch (e: ActivityNotFoundException) {
+            // This device lacks that screen; try the next one.
+        }
     }
 }
