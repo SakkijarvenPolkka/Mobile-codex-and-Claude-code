@@ -14,6 +14,9 @@ internal interface ShellHost {
     /** Where the active tab is. */
     fun here(): Location
 
+    /** Puts [l] in place of the active tab's location: Back goes where it went from there. */
+    fun replaceHere(l: Location)
+
     /**
      * Shows [message] about [at], where the active tab was when the user asked for what it
      * answers: not at all when the tab has left it since, and it goes when the tab leaves it.

@@ -147,6 +147,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             val unavailable = volumeTracking.unavailable
             combine(tabs, unavailable, settings.global, viewRevision) { _, _, _, _ -> }.collect { ensureLoaded() }
         }
+        picking?.checkStart()
     }
 
     /** Goes to [l] in the active tab, remembering where the list was scrolled for Back. */

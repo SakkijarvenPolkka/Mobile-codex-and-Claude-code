@@ -71,11 +71,33 @@ internal class PickMode(
     /** How picking ended; null until it does. */
     val outcome: StateFlow<PickOutcome?> = ended.asStateFlow()
 
-    /** Where picking starts: the folder files were last picked from, if its volume is mounted; else Home. */
+    /**
+     * Where picking starts: the folder files were last picked from, if its volume is mounted; else Home. Whether
+     * that folder is still there is looked at once the tab is in it ([checkStart]).
+     */
     fun start(): Location {
         val last = deps.settings.pickLast?.let(codec::decode)
         val folder = (last as? DecodedLocation.Ok)?.location as? Location.Folder
         return folder?.takeIf { deps.lookup.volumeOf(it.path) != null } ?: Location.Home
+    }
+
+    /**
+     * Picking has just started at [start]: a folder that is gone since files were picked from it (or is a file now, or
+     * cannot be read) gives way to Home, with nothing to go back to. Looked at off the main thread; nothing once the
+     * tab has gone elsewhere meanwhile.
+     */
+    fun checkStart() {
+        val folder = shell.here() as? Location.Folder ?: return
+        scope.launch {
+            val usable = try {
+                withContext(deps.io) { deps.fs.attributes(folder.path).isDirectory }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                false
+            }
+            if (!usable && shell.here() == folder) shell.replaceHere(Location.Home)
+        }
     }
 
     /** Whether [entry] can be chosen: a file of a type the request takes. */

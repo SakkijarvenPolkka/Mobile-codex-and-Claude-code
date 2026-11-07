@@ -14,8 +14,11 @@ import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.util.UiText
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -58,10 +61,17 @@ class PickModeTest {
     @After
     fun tearDown() = made.forEach { it.viewModelScope.cancel() }
 
-    /** A view model picking files of [types] (several of them, if [multiple]) for another app; folders are read at once. */
-    private fun pick(vararg types: String, multiple: Boolean = false): ExplorerViewModel {
+    /**
+     * A view model picking files of [types] (several of them, if [multiple]) for another app; folders are read on
+     * [io], by default at once.
+     */
+    private fun pick(
+        vararg types: String,
+        multiple: Boolean = false,
+        io: CoroutineDispatcher = Dispatchers.Unconfined,
+    ): ExplorerViewModel {
         val request = PickRequest(types.toList(), multiple)
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined, pick = request)
+        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, pick = request)
         vm = ExplorerViewModel(app, deps).also { made += it }
         settle()
         return vm
@@ -73,6 +83,14 @@ class PickModeTest {
     }
 
     private fun settle() = shadowOf(Looper.getMainLooper()).idle()
+
+    /** Runs what is queued on [io], then on the main thread, a few rounds over: each hands work to the other. */
+    private fun drain(io: TestDispatcher) {
+        repeat(5) {
+            io.scheduler.advanceUntilIdle()
+            settle()
+        }
+    }
 
     private fun dir(rel: String): Path = Files.createDirectories(root.resolve(rel))
 
@@ -134,6 +152,18 @@ class PickModeTest {
         assertEquals(Location.Folder(dcim), location())
         assertEquals(listOf("a.jpg"), names())
 
+        // The folder of the last pick has been deleted since: Home, with nothing to go back to.
+        val pictures = dir("Pictures")
+        lastPickedIn(pictures)
+        Files.delete(pictures)
+        pick("image/*")
+        assertEquals(Location.Home, location())
+        assertTrue(ui.tabs.active.back.isEmpty())
+        // Nor is a file that has its name now a folder to start in.
+        Files.createFile(pictures)
+        pick("image/*")
+        assertEquals(Location.Home, location())
+
         // The folder of the last pick is on a card taken out since.
         lastPickedIn(sdPhotos)
         volumes.update("1A2B-3C4D") { it.copy(root = null, state = VolumeState.UNMOUNTED) }
@@ -144,6 +174,22 @@ class PickModeTest {
         settings.pickLast = "folder:primary:../outside"
         pick("image/*")
         assertEquals(Location.Home, location())
+    }
+
+    @Test
+    fun startFolderFoundGoneLateLeavesWhereTheTabWent() {
+        val dcim = dir("DCIM")
+        val pictures = dir("Pictures")
+        lastPickedIn(pictures)
+        Files.delete(pictures)
+        val io = StandardTestDispatcher()
+        pick("image/*", io = io)
+
+        // Still being looked at when the user goes elsewhere: the tab stays there, Back to where picking started.
+        vm.navigate(Location.Folder(dcim))
+        drain(io)
+        assertEquals(Location.Folder(dcim), location())
+        assertEquals(listOf(Location.Folder(pictures)), ui.tabs.active.back.map { it.location })
     }
 
     @Test
