@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import io.github.sakkijarvenpolkka.explorer.data.Favorite
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
@@ -297,6 +298,29 @@ class ExplorerAppTest {
                 .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, ejecting),
         )
         shadowOf(Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun volumesAndFavoritesTellTheSystemPicker() {
+        val picker = PickerChanges(app)
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        val mounted = {
+            val volume = cardIn(card, "mounted")
+            storage.addStorageVolume(volume)
+            deliverBroadcast(
+                app,
+                Intent(Intent.ACTION_MEDIA_MOUNTED, Uri.fromFile(card.toFile()))
+                    .putExtra(StorageVolume.EXTRA_STORAGE_VOLUME, volume),
+            )
+        }
+        val pinned = { app.settings.setFavorites(listOf(Favorite("primary", "Download", "Download"))) }
+
+        for (change in listOf(mounted, { eject(card) }, pinned)) {
+            change()
+            shadowOf(Looper.getMainLooper()).idle()
+            // Its root, and the favorites and the drives in it.
+            assertEquals(listOf(PickerChanges.ROOTS, PickerChanges.childrenOf("root")), picker.take())
+        }
     }
 
     @Test

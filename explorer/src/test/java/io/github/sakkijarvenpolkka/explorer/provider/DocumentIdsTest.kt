@@ -7,12 +7,14 @@ import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.FileNotFoundException
 import java.nio.file.Files
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.Paths
 
@@ -236,6 +238,22 @@ class DocumentIdsTest {
         val onUsb = file(usb, "x")
         assertEquals("usb:x", ids.idOf(onUsb))
         assertEquals(onUsb, ids.resolve("usb:x"))
+        // And only that one: an item has one id.
+        assertRefused("primary:usb/x")
+        assertRefused("primary:usb")
+    }
+
+    @Test
+    fun refusalKeepsWhatTheFileSystemSaid() {
+        link(primary.resolve("dangling"), primary.resolve("nothing"))
+        for (id in listOf("primary:missing.txt", "primary:dangling")) {
+            val refused = assertThrows(id, FileNotFoundException::class.java) { ids.resolve(id) }
+            assertTrue(id, refused.cause is NoSuchFileException)
+        }
+
+        // A refusal by the rules alone has no cause.
+        file(primary, "a")
+        assertNull(assertThrows(FileNotFoundException::class.java) { ids.resolve("primary:a/") }.cause)
     }
 
     private companion object {

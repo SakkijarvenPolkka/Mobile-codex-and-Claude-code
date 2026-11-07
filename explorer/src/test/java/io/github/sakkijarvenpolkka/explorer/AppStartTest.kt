@@ -37,6 +37,18 @@ class AppStartTest {
     }
 
     @Test
+    fun comingBackTellsTheSystemPickerOfItsRoot() {
+        val picker = PickerChanges(ApplicationProvider.getApplicationContext())
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            assertEquals(listOf(PickerChanges.ROOTS), picker.take())
+            // The access may have changed while the app was away, and the picker lists the app only with it.
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            assertEquals(listOf(PickerChanges.ROOTS), picker.take())
+        }
+    }
+
+    @Test
     fun firstOperationAsksForNotificationsOnce() {
         val app = ApplicationProvider.getApplicationContext<ExplorerApp>()
         fun submit(id: String) {

@@ -33,13 +33,17 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
      * 4. none of its names is one of the app's own ([HiddenNames.isInternal]);
      * 5. it is not in a folder Android withholds ([isRestrictedAppDataPath]), not even `Android/obb`.
      *
-     * Rules 4 and 5 also hold for where its links lead.
+     * Rules 4 and 5 also hold for where its links lead. And the path is on its volume ([volumeOf]), not on one
+     * mounted inside it, so that an item has one id. When the file system cannot tell where the path leads (it is
+     * not there, a link is broken, ...), what it said is the refusal's cause.
      */
     fun resolve(id: String): Path {
         val colon = id.indexOf(':')
         if (colon < 0) throw notFound(id, "not a document id")
         val uuid = id.substring(0, colon)
-        val volume = mounted().firstOrNull { it.uuid == uuid } ?: throw notFound(id, "volume not mounted")
+        // One reading of the volumes for all the rules.
+        val volumes = mounted()
+        val volume = volumes.firstOrNull { it.uuid == uuid } ?: throw notFound(id, "volume not mounted")
         val rel = id.substring(colon + 1)
         val names = if (rel.isEmpty()) emptyList() else rel.split('/')
         if (!names.all(::isPlainName)) throw notFound(id, "not a plain path")
@@ -48,7 +52,8 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
         } catch (e: InvalidPathException) {
             throw notFound(id, "not a path")
         }
-        refusal(volume, names, path)?.let { throw notFound(id, it) }
+        if (volumeOf(path, volumes)?.uuid != uuid) throw notFound(id, "on another volume")
+        refusal(volume, names, path)?.let { throw notFound(id, it.why, it.cause) }
         return path
     }
 
@@ -61,26 +66,32 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
     }
 
     /** The mounted volume whose root is the longest start of [path] (by whole names, as written), or null. */
-    fun volumeOf(path: Path): VolumeRoot? =
-        mounted().filter { path.startsWith(it.root) }.maxByOrNull { it.root.nameCount }
+    fun volumeOf(path: Path): VolumeRoot? = volumeOf(path, mounted())
+
+    private fun volumeOf(path: Path, volumes: List<VolumeRoot>): VolumeRoot? =
+        volumes.filter { path.startsWith(it.root) }.maxByOrNull { it.root.nameCount }
 
     /** Why [path], the [names] under [volume]'s root, breaks rule 3, 4 or 5 of [resolve]; null if it keeps them. */
-    private fun refusal(volume: VolumeRoot, names: List<String>, path: Path): String? {
+    private fun refusal(volume: VolumeRoot, names: List<String>, path: Path): Refusal? {
         val (realRoot, real) = try {
             fs.realPath(volume.root) to fs.realPath(path)
         } catch (e: IOException) {
-            return "not found"
+            return Refusal("not found", e)
         }
-        if (!real.startsWith(realRoot)) return "out of its volume"
+        if (!real.startsWith(realRoot)) return Refusal("out of its volume")
         val realNames = real.drop(realRoot.nameCount).map { it.toString() }
-        if ((names + realNames).any(HiddenNames::isInternal)) return "the app's own"
+        if ((names + realNames).any(HiddenNames::isInternal)) return Refusal("the app's own")
         val withheld = isRestrictedAppDataPath(volume.root, path, obbAllowed = false) ||
             isRestrictedAppDataPath(realRoot, real, obbAllowed = false)
-        return if (withheld) "withheld" else null
+        return if (withheld) Refusal("withheld") else null
     }
+
+    /** Why a path is refused, and the failure of the file system that told, if one did. */
+    private class Refusal(val why: String, val cause: IOException? = null)
 
     private fun isPlainName(name: String): Boolean =
         name.isNotEmpty() && name != "." && name != ".." && '\u0000' !in name
 
-    private fun notFound(id: String, why: String) = FileNotFoundException("$why: $id")
+    private fun notFound(id: String, why: String, cause: IOException? = null) =
+        FileNotFoundException("$why: $id").apply { if (cause != null) initCause(cause) }
 }

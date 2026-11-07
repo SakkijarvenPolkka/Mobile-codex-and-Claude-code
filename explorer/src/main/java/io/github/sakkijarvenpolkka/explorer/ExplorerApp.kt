@@ -1,7 +1,8 @@
 /*
  * Files — Application: owns the process-wide services of the file manager, and does what the file
  * operations need around them: the foreground service, the media scans, and stopping those on a
- * volume that goes (and forgetting its thumbnails, and closing the files the viewers hold on it).
+ * volume that goes (and forgetting its thumbnails, and closing the files the viewers hold on it). It
+ * tells the system file picker when the drives or the favorites it lists change.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -42,6 +43,9 @@ import io.github.sakkijarvenpolkka.explorer.preview.FsTextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.OpenFiles
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
+import io.github.sakkijarvenpolkka.explorer.provider.DocumentsNotifier
+import io.github.sakkijarvenpolkka.explorer.provider.ProviderHost
+import io.github.sakkijarvenpolkka.explorer.provider.ROOT_DOC_ID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -49,31 +53,33 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Path
 import java.util.UUID
 
-class ExplorerApp : Application(), RunnerHost, FileOpsHost {
+class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
 
     /** Application-wide scope (work that outlives an activity). */
     val appScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     /** The storage volumes, read on first use; [VolumeRegistry.start] follows their changes. */
-    val volumes: VolumeRegistry by lazy { VolumeRegistry(this) }
+    override val volumes: VolumeRegistry by lazy { VolumeRegistry(this) }
 
     /** Settings, favorites, recent files, folder views and the saved tabs, read on first use. */
-    val settings: SettingsStore by lazy { SettingsStore(this) }
+    override val settings: SettingsStore by lazy { SettingsStore(this) }
 
     /** The Recycle Bin, one for the whole app: it knows which items are still going in. */
-    val bin: RecycleBin by lazy { RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId) }
+    override val bin: RecycleBin by lazy { RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId) }
 
     /** The journal of the file operations, in `files/ops`. */
-    val journal: OperationJournal by lazy { OperationJournal(File(filesDir, "ops"), NioFsBackend) }
+    override val journal: OperationJournal by lazy { OperationJournal(File(filesDir, "ops"), NioFsBackend) }
 
     /** The file operations, journaled, with the Recycle Bin, ZIP archives and the names of the app's language. */
-    val fileOps: FileOps by lazy {
+    override val fileOps: FileOps by lazy {
         val labels = NameLabels(
             newFolder = getString(R.string.label_new_folder),
             newTextDocument = getString(R.string.label_new_text),
@@ -89,7 +95,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
     }
 
     /** Tells the media store of what the operations made, on the volumes it indexes. */
-    val mediaScan: MediaScan by lazy {
+    override val mediaScan: MediaScan by lazy {
         AndroidMediaScan(this, volumes) { root -> volumes.volumes.value.any { it.root == root && it.fuseBacked } }
     }
 
@@ -150,6 +156,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         volumes.start()
         stopOperationsOnEject()
         restartServiceForNewWork()
+        tellThePickerOfChanges()
         // What a crash left behind is cleaned up, and the operations it interrupted are offered again.
         runner.loadInterrupted()
     }
@@ -247,6 +254,19 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
                         viewerFiles.closeUnder(root)
                     }
                 }
+            }
+        }
+    }
+
+    /**
+     * Tells the system file picker whenever a volume comes or goes or the favorites change: the root it lists
+     * the app by, and the favorites and the drives in it, are to be read again (pick spec §3.1).
+     */
+    private fun tellThePickerOfChanges() {
+        appScope.launch(Dispatchers.Main.immediate) {
+            merge(volumes.events, settings.favorites.drop(1)).collect {
+                DocumentsNotifier.roots(this@ExplorerApp)
+                DocumentsNotifier.children(this@ExplorerApp, listOf(ROOT_DOC_ID))
             }
         }
     }

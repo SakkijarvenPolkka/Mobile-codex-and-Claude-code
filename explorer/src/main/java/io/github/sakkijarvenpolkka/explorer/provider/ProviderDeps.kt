@@ -1,0 +1,91 @@
+/*
+ * Files — what the system file picker's provider works with, found on its first call (pick spec §3.6).
+ *
+ * SPDX-License-Identifier: MIT
+ */
+package io.github.sakkijarvenpolkka.explorer.provider
+
+import android.content.Context
+import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
+import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
+import io.github.sakkijarvenpolkka.explorer.fs.TempJournal
+import io.github.sakkijarvenpolkka.explorer.platform.AndroidThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.MediaScan
+import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.platform.PermissionGate
+import io.github.sakkijarvenpolkka.explorer.platform.ThumbnailPort
+import io.github.sakkijarvenpolkka.explorer.platform.Volume
+import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import java.util.UUID
+
+/**
+ * The application, as the provider sees it: the app's one set of volumes, settings, file operations, Recycle
+ * Bin, journal of temporary files and media scans, which the provider shares with the app ([ProviderDeps.of]).
+ */
+interface ProviderHost {
+    val volumes: VolumeSource
+    val settings: SettingsStore
+    val fileOps: FileOps
+    val bin: RecycleBin
+    val journal: TempJournal
+    val mediaScan: MediaScan
+}
+
+/**
+ * What the provider works with: the file system [fs]; the [volumes] there are now, each time it is called;
+ * the app's [settings] (favorites, recent files), [fileOps], Recycle Bin [bin], [journal] of temporary files
+ * and [mediaScan]; [thumbnails] to make them with; [mime] for the types of files; whether the app has all
+ * files access now ([granted]); what the primary volume is called ([internalLabel]); where blocking work
+ * runs ([io]); and new ids for temporary names ([ids]).
+ */
+class ProviderDeps(
+    val fs: FsBackend,
+    val volumes: () -> List<Volume>,
+    val settings: SettingsStore,
+    val fileOps: FileOps,
+    val bin: RecycleBin,
+    val journal: TempJournal,
+    val mediaScan: MediaScan,
+    val thumbnails: ThumbnailPort,
+    val mime: MimeResolver,
+    val granted: () -> Boolean,
+    val internalLabel: String,
+    val io: CoroutineDispatcher,
+    val ids: () -> String,
+) {
+    companion object {
+        /** What the provider uses instead of the app's (tests): set before its first call, cleared after. */
+        @Volatile
+        var override: ProviderDeps? = null
+
+        /**
+         * [override], else what the application ([ProviderHost]) has. Not for `ContentProvider.onCreate`, which
+         * the system calls before the application's own onCreate.
+         */
+        fun of(context: Context): ProviderDeps {
+            override?.let { return it }
+            val host = context.applicationContext as ProviderHost
+            return ProviderDeps(
+                fs = NioFsBackend,
+                volumes = { host.volumes.volumes.value },
+                settings = host.settings,
+                fileOps = host.fileOps,
+                bin = host.bin,
+                journal = host.journal,
+                mediaScan = host.mediaScan,
+                thumbnails = AndroidThumbnailPort(),
+                mime = MimeResolver(),
+                granted = PermissionGate::granted,
+                internalLabel = context.getString(R.string.volume_internal),
+                io = Dispatchers.IO,
+                ids = { UUID.randomUUID().toString() },
+            )
+        }
+    }
+}

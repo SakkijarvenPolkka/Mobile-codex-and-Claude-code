@@ -28,6 +28,12 @@ class LayeringTest {
         for (pkg in listOf(PICK, PROVIDER)) assertUnused(pkg, by = listOf("state"))
     }
 
+    /** Nor does anything below `state/`: only the app itself tells the provider of changes (pick spec §1). */
+    @Test
+    fun nothingBelowStateUsesPickOrProvider() {
+        for (pkg in listOf(PICK, PROVIDER)) assertUnused(pkg, by = BELOW_PREVIEW - "state")
+    }
+
     /** The sources of the packages [by] that mention [pkg] (any of its subpackages too): none. */
     private fun assertUnused(pkg: String, by: List<String>) {
         val root = sourceRoot()

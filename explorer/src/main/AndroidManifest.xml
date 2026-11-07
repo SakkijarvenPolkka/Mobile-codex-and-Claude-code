@@ -66,6 +66,19 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Shows the app's favorites and drives in the system file picker, which alone may connect to it
+             (MANAGE_DOCUMENTS) and gives the app that asked access to the documents chosen. -->
+        <provider
+            android:name=".provider.ExplorerDocumentsProvider"
+            android:authorities="${applicationId}.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
         <!-- Hands files to other apps as content URIs, readable only by the app they are given to. -->
         <provider
             android:name="androidx.core.content.FileProvider"
