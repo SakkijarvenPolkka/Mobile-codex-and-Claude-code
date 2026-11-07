@@ -858,6 +858,31 @@ class SearchUiTest {
     }
 
     @Test
+    fun aWordBegunRightAfterEmptyingTheBoxStays() {
+        file("a.txt")
+        file("사과.txt")
+        show()
+        box().performClick()
+        box().performTextInput("a")
+        idleFor(SEARCH_DELAY_MS)
+        assertEquals(Location.SearchResults(root, "a"), location())
+
+        // Emptied, then a word begun before the pause is over: it stays, and so do the results until it is searched.
+        box().performTextClearance()
+        rule.runOnUiThread { keyboard().setComposingText("사", 1) }
+        idleFor(1_000)
+        assertEquals("사", boxText())
+        assertEquals(Location.SearchResults(root, "a"), location())
+
+        rule.runOnUiThread { keyboard().finishComposingText() }
+        idleFor(SEARCH_DELAY_MS)
+        assertEquals("사", boxText())
+        assertEquals(Location.SearchResults(root, "사"), location())
+        assertEquals(listOf("사과.txt"), names())
+        assertEquals(listOf(Location.Folder(root)), ui.tabs.active.back.map { it.location })
+    }
+
+    @Test
     fun closingATabForgetsItsSearches() {
         file("a.txt")
         show()

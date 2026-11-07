@@ -283,6 +283,19 @@ class SettingsStoreTest {
     }
 
     @Test
+    fun lastPickFolderPersistsUnderItsKey() {
+        val store = SettingsStore(context)
+        assertNull(store.pickLast)
+        store.pickLast = "folder:1A2B-3C4D:DCIM/Camera"
+
+        assertEquals("folder:1A2B-3C4D:DCIM/Camera", SettingsStore(context).pickLast)
+        assertEquals(setOf("pick_last"), prefs.all.keys)
+        // What does not decode is no folder.
+        prefs.edit(commit = true) { putString("pick_last", "{") }
+        assertNull(SettingsStore(context).pickLast)
+    }
+
+    @Test
     fun nullContextKeepsInMemory() {
         val store = SettingsStore(null)
         store.updateGlobal { it.copy(showHidden = true, theme = ThemeChoice.DARK) }

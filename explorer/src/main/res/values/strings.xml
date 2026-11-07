@@ -273,4 +273,8 @@
     <string name="search_capped">Too many results; showing the first 10,000</string>
     <string name="search_none">No items match your search</string>
     <string name="search_again">Search again</string>
+    <string name="pick_title">Choose a file</string>
+    <string name="pick_title_multiple">Choose files</string>
+    <string name="pick_open_count">Open (%d)</string>
+    <string name="pick_too_many">You can choose up to 500 files at a time</string>
 </resources>

@@ -141,6 +141,14 @@ fun FluentTheme(dark: Boolean, accent: Color?, content: @Composable () -> Unit) 
     )
 }
 
+/** [content] as something that cannot be used: its text and icons in the theme's disabled text colour. */
+@Composable
+fun Dimmed(content: @Composable () -> Unit) {
+    val colors = FluentTheme.colors
+    val dimmed = remember(colors) { colors.copy(text = colors.textDisabled, textSecondary = colors.textDisabled) }
+    CompositionLocalProvider(LocalFluentColors provides dimmed, content = content)
+}
+
 /** Black or white, whichever contrasts more with [background] (WCAG relative luminance). */
 internal fun contentColorOn(background: Color): Color =
     if (background.luminance() > 0.179f) Color.Black else Color.White

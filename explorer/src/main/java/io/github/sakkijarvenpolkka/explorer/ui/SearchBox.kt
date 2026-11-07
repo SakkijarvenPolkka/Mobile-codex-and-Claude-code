@@ -58,9 +58,9 @@ internal fun searchHint(ui: ExplorerUiState): String {
 /**
  * The search box of [ui]'s active tab, [searchHint] while empty. A change of its text calls [onSearch]
  * (the view model waits for the typing to stop), unless the keyboard is still composing it (a Korean
- * syllable being put together, say): then once it is composed. The keyboard's search key calls
- * [onSearchNow], composed or not. While it holds text, × empties it and calls [onClear] (which leaves
- * search results for the folder searched). A box that can be closed ([onClose]: a narrow window's, opened
+ * syllable being put together, say): then [onComposing], and [onSearch] once it is composed. The keyboard's
+ * search key calls [onSearchNow], composed or not. While it holds text, × empties it and calls [onClear] (which
+ * leaves search results for the folder searched). A box that can be closed ([onClose]: a narrow window's, opened
  * by its 🔍) shows × while empty too, which closes it, as Back does then once it has nothing to close or
  * clear first ([backClosesSearchBox]). Each tab has its own: it keeps what was typed in it, empties when
  * the tab leaves its search results, and shows the words of search results it comes to otherwise (Back,
@@ -73,6 +73,7 @@ fun SearchBox(
     onSearch: (String) -> Unit,
     onSearchNow: (String) -> Unit,
     onClear: () -> Unit,
+    onComposing: () -> Unit,
     onFocusChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
     autoFocus: Boolean = false,
@@ -109,6 +110,8 @@ fun SearchBox(
                 if (changed && new.composition == null) {
                     typed += new.text
                     onSearch(new.text)
+                } else if (changed) {
+                    onComposing()
                 }
             },
             modifier = Modifier

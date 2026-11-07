@@ -84,6 +84,9 @@ internal class Searches(
 ) {
     private var waiting: Job? = null
 
+    /** Whether the search waiting to start is for an emptied box, which leaves the search results. */
+    private var waitingToLeave = false
+
     /** Whether each tab's searches go into subfolders, as last asked for there. */
     private val subfolders = HashMap<TabId, Boolean>()
 
@@ -105,6 +108,7 @@ internal class Searches(
     fun search(query: String, includeSubfolders: Boolean) {
         val tab = host.searchedTab()
         waiting?.cancel()
+        waitingToLeave = query.isEmpty()
         waiting = scope.launch {
             delay(SEARCH_DELAY_MS)
             val now = host.searchedTab()
@@ -115,6 +119,14 @@ internal class Searches(
                 start(query, includeSubfolders, again = false)
             }
         }
+    }
+
+    /**
+     * The box's text changed while the keyboard is still composing it, which is searched once composed ([search]):
+     * a box emptied just before no longer leaves the search results, which would empty it under the word begun.
+     */
+    fun composing() {
+        if (waitingToLeave) waiting?.cancel()
     }
 
     /** Searches for [query] at once; the same search as the tab shows runs again. */

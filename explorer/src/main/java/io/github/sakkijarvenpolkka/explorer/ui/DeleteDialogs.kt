@@ -38,11 +38,15 @@ internal const val QUESTION_ARMING_MS = 300L
 @Composable
 internal fun Asking(question: Any, content: @Composable () -> Unit) = key(SameObject(question)) { content() }
 
-/** Whether the question composed here has shown for [QUESTION_ARMING_MS], so that its answers may be taken. */
+/**
+ * Whether the question composed here has shown for [QUESTION_ARMING_MS], so that its answers may be taken; without
+ * [arming] (as it is when this first composes), at once.
+ */
 @Composable
-internal fun rememberArmed(): Boolean {
-    var armed by remember { mutableStateOf(false) }
+internal fun rememberArmed(arming: Boolean = true): Boolean {
+    var armed by remember { mutableStateOf(!arming) }
     LaunchedEffect(Unit) {
+        if (armed) return@LaunchedEffect
         delay(QUESTION_ARMING_MS)
         armed = true
     }

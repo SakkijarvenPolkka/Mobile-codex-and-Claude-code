@@ -124,14 +124,18 @@ fun ExplorerTheme(global: GlobalSettings, content: @Composable () -> Unit) {
  * the activity. The file operations show from the runner's state ([OperationsDialogs]), which
  * outlives the activity. [viewers] read the files the built-in viewers and the preview pane show,
  * for a view model that opens files in them (its deps' `builtInViewers`); without them, neither
- * shows.
+ * shows. Picking files for another app ([ExplorerUiState.pick]), neither shows either: a title bar takes
+ * the tab strip's place, Open and Cancel are at the bottom when several files may be picked, the Recycle
+ * Bin is left out of the navigation pane, and Back with nothing else to do ends the picking.
  */
 @Composable
 fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: ViewerDeps? = null) {
     val ui by vm.ui.collectAsStateWithLifecycle()
     val runner by vm.runner.collectAsStateWithLifecycle()
     val expanded = widthClass == WidthClass.EXPANDED
-    BackHandler(enabled = ui.backTarget != null, onBack = vm::systemBack)
+    val pick = ui.pick
+    BackHandler(enabled = ui.backTarget != null || pick != null, onBack = vm::systemBack)
+    val viewerDeps = viewers.takeIf { pick == null }
     LaunchedEffect(expanded) { vm.setExpanded(expanded) }
     val positions = remember(vm) { ListPositions(vm::scrollOf) }
     // A closed tab's list is never shown again.
@@ -156,7 +160,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
     val searchBox = @Composable { modifier: Modifier ->
         val focusChange = { focused: Boolean -> searchFocused = focused }
         val close = if (searchOpen && !expanded) ({ searchOpen = false }) else null
-        SearchBox(ui, vm::search, vm::searchNow, vm::clearSearch, focusChange, modifier, searchOpen, close)
+        val composing = vm::searchComposing
+        SearchBox(ui, vm::search, vm::searchNow, vm::clearSearch, composing, focusChange, modifier, searchOpen, close)
     }
     Box(
         Modifier
@@ -165,7 +170,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
             .onPreviewKeyEvent { event ->
                 // The shell's text fields: the address box and the search box.
                 val action = shortcutFor(event, textFieldFocused = ui.overlay == Overlay.AddressEdit || searchFocused)
-                action != null && vm.onShortcut(action, ui, focused, expanded, builtInViewers = viewers != null)
+                action != null && vm.onShortcut(action, ui, focused, expanded, builtInViewers = viewerDeps != null)
             }
             .onFocusChanged {
                 hasFocus = it.hasFocus
@@ -176,10 +181,10 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
             .testTag(Tags.SHELL),
     ) {
         val viewer = ui.viewer
-        if (viewer != null && viewers != null) {
+        if (viewer != null && viewerDeps != null) {
             ViewerScreen(
                 viewer,
-                viewers,
+                viewerDeps,
                 onClose = vm.viewing::close,
                 onShare = vm.viewing::share,
                 onOpenWith = vm.viewing::openWith,
@@ -193,7 +198,12 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
         } else {
             val sides = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))
             Column(Modifier.fillMaxSize().then(sides)) {
-                TabsBar(ui, vm, Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top)))
+                val top = Modifier.windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top))
+                if (pick == null) {
+                    TabsBar(ui, vm, top)
+                } else {
+                    Box(top) { PickTitleBar(pick.request.allowMultiple, vm::cancelPick) }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     AddressBar(
                         ui = ui,
@@ -216,7 +226,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
                     onCommand = vm::command,
                     onSetView = vm::setView,
                     onSetGlobal = vm::setGlobal,
-                    onTogglePreviewPane = if (expanded && viewers != null) vm.viewing::togglePane else null,
+                    onTogglePreviewPane = if (expanded && viewerDeps != null) vm.viewing::togglePane else null,
                     onSearch = if (expanded) null else ({ searchOpen = true }),
                 )
                 if (!expanded && ui.canSearch && (searchOpen || ui.location is Location.SearchResults)) {
@@ -225,18 +235,19 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
                 Row(Modifier.weight(1f)) {
                     if (expanded) {
                         val pane = Modifier.width(NAV_WIDTH).fillMaxHeight()
-                        NavContent(ui.volumes, ui.favorites, ui.location, vm::navigate, pane)
+                        NavContent(ui.volumes, ui.favorites, ui.location, vm::navigate, pane, showBin = pick == null)
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
                         Banners(ui, vm::dismissMessage, vm::dismissOpsNotice, onSearchAgain = vm::searchNow)
                         Contents(ui, widthClass, positions, vm, Modifier.weight(1f), onUseList = takeKeys)
                     }
-                    if (expanded && ui.previewPane && viewers != null) {
+                    if (expanded && ui.previewPane && viewerDeps != null) {
                         val pane = Modifier.width(PREVIEW_WIDTH).fillMaxHeight()
                         val open = vm.viewing::openFullScreen
-                        PreviewPane(ui.previewed, viewers, pane, onOpenWith = vm.viewing::openWith, onOpen = open)
+                        PreviewPane(ui.previewed, viewerDeps, pane, onOpenWith = vm.viewing::openWith, onOpen = open)
                     }
                 }
+                if (pick != null && pick.request.allowMultiple) PickBottomBar(pick.chosen, vm::choose, vm::cancelPick)
                 StatusBar(
                     ui,
                     onSetMode = { mode -> vm.setView(ui.viewSetting.copy(mode = mode)) },
@@ -268,14 +279,18 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
 
 /**
  * The dialogs of the file operations, the later over the earlier: the conflict the running one waits
- * on, else its progress (unless it runs in the background); the failures of one that ended; the
- * rename dialog (with why the name typed failed); and a question to answer, over the rename dialog it
- * may come from. Each conflict and question is asked anew ([Asking]), and answered as the one it is.
+ * on, else its progress (unless it runs in the background), which waits before taking taps when it takes
+ * the conflict's place; the failures of one that ended; the rename dialog (with why the name typed failed);
+ * and a question to answer, over the rename dialog it may come from. Each conflict and question is asked
+ * anew ([Asking]), and answered as the one it is.
  */
 @Composable
 private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: ExplorerViewModel) {
     val running = runner.running
     val pending = runner.pending
+    // A progress dialog reads it as it first shows: whether it takes the place of a conflict dialog.
+    val asked = remember { ConflictShown() }
+    SideEffect { asked.value = pending != null }
     if (pending != null) {
         val progress = running?.progress
         // The items still to come, of which some may clash too.
@@ -285,7 +300,8 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
             ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer, onCancel = cancel)
         }
     } else if (running != null && !ui.progressInBackground) {
-        ProgressDialog(running, onBackground = vm::runInBackground) { vm.cancelOperation(running.spec.id) }
+        val cancel = { vm.cancelOperation(running.spec.id) }
+        ProgressDialog(running, vm::runInBackground, onCancel = cancel, afterConflict = asked.value)
     }
     ui.failedOp?.let { op -> FailuresDialog(op, onRetry = { vm.retryFailed(op) }) { vm.dismissFailures(op) } }
     ui.renaming?.let { entry ->
@@ -305,14 +321,17 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
     }
 }
 
+/** Whether the conflict dialog showed when [OperationsDialogs] last composed; a change of it recomposes nothing. */
+private class ConflictShown(var value: Boolean = false)
+
 /**
  * Does what the shortcut [action] asks for in [ui]: false when it does nothing there (a command
  * not offered, nowhere to go), so that the key goes on to what has the focus. Enter opens the
  * one selected item only while the shell itself is [shellFocused]: a focused button, crumb or
  * row gets it first. The preview pane opens and closes on an [expanded] window of a shell given the
  * [builtInViewers]. Ctrl+T opens a tab at Home, Ctrl+W closes the active one and Ctrl+Tab goes to the
- * next (with one tab, the key goes on). Over a file open in its viewer, Back is the only
- * shortcut: the commands would act on the hidden list.
+ * next (with one tab, the key goes on), but for a shell picking files for another app, which has one tab.
+ * Over a file open in its viewer, Back is the only shortcut: the commands would act on the hidden list.
  */
 private fun ExplorerViewModel.onShortcut(
     action: ShortcutAction,
@@ -339,8 +358,8 @@ private fun ExplorerViewModel.onShortcut(
         ShortcutAction.FORWARD -> can(ui.tabs.active.forward.isNotEmpty()) { forward() }
         ShortcutAction.UP -> can(ui.up != null) { up() }
         ShortcutAction.PREVIEW_PANE -> can(expanded && builtInViewers) { viewing.togglePane() }
-        ShortcutAction.NEW_TAB -> can(true) { newTab() }
-        ShortcutAction.CLOSE_TAB -> can(true) { closeTab(ui.tabs.activeId) }
+        ShortcutAction.NEW_TAB -> can(ui.pick == null) { newTab() }
+        ShortcutAction.CLOSE_TAB -> can(ui.pick == null) { closeTab(ui.tabs.activeId) }
         ShortcutAction.NEXT_TAB -> can(ui.tabs.tabs.size > 1) { nextTab() }
     }
 }
@@ -420,6 +439,8 @@ private fun Contents(
     val onTap = remember(vm, onUseList) { vm::onTap.after(onUseList) }
     val onLongPress = remember(vm, onUseList) { vm::onLongPress.after(onUseList) }
     val onMore = remember(vm, onUseList) { vm::openContextMenu.after(onUseList) }
+    val request = ui.pick?.request
+    val selectable = remember(request) { { entry: FileEntry -> request?.accepts(entry.mime) ?: true } }
     val listing = ui.listing
     Box(modifier.fillMaxWidth()) {
         when {
@@ -456,6 +477,7 @@ private fun Contents(
                     onRevealed = vm::revealed,
                     contextMenu = { EntryMenu(ui, onCommand = vm::command, onDismiss = vm::closeOverlay) },
                     thumbnails = vm.thumbnails,
+                    selectable = selectable,
                 )
                 if (listing is ListingState.Loaded && listing.refreshing) LoadingBar()
             }
@@ -520,7 +542,8 @@ private fun Drawer(ui: ExplorerUiState, onNavigate: (Location) -> Unit, onClose:
                 .semantics { paneTitle = title }
                 .testTag(Tags.DRAWER),
         ) {
-            NavContent(ui.volumes, ui.favorites, ui.location, onNavigate, Modifier.fillMaxSize())
+            val showBin = ui.pick == null
+            NavContent(ui.volumes, ui.favorites, ui.location, onNavigate, Modifier.fillMaxSize(), showBin = showBin)
         }
     }
 }

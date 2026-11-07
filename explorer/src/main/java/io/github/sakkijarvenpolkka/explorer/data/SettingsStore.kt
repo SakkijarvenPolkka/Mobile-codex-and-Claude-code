@@ -1,6 +1,6 @@
 /*
- * Files — the settings, favorites, recent files, folder views and saved tabs, kept in
- * SharedPreferences.
+ * Files — the settings, favorites, recent files, folder views, saved tabs and the folder last picked
+ * from, kept in SharedPreferences.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.MapSerializer
+import kotlinx.serialization.builtins.nullable
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -61,6 +62,19 @@ class SettingsStore(context: Context?) {
 
     /** The files opened last, newest first, at most [RECENTS_CAP]. */
     val recents: StateFlow<List<Recent>> = _recents.asStateFlow()
+
+    private var lastPick: String? = readJson(K_PICK_LAST)?.let { decode(PICK_LAST, it) }
+
+    /**
+     * The folder of the files last picked for another app, as its [VolumeLocationCodec] tag, where picking starts
+     * next time; null before any.
+     */
+    var pickLast: String?
+        @Synchronized get() = lastPick
+        @Synchronized set(value) {
+            lastPick = value
+            write(K_PICK_LAST, json.encodeToString(PICK_LAST, value))
+        }
 
     /** Folder views by key, least recently used first. */
     private val views = LinkedHashMap<String, ViewSetting>(16, 0.75f, true).apply { putAll(readViews()) }
@@ -215,11 +229,13 @@ class SettingsStore(context: Context?) {
         const val K_RECENTS = "recents"
         const val K_VIEWS = "views"
         const val K_GLOBAL = "global"
+        const val K_PICK_LAST = "pick_last"
 
         val json = Json { ignoreUnknownKeys = true }
         val GLOBAL = GlobalSettings.serializer()
         val FAVORITES = ListSerializer(Favorite.serializer())
         val RECENTS = ListSerializer(Recent.serializer())
         val VIEWS = MapSerializer(String.serializer(), ViewSetting.serializer())
+        val PICK_LAST = String.serializer().nullable
     }
 }

@@ -23,9 +23,9 @@ import java.nio.file.Path
 
 /**
  * The navigation pane: Home; the [favorites] under Favorites (when there are any); every volume under
- * This PC; then the Recycle Bin. A favorite or volume that is not mounted is dimmed with "The drive isn't
- * available". Home, the favorite the current folder is, else that folder's volume, or the Recycle Bin is
- * selected; choosing a volume goes to its root.
+ * This PC; then, with [showBin] (not while picking files for another app), the Recycle Bin. A favorite or
+ * volume that is not mounted is dimmed with "The drive isn't available". Home, the favorite the current
+ * folder is, else that folder's volume, or the Recycle Bin is selected; choosing a volume goes to its root.
  */
 @Composable
 fun NavContent(
@@ -34,6 +34,7 @@ fun NavContent(
     location: Location,
     onNavigate: (Location) -> Unit,
     modifier: Modifier = Modifier,
+    showBin: Boolean = true,
 ) {
     val internal = stringResource(R.string.volume_internal)
     val unavailable = stringResource(R.string.volume_unavailable)
@@ -68,7 +69,7 @@ fun NavContent(
         NavSection(null, listOf(home)),
         NavSection(stringResource(R.string.nav_favorites), pinned).takeIf { pinned.isNotEmpty() },
         NavSection(stringResource(R.string.nav_this_pc), drives),
-        NavSection(null, listOf(bin)),
+        NavSection(null, listOf(bin)).takeIf { showBin },
     )
     NavPane(
         sections = sections,

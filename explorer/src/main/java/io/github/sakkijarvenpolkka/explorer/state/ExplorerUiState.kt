@@ -45,7 +45,7 @@ import java.nio.file.Path
  * files with); without, every file opens in another app. [clock] is when a file is opened, for the
  * recent files. [usage] is how full the volume at a root is, (total, free) bytes, for the drives on Home:
  * null when that is not known. [restart] starts the app again in a new process ([restartApp]), to read
- * a USB drive this one may not.
+ * a USB drive this one may not. With [pick], the shell picks files for another app instead ([PickMode]).
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -65,6 +65,7 @@ data class ExplorerDeps(
     val clock: () -> Long = System::currentTimeMillis,
     val usage: (Path) -> Pair<Long, Long>? = ::storageUsage,
     val restart: (Application) -> Unit = ::restartApp,
+    val pick: PickRequest? = null,
 )
 
 /** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */
@@ -153,7 +154,8 @@ sealed interface Overlay {
  * whose folder is on a volume that is not mounted, with where on it. [reveal] is an item to scroll the list
  * to once it is listed (such as the archive a compression made), and to report as done
  * ([ExplorerViewModel.revealed]). [pasting] is set while a paste is being prepared (what to paste is looked
- * at, and what a removable drive cannot store), before its operation runs.
+ * at, and what a removable drive cannot store), before its operation runs. [pick] is set while the shell picks
+ * files for another app ([ExplorerDeps.pick]).
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -188,6 +190,7 @@ data class ExplorerUiState(
     val unavailableTabs: Map<TabId, DecodedLocation.Unavailable> = emptyMap(),
     val reveal: Path? = null,
     val pasting: Boolean = false,
+    val pick: PickUi? = null,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location

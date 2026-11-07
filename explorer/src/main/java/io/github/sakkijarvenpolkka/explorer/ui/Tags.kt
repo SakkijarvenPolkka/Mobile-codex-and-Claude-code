@@ -78,6 +78,11 @@ object Tags {
     const val SEARCH_NONE = "search_none"
     const val SEARCH_AGAIN = "search_again"
 
+    const val PICK_TITLE_BAR = "pick_title_bar"
+    const val PICK_BOTTOM_BAR = "pick_bottom_bar"
+    const val PICK_OPEN = "pick_open"
+    const val PICK_CANCEL = "pick_cancel"
+
     /** [c] in the command bar or its "⋯" menu. */
     fun command(c: Command): String = "cmd_${c.name.lowercase(Locale.ROOT)}"
 

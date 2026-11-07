@@ -155,7 +155,8 @@ fun nextSort(current: SortSpec, key: SortKey): SortSpec =
  * ([ExplorerUiState.renaming], such as a new folder) is scrolled into view, and so is the item to reveal
  * ([ExplorerUiState.reveal]) once it is listed, which then [onRevealed] reports. Search results show the
  * folder each is in, under a line of how the search goes ([SearchStatus]); none found says so, unless the
- * search was stopped.
+ * search was stopped. A file that is not [selectable] (one another app picking files does not take) is
+ * dimmed, and touching it, its "⋯" or its check does nothing; accessibility services read it as disabled.
  */
 @Composable
 fun FileList(
@@ -172,6 +173,7 @@ fun FileList(
     modifier: Modifier = Modifier,
     thumbnails: Thumbnails? = null,
     onRevealed: () -> Unit = {},
+    selectable: (FileEntry) -> Boolean = { true },
 ) {
     val tab = ui.tabs.active
     val mode = ui.viewSetting.mode
@@ -193,12 +195,14 @@ fun FileList(
     val renamed = ui.renaming?.path?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
     val revealed = ui.reveal?.let { path -> rows.indexOfFirst { it.entry.path == path } } ?: -1
     val internal = stringResource(R.string.volume_internal)
+    val usable = { entry: FileEntry -> entry.kind != EntryKind.FILE || selectable(entry) }
     val cell: @Composable (Row) -> Unit = { row ->
         Box {
             val selected = row.entry.path in selection.items
             val folder = (row.extra as? RowExtra.SearchInfo)?.let { folderPath(it.parentDir, ui.volumes, internal) }
-            if (mode == ViewMode.DETAILS || mode == ViewMode.LIST) EntryRow(row.entry, selected, look, folder)
-            else EntryTile(row.entry, selected, look, thumbnails, folder)
+            val enabled = usable(row.entry)
+            if (mode == ViewMode.DETAILS || mode == ViewMode.LIST) EntryRow(row.entry, selected, look, folder, enabled)
+            else EntryTile(row.entry, selected, look, thumbnails, folder, enabled)
             if (ui.contextMenuFor?.path == row.entry.path) contextMenu()
         }
     }
@@ -229,11 +233,13 @@ fun FileList(
                     }
                     if (nothingFound) NoResults()
                     if (selection.active) {
+                        // Only the rows that can be selected, a range too.
+                        val ordered = { rows.map { it.entry }.filter(usable).map { it.path } }
                         CheckStrip(
                             state = state,
                             rows = rows,
-                            onToggle = { onDispatch(TabAction.Toggle(it)) },
-                            onRange = { path -> onDispatch(TabAction.RangeTo(path, rows.map { it.entry.path })) },
+                            onToggle = { path -> if (path in ordered()) onDispatch(TabAction.Toggle(path)) },
+                            onRange = { path -> onDispatch(TabAction.RangeTo(path, ordered())) },
                             modifier = Modifier.padding(start = gesturePad).width(CHECK_COLUMN).fillMaxHeight(),
                         )
                     }
@@ -279,6 +285,9 @@ private suspend fun LazyListState.show(index: Int) {
 private suspend fun LazyGridState.show(index: Int) {
     if (layoutInfo.visibleItemsInfo.none { it.index == index }) scrollToItem(index)
 }
+
+/** How opaque the thumbnail of a dimmed item is: about as faint as the disabled text colour. */
+private const val DIMMED_PICTURE_ALPHA = 0.4f
 
 /** The width of the check column, which also takes the drag that selects a range. */
 private val CHECK_COLUMN = MinTouchTarget
@@ -350,15 +359,16 @@ private fun stem(name: String): String {
     return if (dot < 0) name else name.substring(0, dot)
 }
 
-/** A row of the details or list view; a search result's [folder] shows under its name. */
+/** A row of the details or list view, dimmed unless [enabled]; a search result's [folder] shows under its name. */
 @Composable
-private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look, folder: String?) {
+private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look, folder: String?, enabled: Boolean) {
     ListRow(
         selected = selected,
         selectionMode = look.selectionMode,
         onClick = { look.onTap(entry) },
         onLongClick = { look.onLongPress(entry) },
         modifier = Modifier.testTag(Tags.row(entry.name)),
+        enabled = enabled,
     ) {
         if (look.selectionMode) {
             // Centred in the check column, which starts after the gesture area like the strip over it.
@@ -388,30 +398,39 @@ private fun EntryRow(entry: FileEntry, selected: Boolean, look: Look, folder: St
             modifier = Modifier.testTag(Tags.rowMore(entry.name)),
             icon = FluentIcons.More,
             style = ButtonStyle.SUBTLE,
+            enabled = enabled,
             contentDescription = look.moreLabel,
         )
     }
 }
 
 /**
- * An item of the tiles or large icons grid, with its thumbnail from [thumbnails] where it has one; a
- * search result's [folder] shows under its name.
+ * An item of the tiles or large icons grid, with its thumbnail from [thumbnails] where it has one, dimmed unless
+ * [enabled]; a search result's [folder] shows under its name.
  */
 @Composable
-private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnails: Thumbnails?, folder: String?) {
+private fun EntryTile(
+    entry: FileEntry,
+    selected: Boolean,
+    look: Look,
+    thumbnails: Thumbnails?,
+    folder: String?,
+    enabled: Boolean,
+) {
     ListRow(
         selected = selected,
         selectionMode = look.selectionMode,
         onClick = { look.onTap(entry) },
         onLongClick = { look.onLongPress(entry) },
         modifier = Modifier.testTag(Tags.row(entry.name)),
+        enabled = enabled,
     ) {
         if (look.selectionMode) {
             CheckMark(selected)
             Spacer(Modifier.width(8.dp))
         }
         if (look.mode == ViewMode.TILES) {
-            EntryPicture(entry, thumbnails, 40.dp)
+            EntryPicture(entry, thumbnails, 40.dp, dimmed = !enabled)
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
                 Name(look.name(entry))
@@ -425,7 +444,7 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnail
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                EntryPicture(entry, thumbnails, 48.dp)
+                EntryPicture(entry, thumbnails, 48.dp, dimmed = !enabled)
                 BasicText(
                     look.name(entry),
                     style = FluentTheme.type.body.copy(color = FluentTheme.colors.text, textAlign = TextAlign.Center),
@@ -440,10 +459,11 @@ private fun EntryTile(entry: FileEntry, selected: Boolean, look: Look, thumbnail
 
 /**
  * The thumbnail of [entry], [size] a side, while [thumbnails] has one for it: a cached one at once,
- * else loaded while the item is shown (an item scrolled away stops its load). Its icon otherwise.
+ * else loaded while the item is shown (an item scrolled away stops its load); faint when [dimmed]. Its
+ * icon otherwise.
  */
 @Composable
-private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp) {
+private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp, dimmed: Boolean) {
     val sizePx = with(LocalDensity.current) { size.roundToPx() }
     // Looked up once, not on every recomposition of the item.
     val cached = remember(thumbnails, entry, sizePx) { thumbnails?.cached(entry, sizePx) }
@@ -459,6 +479,7 @@ private fun EntryPicture(entry: FileEntry, thumbnails: Thumbnails?, size: Dp) {
             contentDescription = null,
             modifier = Modifier.size(size).testTag(Tags.thumbnail(entry.name)),
             contentScale = ContentScale.Fit,
+            alpha = if (dimmed) DIMMED_PICTURE_ALPHA else 1f,
         )
     }
 }

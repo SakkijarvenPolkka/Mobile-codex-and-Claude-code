@@ -74,6 +74,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val home = HomeLoader(deps, codec, viewModelScope)
     internal val searches = Searches(deps, viewModelScope, host) { shell.value.obbAllowed }
     private val zips = ZipUi(deps, viewModelScope, host) { shell.value.obbAllowed }
+    private val picking = deps.pick?.let { PickMode(it, deps, codec, viewModelScope, host) }
 
     /** The built-in viewers: the file shown full screen or in the preview pane, and what their buttons do. */
     internal val viewing = Viewers(deps, viewModelScope, host, handOver, ::listedRows)
@@ -100,8 +101,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val scrollSpots = HashMap<TabId, ScrollSpot>()
 
     init {
-        val restored = settings.loadSession(codec)
-        tabs = MutableStateFlow(restored?.model ?: TabsReducer.initial(Location.Home))
+        // Picking for another app neither reads nor saves the app's tabs.
+        val restored = if (picking == null) settings.loadSession(codec) else null
+        tabs = MutableStateFlow(restored?.model ?: TabsReducer.initial(picking?.start() ?: Location.Home))
         volumeTracking = VolumeTracking(deps.volumes, codec, restored?.unavailable.orEmpty())
     }
 
@@ -111,7 +113,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         .flatMapLatest { id -> loader.state(id).map { id to it } }
 
     val ui: StateFlow<ExplorerUiState> = combine(
-        combine(tabs, activeListing, volumeTracking.unavailable, shell) { t, l, u, s -> Core(t, l, u, s) },
+        combine(tabs, activeListing, volumeTracking.unavailable, shell, picking?.outcome ?: flowOf(null), ::Core),
         combine(settings.global, deps.volumes.volumes, clipboard.state, pins(deps, codec)) { g, v, c, p ->
             Env(g, v, c, p)
         },
@@ -125,6 +127,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         build(
             Core(
                 tabs.value, tabs.value.activeId to ListingState.Loading, volumeTracking.unavailable.value, shell.value,
+                picking?.outcome?.value,
             ),
             Env(settings.global.value, deps.volumes.volumes.value, clipboard.state.value, pinsOf(deps, codec)),
             ops.state.value,
@@ -167,9 +170,10 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
      * Opens [entry]: a folder here, a link as what it leads to in storage, a ZIP archive in the extract dialog
      * where its folder takes the new one ([ZipUi.extracts]), a file in its built-in viewer (in the preview pane
      * for a tap on it, unless [fullScreen]) or else another app ([Viewers.open]). An APK needs the user to let
-     * this app install apps first, which a message offers to do.
+     * this app install apps first, which a message offers to do. Picking for another app, a file is chosen instead.
      */
     fun open(entry: FileEntry, fullScreen: Boolean = false) {
+        if (picking != null && entry.kind == EntryKind.FILE) return picking.open(entry)
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
@@ -180,17 +184,18 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
     }
 
-    /** A tap: toggles the item in selection mode and in the Recycle Bin, opens it otherwise. */
+    /** A tap: toggles the item in selection mode and in the Recycle Bin, else opens it; picking, [PickMode.toggles]. */
     fun onTap(entry: FileEntry) {
-        val toggles = tabs.value.active.selection.active || here() == Location.RecycleBin
+        val toggles = picking?.toggles(entry) ?: (tabs.value.active.selection.active || here() == Location.RecycleBin)
         if (toggles) reduce(TabAction.Toggle(entry.path)) else open(entry)
     }
 
     /**
-     * A long press: selects the item (entering selection mode), adds it to the selection in
-     * selection mode, or opens its context menu when it is already selected (the Recycle Bin has none).
+     * A long press: selects the item (entering selection mode), adds it to the selection in selection mode, or
+     * opens its context menu once selected (the Recycle Bin has none); nothing for a [PickMode.dimmed] file.
      */
     fun onLongPress(entry: FileEntry) {
+        if (picking?.dimmed(entry) == true) return
         val selection = tabs.value.active.selection
         when {
             entry.path in selection.items && here() == Location.RecycleBin -> Unit
@@ -236,6 +241,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     // The search box (spec §6.1): SearchState.kt tells what each of these does.
 
     fun search(query: String, includeSubfolders: Boolean = true) = searches.search(query, includeSubfolders)
+
+    fun searchComposing() = searches.composing()
 
     fun searchNow(query: String, includeSubfolders: Boolean = true) = searches.searchNow(query, includeSubfolders)
 
@@ -337,6 +344,16 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun extract(entry: FileEntry, charset: String?) = zips.extract(entry, charset)
 
+    /** Picking several files for another app, chooses those selected ([PickMode.chooseSelected]). */
+    fun choose() {
+        picking?.chooseSelected(selectedEntries())
+    }
+
+    /** Ends picking for another app with nothing chosen. */
+    fun cancelPick() {
+        picking?.cancel()
+    }
+
     /** Runs a command of the command bar or a menu. */
     fun command(c: Command) {
         when (c) {
@@ -350,9 +367,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Command.NEW_TEXT -> newTextFile()
             Command.RESTORE -> restore(ops.binItemsOf(selectedEntries()))
             Command.EMPTY_BIN -> emptyBin()
-            Command.SELECT_ALL -> reduce(TabAction.SelectAll(listedRows().map { it.entry.path }))
+            Command.SELECT_ALL -> reduce(TabAction.SelectAll(selectable()))
             Command.SELECT_NONE -> reduce(TabAction.ClearSelection)
-            Command.INVERT -> reduce(TabAction.Invert(listedRows().map { it.entry.path }))
+            Command.INVERT -> reduce(TabAction.Invert(selectable()))
             Command.REFRESH -> refresh()
             Command.OPTIONS -> shell.update { it.copy(overlay = Overlay.Options) }
             Command.OPEN -> selectedEntries().singleOrNull()?.let { open(it, fullScreen = true) }
@@ -405,7 +422,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /**
      * The system Back: closes what is open (a menu or dialog, then the viewer), clears the selection,
-     * closes the drawer or goes back, in that order.
+     * closes the drawer or goes back, in that order; with nothing of that, picking for another app ends.
      */
     fun systemBack() {
         when (backOf(tabs.value.active, shell.value, viewing.state.value)) {
@@ -413,7 +430,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             BackTarget.SELECTION -> reduce(TabAction.ClearSelection)
             BackTarget.DRAWER -> setDrawerOpen(false)
             BackTarget.HISTORY -> back()
-            null -> Unit
+            null -> picking?.cancel()
         }
     }
 
@@ -455,11 +472,15 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             val here = it.at(after.active.current.location)
             if (keepOverlay) here else here.copy(overlay = null, reveal = null)
         }
-        settings.saveSession(after, codec)
+        if (picking == null) settings.saveSession(after, codec)
     }
 
     /** The active tab's rows as the loader has them now. */
     private fun listedRows(): List<Row> = loader.state(tabs.value.activeId).value.rows()
+
+    /** What Select all selects of [listedRows]: all of them, but only the files that can be chosen while picking. */
+    private fun selectable(): List<Path> =
+        listedRows().map { it.entry }.filter { picking?.canChoose(it) ?: true }.map { it.path }
 
     /** The active tab's selected items, in listing order. */
     private fun selectedEntries(): List<FileEntry> {
@@ -645,7 +666,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             env.volumes.any { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY }
         val pinned = allPinned(selected, folder, env.pins.favorites, deps.lookup)
         val traits = Place(unavailable != null, restricted, writable = volume != null && !readOnly)
-        val commands = commandsAt(location, selected, rows, env.clipboard, traits, pinned, opsState.pasting)
+        val offered = commandsAt(location, selected, rows, env.clipboard, traits, pinned, opsState.pasting)
+        val commands = picking?.commands(offered) ?: offered
         return ExplorerUiState(
             tabs = core.tabs,
             listing = listing,
@@ -679,6 +701,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             unavailableTabs = core.unavailable,
             reveal = core.shell.reveal,
             pasting = opsState.pasting,
+            pick = picking?.ui(selected, core.picked),
         )
     }
 
@@ -734,6 +757,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         val listing: Pair<TabId, ListingState>,
         val unavailable: Map<TabId, DecodedLocation.Unavailable>,
         val shell: ShellState,
+        val picked: PickOutcome?,
     )
 
     private data class Env(

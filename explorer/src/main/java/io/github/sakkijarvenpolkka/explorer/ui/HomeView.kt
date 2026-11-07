@@ -53,6 +53,7 @@ import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.state.PinnedFolder
 import io.github.sakkijarvenpolkka.explorer.state.QuickItem
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.CommandItem
+import io.github.sakkijarvenpolkka.explorer.ui.fluent.Dimmed
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcon
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentIcons
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentProgressBar
@@ -72,6 +73,8 @@ import java.nio.file.Path
  * drive is out is dimmed), a recent file with [onOpen]. A long press on a quick access folder opens its
  * menu: Pin to Favorites ([onPin]) for a default folder; Unpin ([onUnpin]), Move up and Move down
  * ([onMoveFavorite], to the place of the one above or below it in [ExplorerUiState.favorites]) for a favorite.
+ * Picking files for another app, there is no such menu and no Recycle Bin, and a recent file of a type the
+ * request does not take is dimmed and opens nothing.
  */
 @Composable
 fun HomeView(
@@ -92,11 +95,13 @@ fun HomeView(
         }
         return
     }
+    val picking = ui.pick?.request
     LazyColumn(modifier.fillMaxSize().testTag(Tags.HOME)) {
         if (home.quickAccess.isNotEmpty()) {
             item(key = "quick") { Heading(stringResource(R.string.home_quick_access)) }
             items(home.quickAccess, key = { "quick:${it.path}" }) { item ->
-                QuickRow(item, ui, onNavigate) { quickMenu(item, ui.favorites, res, onPin, onUnpin, onMoveFavorite) }
+                val menu = { quickMenu(item, ui.favorites, res, onPin, onUnpin, onMoveFavorite) }
+                QuickRow(item, ui, onNavigate, menu.takeIf { picking == null })
             }
         }
         if (home.drives.isNotEmpty()) {
@@ -108,10 +113,10 @@ fun HomeView(
         if (home.recents.isNotEmpty()) {
             item(key = "recent") { Heading(stringResource(R.string.home_recent)) }
             items(home.recents, key = { "recent:${it.path}" }) { entry ->
-                RecentRow(entry, ui.volumes) { onOpen(entry) }
+                RecentRow(entry, ui.volumes, enabled = picking?.accepts(entry.mime) ?: true) { onOpen(entry) }
             }
         }
-        if (home.binItems > 0) {
+        if (home.binItems > 0 && picking == null) {
             item(key = "bin") {
                 HomeRow(onClick = { onNavigate(Location.RecycleBin) }, modifier = Modifier.testTag(Tags.HOME_BIN)) {
                     FluentIcon(FluentIcons.RecycleBin, contentDescription = null)
@@ -152,14 +157,14 @@ private fun Heading(text: String) {
 
 /**
  * A folder of quick access, tagged by its name: dimmed, and opening nothing, while its drive is not mounted
- * (one of [ExplorerUiState.volumes]); a pinned one marked with a star. A long press opens [menu].
+ * (one of [ExplorerUiState.volumes]); a pinned one marked with a star. A long press opens [menu], if any.
  */
 @Composable
 private fun QuickRow(
     item: QuickItem,
     ui: ExplorerUiState,
     onNavigate: (Location) -> Unit,
-    menu: () -> List<CommandItem>,
+    menu: (() -> List<CommandItem>)?,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val available = volumeAt(ui.volumes, item.path) != null
@@ -168,7 +173,7 @@ private fun QuickRow(
     Box {
         HomeRow(
             onClick = { if (available) onNavigate(Location.Folder(item.path)) },
-            onLongClick = { menuOpen = true },
+            onLongClick = menu?.let { { menuOpen = true } },
             modifier = Modifier
                 .semantics { if (!available) disabled() }
                 .testTag(Tags.quickItem((item.path.fileName ?: item.path).toString())),
@@ -180,7 +185,8 @@ private fun QuickRow(
             }
             if (item.pinned) FluentIcon(FluentIcons.Star, stringResource(R.string.nav_favorites), tint = content)
         }
-        MenuFlyout(expanded = menuOpen, onDismiss = { menuOpen = false }, items = if (menuOpen) menu() else emptyList())
+        val items = if (menuOpen) menu?.invoke().orEmpty() else emptyList()
+        MenuFlyout(expanded = menuOpen, onDismiss = { menuOpen = false }, items = items)
     }
 }
 
@@ -238,14 +244,17 @@ private fun DriveRow(drive: DriveUsage, korean: Boolean, onClick: () -> Unit) {
     }
 }
 
-/** A recent file, tagged by its name, with the folder it is in (a volume's root by the volume's name). */
+/**
+ * A recent file, tagged by its name, with the folder it is in (a volume's root by the volume's name); dimmed and
+ * opening nothing unless [enabled].
+ */
 @Composable
-private fun RecentRow(entry: FileEntry, volumes: List<Volume>, onClick: () -> Unit) {
+private fun RecentRow(entry: FileEntry, volumes: List<Volume>, enabled: Boolean, onClick: () -> Unit) {
     val folder = entry.path.parent
     val volume = folder?.let { volumeAt(volumes, it) }?.takeIf { it.root == folder }
     val where = volume?.let { volumeLabel(it, stringResource(R.string.volume_internal)) }
         ?: DisplayName.of((folder?.fileName ?: folder ?: entry.path).toString())
-    HomeRow(onClick = onClick, modifier = Modifier.testTag(Tags.recent(entry.name))) {
+    HomeRow(onClick = onClick, modifier = Modifier.testTag(Tags.recent(entry.name)), enabled = enabled) {
         EntryIcon(entry, Modifier)
         Column(Modifier.weight(1f)) {
             Name(DisplayName.of(entry.name))
@@ -267,13 +276,14 @@ private fun Label(text: String, modifier: Modifier = Modifier, color: Color = Fl
 
 /**
  * A full-width row of Home, at least 48 dp high, that [onClick] opens and, given [onLongClick], long-presses;
- * pressing shows a darker fill instead of a ripple.
+ * pressing shows a darker fill instead of a ripple. Unless [enabled], it is [Dimmed] and takes no touch.
  */
 @Composable
 private fun HomeRow(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     val colors = FluentTheme.colors
@@ -287,6 +297,7 @@ private fun HomeRow(
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
+                enabled = enabled,
                 role = Role.Button,
                 onLongClick = onLongClick,
                 onClick = onClick,
@@ -295,6 +306,7 @@ private fun HomeRow(
             .padding(horizontal = 16.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        content = content,
-    )
+    ) {
+        if (enabled) content() else Dimmed { content() }
+    }
 }

@@ -39,7 +39,8 @@ import kotlin.math.min
  *
  * In [selectionMode] the row is a checkbox for accessibility services (its toggle state is
  * [selected], [stateDescription] is read in place of "checked"); otherwise it reports
- * [selected] as a selected item. The check mark itself is part of the caller's [content].
+ * [selected] as a selected item. The check mark itself is part of the caller's [content]. A row
+ * that is not [enabled] is [Dimmed] and takes no touch; accessibility services read it as disabled.
  */
 @Composable
 fun ListRow(
@@ -49,6 +50,7 @@ fun ListRow(
     onLongClick: () -> Unit,
     modifier: Modifier = Modifier,
     stateDescription: String? = null,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     val colors = FluentTheme.colors
@@ -62,6 +64,7 @@ fun ListRow(
             .combinedClickable(
                 interactionSource = interaction,
                 indication = null,
+                enabled = enabled,
                 role = if (selectionMode) Role.Checkbox else null,
                 onLongClick = onLongClick,
                 onClick = onClick,
@@ -73,8 +76,9 @@ fun ListRow(
             .rowHighlight(selected, pressed, hovered, colors)
             .padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
-        content = content,
-    )
+    ) {
+        if (enabled) content() else Dimmed { content() }
+    }
 }
 
 /**

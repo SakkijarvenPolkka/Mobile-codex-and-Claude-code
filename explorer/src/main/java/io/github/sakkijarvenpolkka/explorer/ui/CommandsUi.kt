@@ -39,7 +39,9 @@ import io.github.sakkijarvenpolkka.explorer.ui.fluent.MenuFlyout
  * [onTogglePreviewPane], wide windows) and Options; in the Recycle Bin, Restore, Delete
  * permanently and Empty Recycle Bin, then "⋯" with the selection commands, Refresh, the preview
  * pane switch and Options. A command not in [ExplorerUiState.commands] is shown disabled; the
- * commands the window has no room for move into "⋯".
+ * commands the window has no room for move into "⋯". Picking files for another app, New and the
+ * commands it does not keep ([io.github.sakkijarvenpolkka.explorer.state.PickUi.keptCommands]) are not
+ * shown at all.
  */
 @Composable
 fun CommandsUi(
@@ -54,8 +56,10 @@ fun CommandsUi(
     val res = LocalResources.current
     var menu by remember { mutableStateOf<BarMenu?>(null) }
     val offered = ui.commands
+    val kept = ui.pick?.keptCommands
     fun item(c: Command) =
         CommandItem(Tags.command(c), res.getString(c.label()), c.icon(), c in offered) { onCommand(c) }
+    fun shown(c: Command) = item(c).takeIf { kept == null || c in kept }
     val canView = ui.canView
     val canCreate = NEW_COMMANDS.any { it in offered }
     val inBin = ui.location == Location.RecycleBin
@@ -64,13 +68,13 @@ fun CommandsUi(
         search,
         CommandItem(Tags.CMD_NEW, res.getString(R.string.cmd_new), FluentIcons.Add, canCreate) {
             menu = BarMenu.NEW
-        },
-        item(Command.CUT),
-        item(Command.COPY),
-        item(Command.PASTE),
-        item(Command.RENAME),
-        item(Command.SHARE),
-        item(Command.DELETE),
+        }.takeIf { kept == null },
+        shown(Command.CUT),
+        shown(Command.COPY),
+        shown(Command.PASTE),
+        shown(Command.RENAME),
+        shown(Command.SHARE),
+        shown(Command.DELETE),
         CommandItem(Tags.CMD_SORT, res.getString(R.string.cmd_sort), FluentIcons.Sort, canView) { menu = BarMenu.SORT },
         CommandItem(Tags.CMD_VIEW, res.getString(R.string.cmd_view), FluentIcons.View, canView) { menu = BarMenu.VIEW },
     )
@@ -85,7 +89,7 @@ fun CommandsUi(
     val overflow = if (inBin) {
         BIN_OVERFLOW.map(::item) + listOfNotNull(previewPane) + item(Command.OPTIONS)
     } else {
-        OVERFLOW_COMMANDS.map { item(if (it == Command.PIN) pin else it) } + listOf(
+        OVERFLOW_COMMANDS.mapNotNull { shown(if (it == Command.PIN) pin else it) } + listOf(
             CommandItem(Tags.CMD_HIDDEN, res.getString(R.string.cmd_hidden), checkIf(global.showHidden), true) {
                 onSetGlobal { it.copy(showHidden = !it.showHidden) }
             },

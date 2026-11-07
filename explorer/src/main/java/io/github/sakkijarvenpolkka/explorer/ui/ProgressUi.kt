@@ -47,10 +47,14 @@ private const val MAX_LISTED = 100
 /**
  * The operation [op] as it runs: what it does to how many items, the name it is at, a progress bar
  * (by bytes, else by items) and how many items and bytes are left. "Run in background" and Back call
- * [onBackground] (the progress goes on as a chip of the status bar); Cancel calls [onCancel].
+ * [onBackground] (the progress goes on as a chip of the status bar); Cancel calls [onCancel]. Shown in
+ * place of a conflict just answered ([afterConflict]), its buttons are disabled for [QUESTION_ARMING_MS]
+ * at first ([rememberArmed]), as the next question's would be: the second tap of a double tap on an answer
+ * lands on them.
  */
 @Composable
-fun ProgressDialog(op: RunningOp, onBackground: () -> Unit, onCancel: () -> Unit) {
+fun ProgressDialog(op: RunningOp, onBackground: () -> Unit, onCancel: () -> Unit, afterConflict: Boolean = false) {
+    val armed = rememberArmed(arming = afterConflict)
     val progress = op.progress
     val korean = LocalConfiguration.current.locales[0].language == "ko"
     ContentDialog(
@@ -61,6 +65,8 @@ fun ProgressDialog(op: RunningOp, onBackground: () -> Unit, onCancel: () -> Unit
         close = stringResource(R.string.cancel) to onCancel,
         // The name changes with each file.
         fullWidth = true,
+        secondaryEnabled = armed,
+        closeEnabled = armed,
     ) {
         Column(Modifier.fillMaxWidth().testTag(Tags.PROGRESS), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             progress?.currentName?.let { Name(DisplayName.of(it)) }

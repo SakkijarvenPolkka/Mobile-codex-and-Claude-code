@@ -296,6 +296,36 @@ class FileOpsUiTest {
     }
 
     @Test
+    fun aSecondTapAfterTheLastConflictDoesNotCancel() {
+        file("a.txt", "new a")
+        val dst = Files.createDirectory(root.resolve("dst"))
+        Files.write(dst.resolve("a.txt"), "old a".toByteArray())
+        showShell(GatedFs(gate))
+        vm.dispatch(TabAction.Select(root.resolve("a.txt")))
+        vm.copy()
+        vm.navigate(Location.Folder(dst))
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).performClick()
+        waitFor { vm.runner.value.pending != null }
+
+        // Replace tapped twice: the second tap comes as the progress shows in the conflict's place, unseen.
+        armed()
+        button(str(R.string.conflict_replace)).performClick()
+        waitFor { vm.runner.value.pending == null }
+        rule.onNodeWithTag(Tags.PROGRESS).assertExists()
+        button(str(R.string.cancel)).performClick()
+        rule.waitForIdle()
+
+        // Seen for a moment, its buttons take taps; the copy was not cancelled.
+        armed()
+        button(str(R.string.cancel)).assertIsEnabled()
+        button(str(R.string.progress_background)).assertIsEnabled()
+        gate.countDown()
+        waitFor { vm.runner.value.running == null }
+        assertEquals("new a", content(dst.resolve("a.txt")))
+    }
+
+    @Test
     fun aSecondTapOnTheNextQuestionDoesNothing() {
         val a = file("a.txt")
         val b = file("b.txt")
