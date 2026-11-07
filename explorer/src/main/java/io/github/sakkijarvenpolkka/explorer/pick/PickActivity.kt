@@ -28,6 +28,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.platform.PermissionGate
 import io.github.sakkijarvenpolkka.explorer.platform.openAllFilesAccessSettings
+import io.github.sakkijarvenpolkka.explorer.provider.DocumentsNotifier
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.PickOutcome
@@ -110,6 +111,9 @@ class PickActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         granted = recheckAccess(model)
+        // The access may have changed while the activity was away (its permission screen asks for it too), and the
+        // system file picker lists the app only with it.
+        DocumentsNotifier.roots(this)
     }
 
     /** Answers the app that asked with how picking ended: the files chosen, or nothing. */

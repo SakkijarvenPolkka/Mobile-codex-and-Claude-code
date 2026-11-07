@@ -21,6 +21,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.ExplorerApp
+import io.github.sakkijarvenpolkka.explorer.PickerChanges
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
@@ -274,6 +275,22 @@ class PickActivityTest {
             waitFor { shown(Tags.row("a.jpg")) }
             rule.onNodeWithTag(Tags.PICK_TITLE_BAR).assertIsDisplayed()
             rule.onNodeWithTag(Tags.PERMISSION_SCREEN).assertDoesNotExist()
+        }
+    }
+
+    @Test
+    fun comingBackTellsTheSystemPickerOfItsRoot() {
+        allowAllFilesAccess(false)
+        startIn(root)
+        val picker = PickerChanges(app)
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            rule.onNodeWithTag(Tags.PERMISSION_SCREEN).assertIsDisplayed()
+            assertEquals(listOf(PickerChanges.ROOTS), picker.take())
+            // Granted in the settings by a user who first meets the app here: the picker lists the app only with it.
+            allowAllFilesAccess(true)
+            scenario.moveToState(Lifecycle.State.STARTED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            assertEquals(listOf(PickerChanges.ROOTS), picker.take())
         }
     }
 
