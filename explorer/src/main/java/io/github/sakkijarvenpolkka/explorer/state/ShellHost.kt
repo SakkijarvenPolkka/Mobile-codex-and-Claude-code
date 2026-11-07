@@ -14,6 +14,9 @@ internal interface ShellHost {
     /** Where the active tab is. */
     fun here(): Location
 
+    /** Goes to [l] in the active tab; Back comes back. */
+    fun navigate(l: Location)
+
     /** Puts [l] in place of the active tab's location: Back goes where it went from there. */
     fun replaceHere(l: Location)
 

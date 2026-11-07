@@ -84,9 +84,9 @@ class OpenWith(private val context: Context, private val mime: MimeResolver) {
 /**
  * The MIME type that covers all of [types]: their type when they all have the same; the
  * top-level type they share with a wildcard subtype (JPEG and PNG images: `image/` and an
- * asterisk); else any type.
+ * asterisk); else any type. Files shared and files picked for another app are typed with it.
  */
-private fun commonType(types: List<String>): String {
+internal fun commonType(types: List<String>): String {
     val distinct = types.distinct()
     distinct.singleOrNull()?.let { return it }
     if (ANY_TYPE in distinct) return ANY_TYPE

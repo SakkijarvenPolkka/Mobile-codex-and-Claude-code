@@ -439,8 +439,8 @@ private fun Contents(
     val onTap = remember(vm, onUseList) { vm::onTap.after(onUseList) }
     val onLongPress = remember(vm, onUseList) { vm::onLongPress.after(onUseList) }
     val onMore = remember(vm, onUseList) { vm::openContextMenu.after(onUseList) }
-    val request = ui.pick?.request
-    val selectable = remember(request) { { entry: FileEntry -> request?.accepts(entry.mime) ?: true } }
+    val pick = ui.pick
+    val selectable = remember(pick) { { entry: FileEntry -> pick?.takes(entry) ?: true } }
     val listing = ui.listing
     Box(modifier.fillMaxWidth()) {
         when {
@@ -456,7 +456,7 @@ private fun Contents(
             ui.location == Location.Home -> HomeView(
                 ui,
                 onNavigate = vm::navigate,
-                onOpen = vm::open,
+                onOpen = vm::openUnlisted,
                 onPin = { vm.pin(listOf(it)) },
                 onUnpin = vm::unpin,
                 onMoveFavorite = vm::reorderFavorites,

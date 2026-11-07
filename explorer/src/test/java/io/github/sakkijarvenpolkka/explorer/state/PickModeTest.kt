@@ -63,15 +63,18 @@ class PickModeTest {
 
     /**
      * A view model picking files of [types] (several of them, if [multiple]) for another app; folders are read on
-     * [io], by default at once.
+     * [io], by default at once. A file opened is stamped by [clock].
      */
     private fun pick(
         vararg types: String,
         multiple: Boolean = false,
         io: CoroutineDispatcher = Dispatchers.Unconfined,
+        clock: () -> Long = System::currentTimeMillis,
     ): ExplorerViewModel {
         val request = PickRequest(types.toList(), multiple)
-        val deps = ExplorerDeps(NioFsBackend, settings, volumes, volumes, MimeResolver(), io, pick = request)
+        val deps = ExplorerDeps(
+            NioFsBackend, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request,
+        )
         vm = ExplorerViewModel(app, deps).also { made += it }
         settle()
         return vm
@@ -318,7 +321,7 @@ class PickModeTest {
         tap("a.jpg")
         assertEquals(listOf("a.jpg"), ui.selected.map { it.name })
         assertTrue(ui.commands.toString(), kept.containsAll(ui.commands))
-        for (c in listOf(Command.DELETE, Command.RENAME, Command.PASTE)) assertFalse(c in ui.commands)
+        for (c in listOf(Command.DELETE, Command.RENAME)) assertFalse(c in ui.commands)
         assertTrue(Command.OPEN in ui.commands && Command.PROPERTIES in ui.commands)
 
         // One file at a time: nothing selects them all, or the others.
@@ -327,7 +330,7 @@ class PickModeTest {
         settle()
         assertEquals(listOf("a.jpg"), ui.selected.map { it.name })
         assertTrue(ui.commands.toString(), (kept - Command.SELECT_ALL - Command.INVERT).containsAll(ui.commands))
-        for (c in listOf(Command.DELETE, Command.RENAME, Command.PASTE)) assertFalse(c in ui.commands)
+        for (c in listOf(Command.DELETE, Command.RENAME)) assertFalse(c in ui.commands)
         // Open chooses the file selected.
         vm.command(Command.OPEN)
         settle()
@@ -366,21 +369,140 @@ class PickModeTest {
     }
 
     @Test
+    fun noMoreChosenFilesBecomeRecentThanAreKept() {
+        val files = (1..SettingsStore.RECENTS_CAP + 5).map { file("img${it.toString().padStart(2, '0')}.jpg") }
+        lastPickedIn(root)
+        // Each file made a recent one is stamped once (and the settings written once).
+        var stamped = 0
+        pick("image/*", multiple = true, clock = { (++stamped).toLong() })
+        vm.command(Command.SELECT_ALL)
+        vm.choose()
+        settle()
+
+        assertEquals(PickOutcome.Chosen(files), outcome())
+        assertEquals(SettingsStore.RECENTS_CAP, stamped)
+        // The first chosen is the most recent.
+        val first = files.take(SettingsStore.RECENTS_CAP).map { root.relativize(it).toString() }
+        assertEquals(first, settings.recents.value.map { it.rel })
+    }
+
+    @Test
     fun recentFileOnHomeIsChosen() {
         val a = file("a.jpg")
         file("doc.pdf")
         settings.addRecent(Recent("primary", "doc.pdf", openedAt = 1))
         settings.addRecent(Recent("primary", "a.jpg", openedAt = 2))
-        pick("image/*", multiple = true)
+        pick("image/*")
         val recents = checkNotNull(ui.home).recents
         assertEquals(listOf("a.jpg", "doc.pdf"), recents.map { it.name })
 
         // Opened from Home, a file the request does not take does nothing; one it takes is chosen.
-        vm.open(recents.last())
+        vm.openUnlisted(recents.last())
         settle()
         assertNull(outcome())
-        vm.open(recents.first())
+        assertEquals(Location.Home, location())
+        vm.openUnlisted(recents.first())
         settle()
         assertEquals(PickOutcome.Chosen(listOf(a)), outcome())
+    }
+
+    @Test
+    fun recentFileShowsSelectedInItsFolderWhenSeveralArePicked() {
+        val dcim = dir("DCIM")
+        val a = file("DCIM/a.jpg")
+        val b = file("DCIM/b.jpg")
+        file("doc.pdf")
+        settings.addRecent(Recent("primary", "doc.pdf", openedAt = 1))
+        settings.addRecent(Recent("primary", "DCIM/a.jpg", openedAt = 2))
+        pick("image/*", multiple = true)
+        val recents = checkNotNull(ui.home).recents
+
+        // One the request does not take does nothing.
+        vm.openUnlisted(recents.last())
+        settle()
+        assertEquals(Location.Home, location())
+
+        // One it takes is not chosen alone: it shows selected in its folder, scrolled to, for others to go with it.
+        vm.openUnlisted(recents.first())
+        settle()
+        assertNull(outcome())
+        assertEquals(Location.Folder(dcim), location())
+        assertEquals(listOf("a.jpg"), ui.selected.map { it.name })
+        assertEquals(a, ui.reveal)
+        assertEquals(listOf(Location.Home), ui.tabs.active.back.map { it.location })
+        tap("b.jpg")
+        vm.choose()
+        settle()
+        assertEquals(PickOutcome.Chosen(listOf(a, b)), outcome())
+    }
+
+    @Test
+    fun linkOpensAsTheFileItLeadsTo() {
+        val dcim = dir("DCIM")
+        val a = file("DCIM/a.jpg")
+        file("DCIM/doc.pdf")
+        file("c.jpg")
+        Files.createSymbolicLink(root.resolve("a link"), a)
+        Files.createSymbolicLink(root.resolve("doc link"), root.resolve("DCIM/doc.pdf"))
+        lastPickedIn(root)
+
+        // Several to pick: one the request does not take does nothing.
+        pick("image/*", multiple = true)
+        tap("c.jpg")
+        tap("doc link")
+        assertEquals(Location.Folder(root), location())
+        assertEquals(listOf("c.jpg"), ui.selected.map { it.name })
+        // One it takes shows selected in its folder.
+        tap("a link")
+        assertNull(outcome())
+        assertEquals(Location.Folder(dcim), location())
+        assertEquals(listOf("a.jpg"), ui.selected.map { it.name })
+
+        // One to pick: it is chosen.
+        pick("image/*")
+        tap("a link")
+        assertEquals(PickOutcome.Chosen(listOf(a)), outcome())
+    }
+
+    @Test
+    fun selectAllAndInvertSkipFoldersAndFilesNotTaken() {
+        dir("DCIM")
+        file("a.jpg")
+        file("b.jpg")
+        file("doc.pdf")
+        lastPickedIn(root)
+        pick("image/*", multiple = true)
+
+        vm.command(Command.SELECT_ALL)
+        settle()
+        assertEquals(listOf("a.jpg", "b.jpg"), ui.selected.map { it.name })
+        tap("a.jpg")
+        // A folder is selected with a long press.
+        vm.onLongPress(entry("DCIM"))
+        settle()
+        assertEquals(setOf("DCIM", "b.jpg"), ui.selected.map { it.name }.toSet())
+        vm.command(Command.INVERT)
+        settle()
+        assertEquals(listOf("a.jpg"), ui.selected.map { it.name })
+    }
+
+    @Test
+    fun takesFilesOfTheTypesAskedOnly() {
+        dir("DCIM")
+        file("a.jpg")
+        file("doc.pdf")
+        Files.createSymbolicLink(root.resolve("link"), root.resolve("a.jpg"))
+        lastPickedIn(root)
+        pick("image/*")
+        val images = checkNotNull(ui.pick)
+        assertTrue(images.takes(entry("a.jpg")))
+        assertFalse(images.takes(entry("doc.pdf")))
+
+        // Any file at all, but neither a folder nor a link.
+        pick("*/*")
+        val any = checkNotNull(ui.pick)
+        assertTrue(any.takes(entry("doc.pdf")))
+        assertFalse(any.takes(entry("DCIM")))
+        assertFalse(any.takes(entry("link")))
     }
 }

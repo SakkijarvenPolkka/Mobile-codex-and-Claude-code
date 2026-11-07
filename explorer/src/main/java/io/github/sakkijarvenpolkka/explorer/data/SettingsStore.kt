@@ -216,26 +216,26 @@ class SettingsStore(context: Context?) {
         null
     }
 
-    private companion object {
+    companion object {
         /** The most recent files kept. */
         const val RECENTS_CAP = 20
 
         /** The most folder views kept. */
-        const val VIEWS_CAP = 500
+        private const val VIEWS_CAP = 500
 
-        const val PREFS_NAME = "explorer_settings"
-        const val K_SESSION = "session"
-        const val K_FAVORITES = "favorites"
-        const val K_RECENTS = "recents"
-        const val K_VIEWS = "views"
-        const val K_GLOBAL = "global"
-        const val K_PICK_LAST = "pick_last"
+        private const val PREFS_NAME = "explorer_settings"
+        private const val K_SESSION = "session"
+        private const val K_FAVORITES = "favorites"
+        private const val K_RECENTS = "recents"
+        private const val K_VIEWS = "views"
+        private const val K_GLOBAL = "global"
+        private const val K_PICK_LAST = "pick_last"
 
-        val json = Json { ignoreUnknownKeys = true }
-        val GLOBAL = GlobalSettings.serializer()
-        val FAVORITES = ListSerializer(Favorite.serializer())
-        val RECENTS = ListSerializer(Recent.serializer())
-        val VIEWS = MapSerializer(String.serializer(), ViewSetting.serializer())
-        val PICK_LAST = String.serializer().nullable
+        private val json = Json { ignoreUnknownKeys = true }
+        private val GLOBAL = GlobalSettings.serializer()
+        private val FAVORITES = ListSerializer(Favorite.serializer())
+        private val RECENTS = ListSerializer(Recent.serializer())
+        private val VIEWS = MapSerializer(String.serializer(), ViewSetting.serializer())
+        private val PICK_LAST = String.serializer().nullable
     }
 }

@@ -95,7 +95,7 @@ fun HomeView(
         }
         return
     }
-    val picking = ui.pick?.request
+    val picking = ui.pick
     LazyColumn(modifier.fillMaxSize().testTag(Tags.HOME)) {
         if (home.quickAccess.isNotEmpty()) {
             item(key = "quick") { Heading(stringResource(R.string.home_quick_access)) }
@@ -113,7 +113,7 @@ fun HomeView(
         if (home.recents.isNotEmpty()) {
             item(key = "recent") { Heading(stringResource(R.string.home_recent)) }
             items(home.recents, key = { "recent:${it.path}" }) { entry ->
-                RecentRow(entry, ui.volumes, enabled = picking?.accepts(entry.mime) ?: true) { onOpen(entry) }
+                RecentRow(entry, ui.volumes, enabled = picking?.takes(entry) ?: true) { onOpen(entry) }
             }
         }
         if (home.binItems > 0 && picking == null) {

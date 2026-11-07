@@ -43,6 +43,23 @@
             </intent-filter>
         </activity>
 
+        <!-- Picks files for another app that asks (ACTION_GET_CONTENT), in that app's task: never mixed with the
+             app's own, nor listed in the recent apps. OPENABLE in the filter matches requests marked openable as
+             well as the others. No configChanges: recreated on rotation and resizing. -->
+        <activity
+            android:name=".pick.PickActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:taskAffinity=""
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.GET_CONTENT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.OPENABLE" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+        </activity>
+
         <!-- Runs while there are file operations; only the app starts it. -->
         <service
             android:name=".ops.FileOpsService"

@@ -2,9 +2,12 @@
 package io.github.sakkijarvenpolkka.explorer.ui
 
 import android.app.Application
+import android.graphics.Bitmap
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.ExperimentalTestApi
@@ -14,6 +17,8 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
@@ -27,15 +32,25 @@ import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.withKeyDown
+import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.Recent
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
+import io.github.sakkijarvenpolkka.explorer.fs.TextEncoding
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
+import io.github.sakkijarvenpolkka.explorer.preview.ImageDecoderPort
+import io.github.sakkijarvenpolkka.explorer.preview.PdfOpener
+import io.github.sakkijarvenpolkka.explorer.preview.TextDocument
+import io.github.sakkijarvenpolkka.explorer.preview.TextLoader
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
+import io.github.sakkijarvenpolkka.explorer.preview.ViewerTags
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
@@ -91,22 +106,47 @@ class PickShellTest {
 
     /**
      * The shell picking files of [types] (several of them, if [multiple]) for another app, started in [at], the
-     * folder files were last picked from (at Home without one), with the app's Recycle Bin [bin].
+     * folder files were last picked from (at Home without one), with the app's Recycle Bin [bin]. Given [viewers],
+     * the view model opens files in the built-in viewers, as the app's does.
      */
-    private fun show(vararg types: String, multiple: Boolean = false, at: Path? = root, bin: RecycleBin? = null) {
+    private fun show(
+        vararg types: String,
+        multiple: Boolean = false,
+        at: Path? = root,
+        bin: RecycleBin? = null,
+        viewers: ViewerDeps? = null,
+    ) {
         val codec = VolumeLocationCodec { volumes.volumes.value }
         settings.pickLast = at?.let { codec.encode(Location.Folder(it)) }
         val request = PickRequest(types.toList(), multiple)
         val deps = ExplorerDeps(
-            NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined, bin = bin, pick = request,
+            NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined, bin = bin,
+            builtInViewers = viewers != null, pick = request,
         )
         vm = ExplorerViewModel(app, deps)
         rule.setContent {
             val global by settings.global.collectAsState()
-            ExplorerTheme(global) { ExplorerShell(vm, WidthClass.EXPANDED) }
+            ExplorerTheme(global) { ExplorerShell(vm, WidthClass.EXPANDED, viewers) }
         }
         rule.waitForIdle()
     }
+
+    /** Built-in viewers as the app has them: a picture shows as a small bitmap, a text as no lines; nothing else. */
+    private val pictureViewers = ViewerDeps(
+        text = object : TextLoader {
+            override suspend fun load(file: Path, forced: TextEncoding?): TextDocument =
+                TextDocument.Lines(emptyList(), TextEncoding.UTF8, truncated = false)
+        },
+        images = object : ImageDecoderPort {
+            override suspend fun decode(file: Path, maxWidth: Int, maxHeight: Int): ImageBitmap =
+                Bitmap.createBitmap(40, 30, Bitmap.Config.ARGB_8888).asImageBitmap()
+
+            override suspend fun sizeOf(file: Path): IntSize = IntSize(40, 30)
+        },
+        pdf = PdfOpener { throw FsException(FsError.Corrupt) },
+        media = { error("No player while picking") },
+        io = Dispatchers.Unconfined,
+    )
 
     private fun str(id: Int, vararg args: Any): String = app.getString(id, *args)
 
@@ -207,7 +247,65 @@ class PickShellTest {
         for (c in listOf(Command.DELETE_PERMANENT, Command.COMPRESS, Command.EXTRACT, Command.PIN, Command.UNPIN)) {
             rule.onNodeWithTag(Tags.command(c)).assertDoesNotExist()
         }
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun viewersStayOffWhilePicking() {
+        val a = file("a.jpg")
+        show("image/*", viewers = pictureViewers)
+
+        // No preview pane, by the ⋯ menu, by Alt+P, or turned on as the app's may be.
+        rule.onNode(hasContentDescription(str(R.string.more)) and hasAnyAncestor(hasTestTag(Tags.COMMAND_BAR)))
+            .performClick()
+        rule.waitForIdle()
         rule.onNodeWithTag(Tags.CMD_PREVIEW_PANE).assertDoesNotExist()
+        rule.onNodeWithTag(Tags.command(Command.REFRESH)).performClick()
+        rule.waitForIdle()
+        rule.onRoot().performKeyInput { withKeyDown(Key.AltLeft) { pressKey(Key.P) } }
+        rule.waitForIdle()
+        rule.onNodeWithTag(ViewerTags.PANE).assertDoesNotExist()
+        rule.runOnUiThread { vm.viewing.togglePane() }
+        rule.waitForIdle()
+        assertTrue(vm.ui.value.previewPane)
+        rule.onNodeWithTag(ViewerTags.PANE).assertDoesNotExist()
+
+        // A tap on a picture chooses it rather than showing it.
+        row("a.jpg").performClick()
+        rule.waitForIdle()
+        assertEquals(PickOutcome.Chosen(listOf(a)), outcome())
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertDoesNotExist()
+        assertNull(vm.ui.value.viewer)
+    }
+
+    @Test
+    fun bottomBarCancelEndsWithNothingChosen() {
+        file("a.jpg")
+        show("image/*", multiple = true)
+        row("a.jpg").performClick()
+        rule.waitForIdle()
+        assertEquals(1, vm.ui.value.pick?.chosen)
+
+        inside(Tags.PICK_BOTTOM_BAR, str(R.string.cancel)).performClick()
+        rule.waitForIdle()
+        assertEquals(PickOutcome.Cancelled, outcome())
+    }
+
+    @Test
+    fun recentFileShowsSelectedInItsFolderWhenSeveralArePicked() {
+        val dcim = Files.createDirectory(root.resolve("DCIM"))
+        file("DCIM/a.jpg")
+        file("DCIM/b.jpg")
+        settings.addRecent(Recent("primary", "DCIM/a.jpg", openedAt = 1))
+        show("image/*", multiple = true, at = null)
+
+        rule.onNodeWithTag(Tags.recent("a.jpg")).performClick()
+        rule.waitForIdle()
+        assertNull(outcome())
+        assertEquals(Location.Folder(dcim), vm.ui.value.location)
+        row("a.jpg").assertIsOn()
+        row("b.jpg").assertIsOff()
+        rule.onNodeWithTag(Tags.PICK_OPEN).assert(hasText(str(R.string.pick_open_count, 1))).assertIsEnabled()
     }
 
     @Test

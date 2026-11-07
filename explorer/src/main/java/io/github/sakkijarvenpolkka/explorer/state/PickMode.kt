@@ -9,6 +9,7 @@ package io.github.sakkijarvenpolkka.explorer.state
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.DecodedLocation
 import io.github.sakkijarvenpolkka.explorer.data.LocationCodec
+import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
@@ -37,7 +38,16 @@ sealed interface PickOutcome {
 data class PickUi(val request: PickRequest, val chosen: Int, val outcome: PickOutcome?) {
     /** The commands that stay while picking, where [commandsFor] offers them; the shell shows no other. */
     val keptCommands: Set<Command> get() = keptFor(request)
+
+    /**
+     * Whether [entry] can be chosen: a file of a type the request takes. The one rule of what can be, by which the
+     * view model chooses ([PickMode]) and the shell dims every other file.
+     */
+    fun takes(entry: FileEntry): Boolean = request.takes(entry)
 }
+
+/** Whether [entry] is a file of a type this request takes ([PickUi.takes]). */
+private fun PickRequest.takes(entry: FileEntry): Boolean = entry.kind == EntryKind.FILE && accepts(entry.mime)
 
 /** The commands that stay while picking: none of them changes a file. */
 private val PICK_COMMANDS = setOf(
@@ -54,10 +64,10 @@ private fun keptFor(request: PickRequest): Set<Command> =
 
 /**
  * What the view model [shell] does otherwise while it picks files of [request] for another app. A file the
- * request takes is chosen with a tap, or a tap selects it when several are taken; touching one it does not take
- * does nothing. Choosing looks first that the files are still there (off the main thread); then their folder is
- * where picking starts next time (the settings' `pickLast`, a [codec] tag), and they become the files opened
- * last. Main thread only, in [scope].
+ * request takes ([PickUi.takes]) is chosen with a tap, or a tap selects it when several are taken; touching one it
+ * does not take does nothing. Choosing looks first that the files are still there (off the main thread); then their
+ * folder is where picking starts next time (the settings' `pickLast`, a [codec] tag), and they become the files
+ * opened last, as many as are kept. Main thread only, in [scope].
  */
 internal class PickMode(
     private val request: PickRequest,
@@ -100,8 +110,8 @@ internal class PickMode(
         }
     }
 
-    /** Whether [entry] can be chosen: a file of a type the request takes. */
-    fun canChoose(entry: FileEntry): Boolean = entry.kind == EntryKind.FILE && request.accepts(entry.mime)
+    /** Whether [entry] can be chosen ([PickUi.takes]). */
+    fun canChoose(entry: FileEntry): Boolean = request.takes(entry)
 
     /** Whether [entry] is a file of a type the request does not take: shown dimmed, touching it does nothing. */
     fun dimmed(entry: FileEntry): Boolean = entry.kind == EntryKind.FILE && !canChoose(entry)
@@ -116,9 +126,22 @@ internal class PickMode(
     fun ui(selected: List<FileEntry>, outcome: PickOutcome?): PickUi =
         PickUi(request, selected.count(::canChoose), outcome)
 
-    /** Opens the file [entry] (tapped, Open, a recent file on Home): it is chosen, if it can be; else nothing. */
+    /** Opens the file [entry] of the active tab's list (tapped, Open): it is chosen, if it can be; else nothing. */
     fun open(entry: FileEntry) {
         if (canChoose(entry)) choose(listOf(entry))
+    }
+
+    /**
+     * Opens the file [entry], reached elsewhere than by its row (a recent file on Home, what a link leads to), if it
+     * can be chosen: picking one file, it is; picking several, it shows selected in its folder instead, scrolled to,
+     * for the others there to be chosen with it.
+     */
+    fun openUnlisted(entry: FileEntry) {
+        if (!canChoose(entry)) return
+        if (!request.allowMultiple) return choose(listOf(entry))
+        val folder = Location.Folder(entry.path.parent)
+        shell.navigate(folder)
+        shell.selectAt(folder, listOf(entry.path), reveal = true)
     }
 
     /** Chooses those of the [selected] items that can be chosen, when several files can; else nothing. */
@@ -160,12 +183,15 @@ internal class PickMode(
         }
     }
 
-    /** Ends picking with [paths]: their folder is where it starts next time, and they become recent files. */
+    /**
+     * Ends picking with [paths]: their folder is where it starts next time, and the first of them become recent files,
+     * as many as are kept ([SettingsStore.RECENTS_CAP]: each one more is a write of the settings, on the main thread).
+     */
     private fun chosen(paths: List<Path>) {
         if (ended.value != null) return
         codec.encode(Location.Folder(paths.first().parent))?.let { deps.settings.pickLast = it }
         // The first chosen ends up the most recent.
-        paths.asReversed().forEach(deps::addRecent)
+        paths.take(SettingsStore.RECENTS_CAP).asReversed().forEach(deps::addRecent)
         ended.value = PickOutcome.Chosen(paths)
     }
 }

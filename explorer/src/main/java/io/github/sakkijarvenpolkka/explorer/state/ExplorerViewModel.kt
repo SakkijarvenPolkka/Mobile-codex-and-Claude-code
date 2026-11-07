@@ -185,6 +185,13 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         }
     }
 
+    /**
+     * Opens [entry], reached elsewhere than by its row (a recent file on Home, what a link leads to), as [open] does;
+     * picking files for another app, as [PickMode.openUnlisted] does.
+     */
+    fun openUnlisted(entry: FileEntry) =
+        if (picking != null && entry.kind == EntryKind.FILE) picking.openUnlisted(entry) else open(entry)
+
     /** A tap: toggles the item in selection mode and in the Recycle Bin, else opens it; picking, [PickMode.toggles]. */
     fun onTap(entry: FileEntry) {
         val toggles = picking?.toggles(entry) ?: (tabs.value.active.selection.active || here() == Location.RecycleBin)
@@ -568,7 +575,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     navigate(Location.Folder(target.path.parent))
                     reduce(TabAction.Select(target.path))
                 } else {
-                    readOrTell(at) { Listing.entry(deps.fs, target.path, deps.mime::mimeOf) }?.let(::open)
+                    readOrTell(at) { Listing.entry(deps.fs, target.path, deps.mime::mimeOf) }?.let(::openUnlisted)
                 }
                 Resolved.Outside -> host.showError(at, UiText.res(R.string.outside_storage))
                 is Resolved.Failed -> host.showError(at, errorText(target.error))
