@@ -3,6 +3,7 @@ package io.github.sakkijarvenpolkka.explorer.fs
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -171,6 +172,11 @@ class NamesTest {
         // What FAT cannot store is said first: a copy there is refused for it, reserved or not.
         assertEquals(bad(NameProblem.FatChar(':')), check("a:b.xpart", fat))
         assertEquals(NameProblem.FatChar(':'), fatProblemOf("a:b.xpart", fat))
+        // A name already made is not trimmed: its trailing space is refused on FAT, whatever its trimmed form is.
+        assertEquals(NameProblem.TrailingDotOrSpace, fatProblemOf("a.xpart ", fat))
+        assertEquals(NameProblem.TrailingDotOrSpace, fatProblemOf(".Recycle.Bin ", fat))
+        // Reserved is no FAT rule: FAT stores such a name.
+        assertNull(fatProblemOf("a.xpart", fat))
     }
 
     // --- splitName ---

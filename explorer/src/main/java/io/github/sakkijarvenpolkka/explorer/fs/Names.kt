@@ -72,17 +72,16 @@ object NameValidator {
 
 /**
  * What the FAT naming rules of a volume with [traits] refuse in [name], a name that is already made (on
- * disk, or in an archive): `\ : * ? " < > |`, or a trailing dot or space. Null when [traits] has no FAT
+ * disk, or in an archive): a trailing dot or space, else `\ : * ? " < > |`. Null when [traits] has no FAT
  * rules ([VolumeTraits.fatNames]), and for the other problems [NameValidator] finds, which are for the
  * names a person types.
  */
 internal fun fatProblemOf(name: String, traits: VolumeTraits): NameProblem? {
     if (!traits.fatNames) return null
-    return when (val check = NameValidator.validate(name, traits)) {
-        is NameCheck.Bad -> check.problem.takeIf { it is NameProblem.FatChar || it == NameProblem.TrailingDotOrSpace }
-        // The validator trims what a person types; a name made that ends in a space really does.
-        is NameCheck.Ok -> NameProblem.TrailingDotOrSpace.takeIf { name.endsWith(' ') }
-    }
+    // Before the validator's verdict: it trims what a person types, and what it finds in the rest
+    // (Reserved for `a.xpart `) would hide the space a made name really ends in.
+    if (name.endsWith(' ') || name.endsWith('.')) return NameProblem.TrailingDotOrSpace
+    return (NameValidator.validate(name, traits) as? NameCheck.Bad)?.problem?.takeIf { it is NameProblem.FatChar }
 }
 
 /**
