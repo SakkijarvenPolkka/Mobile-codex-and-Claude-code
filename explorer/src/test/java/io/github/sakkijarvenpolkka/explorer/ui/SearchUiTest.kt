@@ -19,6 +19,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
@@ -26,12 +27,16 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performKeyInput
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.pressKey
 import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
@@ -39,10 +44,15 @@ import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.data.ViewMode
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.SortKey
 import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
+import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
+import io.github.sakkijarvenpolkka.explorer.ops.OperationRunner
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
@@ -57,7 +67,9 @@ import io.github.sakkijarvenpolkka.explorer.state.TabsReducer
 import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -78,10 +90,12 @@ import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Duration
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** The search box and the search results (spec §6.1), shown in Korean on a wide window. */
 @RunWith(RobolectricTestRunner::class)
@@ -100,6 +114,9 @@ class SearchUiTest {
     /** Where folders are read and searched: only when the test drains it. */
     private val io = StandardTestDispatcher()
     private var threads: ExecutorCoroutineDispatcher? = null
+
+    /** Where the file operations of a shell shown with them run ([show]). */
+    private val runnerScope = CoroutineScope(SupervisorJob())
     private lateinit var root: Path
     private lateinit var volumes: FakeVolumes
     private lateinit var fs: WatchedFs
@@ -125,26 +142,41 @@ class SearchUiTest {
     @After
     fun tearDown() {
         if (::vm.isInitialized) vm.viewModelScope.cancel()
+        runnerScope.cancel()
         threads?.close()
     }
 
     /**
      * The shell on [root] as the primary volume at [widthClass], started at [root] unless the settings have a
-     * session; folders are read on [readOn] through a [WatchedFs] with [onList].
+     * session; folders are read on [readOn] through a [WatchedFs] with [onList]. [withOps], it has the file
+     * operations and a Recycle Bin too, run on [readOn].
      */
     private fun show(
         widthClass: WidthClass = WidthClass.EXPANDED,
         readOn: CoroutineDispatcher = io,
+        withOps: Boolean = false,
         onList: (Path) -> Unit = {},
     ) {
         settings.startAt(root, volumes)
         fs = WatchedFs(onList)
-        vm = ExplorerViewModel(app, ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), readOn))
+        val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), readOn)
+        vm = ExplorerViewModel(app, if (withOps) withOperations(deps, readOn) else deps)
         rule.setContent {
             val global by settings.global.collectAsState()
             ExplorerTheme(global) { ExplorerShell(vm, widthClass) }
         }
         drain()
+    }
+
+    /** [deps] with the file operations, run on [on], and a Recycle Bin. */
+    private fun withOperations(deps: ExplorerDeps, on: CoroutineDispatcher): ExplorerDeps {
+        val newId = { UUID.randomUUID().toString() }
+        val journal = OperationJournal(folder.newFolder("ops"), NioFsBackend)
+        val bin = RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, newId)
+        val labels = NameLabels(newFolder = "새 폴더", newTextDocument = "새 텍스트 문서", copySuffix = " - 복사본")
+        val fileOps = FileOps(NioFsBackend, volumes, labels, journal, ids = newId, bin = bin)
+        val runner = OperationRunner(runnerScope, fileOps, journal, on, host = null)
+        return deps.copy(fileOps = fileOps, bin = bin, runner = runner)
     }
 
     /** Runs what is queued on [io], then on the main thread, a few rounds over: each hands work to the other. */
@@ -753,6 +785,76 @@ class SearchUiTest {
         assertEquals(79, ui.rows.size)
         assertEquals(true, (ui.listing as? ListingState.Streaming)?.done)
         rule.onNodeWithTag(Tags.row("a60.txt")).assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class)
+    @Test
+    fun keysActOnTheResultsOnceTheListIsUsed() {
+        file("apple.txt")
+        file("apricot.txt")
+        show(withOps = true)
+        searchFor("ap")
+        box().assertIsFocused()
+
+        // A result long-pressed: the box gives the keys back to the list, and Delete deletes what is selected.
+        rule.onNodeWithTag(Tags.row("apple.txt")).performTouchInput { longClick() }
+        drain()
+        box().assertIsNotFocused()
+        rule.onRoot().performKeyInput { pressKey(Key.Delete) }
+        drain()
+        assertFalse(Files.exists(root.resolve("apple.txt")))
+        assertEquals("ap", boxText())
+        assertEquals(listOf("apricot.txt"), names())
+    }
+
+    @Test
+    fun searchingAgainDropsWhatAnOperationTookAway() {
+        file("a1.txt")
+        file("a2.txt")
+        file("a3.txt")
+        val slow = CountDownLatch(1)
+        val holding = AtomicBoolean(false)
+        val pool = Executors.newFixedThreadPool(2).asCoroutineDispatcher().also { threads = it }
+        try {
+            show(readOn = pool) { if (holding.get()) slow.await(10, TimeUnit.SECONDS) }
+            waitFor { ui.rows.isNotEmpty() }
+            searchFor("a")
+            waitFor { ui.listing.isDone() }
+            assertEquals(listOf("a1.txt", "a2.txt", "a3.txt"), names())
+            vm.onLongPress(ui.rows.first { it.entry.name == "a2.txt" }.entry)
+            drain()
+
+            // An operation took a2.txt away (deleted, moved or renamed), and the search, run again, is slow.
+            holding.set(true)
+            Files.delete(root.resolve("a2.txt"))
+            vm.refresh()
+            waitFor { names() == listOf("a1.txt", "a3.txt") }
+            // Not caught up yet: the rows found before stay, but not the one gone, nor its selection.
+            assertEquals(false, (ui.listing as? ListingState.Streaming)?.done)
+            assertFalse(ui.tabs.active.selection.active)
+        } finally {
+            slow.countDown()
+        }
+        waitFor { ui.listing.isDone() }
+        assertEquals(listOf("a1.txt", "a3.txt"), names())
+    }
+
+    @Test
+    fun emptyingTheBoxLeavesTheResults() {
+        file("a.txt")
+        file("b.txt")
+        show()
+        box().performClick()
+        box().performTextInput("a")
+        idleFor(SEARCH_DELAY_MS)
+        assertEquals(Location.SearchResults(root, "a"), location())
+
+        // Backspaced to nothing, as × does: back to the folder searched, the results gone with the text.
+        box().performTextClearance()
+        idleFor(SEARCH_DELAY_MS)
+        assertEquals(Location.Folder(root), location())
+        assertTrue(ui.tabs.active.back.isEmpty())
+        assertEquals(listOf("a.txt", "b.txt"), names())
     }
 
     @Test

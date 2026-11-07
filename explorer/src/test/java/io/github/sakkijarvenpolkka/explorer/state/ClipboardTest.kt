@@ -30,6 +30,23 @@ class ClipboardTest {
     }
 
     @Test
+    fun goneItemsLeaveEitherClipboard() {
+        val holder = ClipboardHolder()
+        // A copy too: what is no longer there would be pasted never again.
+        holder.set(Clipboard(listOf(a, b), ClipMode.COPY))
+        holder.dropGone(setOf(a))
+        assertEquals(Clipboard(listOf(b), ClipMode.COPY), holder.state.value)
+        holder.dropGone(setOf(b))
+        assertNull(holder.state.value)
+
+        holder.set(Clipboard(listOf(a, c), ClipMode.CUT))
+        holder.dropGone(setOf(c))
+        assertEquals(Clipboard(listOf(a), ClipMode.CUT), holder.state.value)
+        holder.dropGone(emptySet())
+        assertEquals(Clipboard(listOf(a), ClipMode.CUT), holder.state.value)
+    }
+
+    @Test
     fun startsEmptyAndClears() {
         val holder = ClipboardHolder()
         assertNull(holder.state.value)

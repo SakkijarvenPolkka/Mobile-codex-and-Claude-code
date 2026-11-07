@@ -78,7 +78,7 @@ internal data class Place(val unavailable: Boolean, val restricted: Boolean, val
 /**
  * The commands of a tab at [location] ([place]) with [selected] of its [rows], [clipboard] holding what
  * it does, and the folders Pin and Unpin act on [pinned] or not: Refresh and Options alone while its drive
- * is unavailable, else [commandsFor] them.
+ * is unavailable, else [commandsFor] them, but Paste while a paste is being prepared ([pasting]).
  */
 internal fun commandsAt(
     location: Location,
@@ -87,6 +87,7 @@ internal fun commandsAt(
     clipboard: Clipboard?,
     place: Place,
     pinned: Boolean,
+    pasting: Boolean = false,
 ): Set<Command> {
     if (place.unavailable) return setOf(REFRESH, OPTIONS)
     val inBin = location == Location.RecycleBin
@@ -101,7 +102,8 @@ internal fun commandsAt(
         binEmpty = !inBin || rows.isEmpty(),
         hasEntries = rows.isNotEmpty(),
     )
-    return commandsFor(context)
+    val offered = commandsFor(context)
+    return if (pasting) offered - PASTE else offered
 }
 
 /** Commands that change files; a read-only volume offers none of them. */
@@ -117,9 +119,10 @@ private val FOLDER_WRITES = setOf(NEW_FOLDER, NEW_TEXT, PASTE, RENAME, COMPRESS,
 
 /**
  * The commands available in [c]. Options is always available. Home offers Refresh, and Open
- * for a selection. The Recycle Bin offers Restore, Delete permanently (also as Delete, which deletes
- * for good there: the Delete key) and Empty Recycle Bin.
- * Folders and search results offer the file commands; only folders take new and pasted items.
+ * for one item selected. The Recycle Bin offers Restore, Delete permanently (also as Delete, which
+ * deletes for good there: the Delete key) and Empty Recycle Bin.
+ * Folders and search results offer the file commands; only folders take new and pasted items. Open,
+ * Open with and Rename are for one item.
  */
 fun commandsFor(c: CommandContext): Set<Command> {
     var offered = when (c.kind) {
@@ -135,7 +138,7 @@ fun commandsFor(c: CommandContext): Set<Command> {
 private fun homeCommands(c: CommandContext): Set<Command> = buildSet {
     add(REFRESH)
     add(OPTIONS)
-    if (c.selection.isNotEmpty()) add(OPEN)
+    if (c.selection.size == 1) add(OPEN)
 }
 
 private fun binCommands(c: CommandContext): Set<Command> = buildSet {
@@ -160,9 +163,9 @@ private fun folderCommands(c: CommandContext): Set<Command> = buildSet {
         if (inFolder) add(pinOrUnpin(c.pinned))
         return@buildSet
     }
-    addAll(listOf(OPEN, CUT, COPY, DELETE, DELETE_PERMANENT, COMPRESS, PROPERTIES, SELECT_NONE))
+    addAll(listOf(CUT, COPY, DELETE, DELETE_PERMANENT, COMPRESS, PROPERTIES, SELECT_NONE))
     val single = selection.singleOrNull()
-    if (single != null) add(RENAME)
+    if (single != null) addAll(listOf(OPEN, RENAME))
     if (single?.kind == EntryKind.FILE) {
         add(OPEN_WITH)
         if (isZip(single)) add(EXTRACT)

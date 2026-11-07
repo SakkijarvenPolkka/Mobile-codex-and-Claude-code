@@ -56,6 +56,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
 import io.github.sakkijarvenpolkka.explorer.data.ThemeChoice
+import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
 import io.github.sakkijarvenpolkka.explorer.ops.RunnerState
@@ -147,6 +148,8 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
     val listShown = ui.viewer == null
     LaunchedEffect(nothingOpen, listShown) { if (nothingOpen && listShown && !hasFocus) focus.requestFocus() }
     var searchFocused by remember { mutableStateOf(false) }
+    // The list used (a row touched): the search box gives the keys back, for the shortcuts to act on files.
+    val takeKeys = remember { { if (searchFocused) focus.requestFocus() } }
     // Narrow windows: the search box opened by its 🔍, until the tab goes elsewhere than search results.
     var searchOpen by remember { mutableStateOf(false) }
     LaunchedEffect(ui.location) { if (ui.location !is Location.SearchResults) searchOpen = false }
@@ -226,7 +229,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
                     }
                     Column(Modifier.weight(1f).fillMaxHeight()) {
                         Banners(ui, vm::dismissMessage, vm::dismissOpsNotice, onSearchAgain = vm::searchNow)
-                        Contents(ui, widthClass, positions, vm, Modifier.weight(1f))
+                        Contents(ui, widthClass, positions, vm, Modifier.weight(1f), onUseList = takeKeys)
                     }
                     if (expanded && ui.previewPane && viewers != null) {
                         val pane = Modifier.width(PREVIEW_WIDTH).fillMaxHeight()
@@ -278,7 +281,8 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
         // The items still to come, of which some may clash too.
         val remaining = progress?.let { (it.totalItems - it.doneItems - 1).coerceAtLeast(0) } ?: 0
         Asking(pending) {
-            ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer) { vm.cancelOperation(pending.opId) }
+            val cancel = { vm.cancelOperation(pending.opId) }
+            ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer, onCancel = cancel)
         }
     } else if (running != null && !ui.progressInBackground) {
         ProgressDialog(running, onBackground = vm::runInBackground) { vm.cancelOperation(running.spec.id) }
@@ -347,9 +351,9 @@ private val SEARCH_WIDTH = 280.dp
 
 /**
  * The app's notice of the file operations ([ExplorerUiState.opsNotice], closed with [onDismissNotice]),
- * the message of the view model (closed with [onDismiss]), then the restricted-folder warning; at the
- * folder a restored tab had its search results at, what they were for, with a button that searches for
- * it again ([onSearchAgain]).
+ * the message of the view model (closed with [onDismiss]), that a paste is being prepared, then the
+ * restricted-folder warning; at the folder a restored tab had its search results at, what they were for,
+ * with a button that searches for it again ([onSearchAgain]).
  */
 @Composable
 private fun Banners(
@@ -360,6 +364,13 @@ private fun Banners(
 ) {
     ui.opsNotice?.let { MessageBar(it, onDismissNotice) }
     ui.message?.let { MessageBar(it, onDismiss, Modifier.testTag(Tags.MESSAGE)) }
+    if (ui.pasting) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+            val style = FluentTheme.type.caption.copy(color = FluentTheme.colors.textSecondary)
+            BasicText(stringResource(R.string.paste_preparing), style = style)
+            LoadingBar()
+        }
+    }
     if (ui.restricted) {
         Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp).testTag(Tags.RESTRICTED_BANNER)) {
             InfoBar(InfoSeverity.WARNING, stringResource(R.string.restricted_banner))
@@ -393,7 +404,10 @@ private fun MessageSeverity.infoSeverity(): InfoSeverity = when (this) {
     MessageSeverity.SUCCESS -> InfoSeverity.SUCCESS
 }
 
-/** What the active tab's location shows: the unavailable drive, the listing error, Home, or the list. */
+/**
+ * What the active tab's location shows: the unavailable drive, the listing error, Home, or the list (of the
+ * Recycle Bin or not), whose rows, when touched, first call [onUseList].
+ */
 @Composable
 private fun Contents(
     ui: ExplorerUiState,
@@ -401,7 +415,11 @@ private fun Contents(
     positions: ListPositions,
     vm: ExplorerViewModel,
     modifier: Modifier,
+    onUseList: () -> Unit,
 ) {
+    val onTap = remember(vm, onUseList) { vm::onTap.after(onUseList) }
+    val onLongPress = remember(vm, onUseList) { vm::onLongPress.after(onUseList) }
+    val onMore = remember(vm, onUseList) { vm::openContextMenu.after(onUseList) }
     val listing = ui.listing
     Box(modifier.fillMaxWidth()) {
         when {
@@ -410,7 +428,9 @@ private fun Contents(
             ui.location == Location.RecycleBin -> if (listing is ListingState.Loading) {
                 LoadingBar()
             } else {
-                RecycleBinView(ui, widthClass, onTap = vm::onTap, onLongPress = vm::onLongPress)
+                RecycleBinView(ui, widthClass, onTap = onTap, onLongPress = onLongPress)
+                // Read again: the rows stay as they are, and where they were scrolled, until the new ones come.
+                if (listing is ListingState.Loaded && listing.refreshing) LoadingBar()
             }
             ui.location == Location.Home -> HomeView(
                 ui,
@@ -427,9 +447,9 @@ private fun Contents(
                     ui = ui,
                     widthClass = widthClass,
                     positions = positions,
-                    onTap = vm::onTap,
-                    onLongPress = vm::onLongPress,
-                    onMore = vm::openContextMenu,
+                    onTap = onTap,
+                    onLongPress = onLongPress,
+                    onMore = onMore,
                     onDispatch = vm::dispatch,
                     onSort = { key -> vm.setView(ui.viewSetting.copy(sort = nextSort(ui.viewSetting.sort, key))) },
                     onScrolled = vm::onScrolled,
@@ -441,6 +461,12 @@ private fun Contents(
             }
         }
     }
+}
+
+/** This, called with an entry once [first] has run. */
+private fun ((FileEntry) -> Unit).after(first: () -> Unit): (FileEntry) -> Unit = { entry ->
+    first()
+    this(entry)
 }
 
 @Composable

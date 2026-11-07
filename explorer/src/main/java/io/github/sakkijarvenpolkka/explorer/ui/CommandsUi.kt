@@ -56,7 +56,7 @@ fun CommandsUi(
     val offered = ui.commands
     fun item(c: Command) =
         CommandItem(Tags.command(c), res.getString(c.label()), c.icon(), c in offered) { onCommand(c) }
-    val canView = (ui.location is Location.Folder || ui.location is Location.SearchResults) && ui.unavailable == null
+    val canView = ui.canView
     val canCreate = NEW_COMMANDS.any { it in offered }
     val inBin = ui.location == Location.RecycleBin
     val search = onSearch?.let { CommandItem(Tags.CMD_SEARCH, searchHint(ui), FluentIcons.Search, ui.canSearch, it) }
@@ -117,6 +117,13 @@ fun EntryMenu(ui: ExplorerUiState, onCommand: (Command) -> Unit, onDismiss: () -
     }
     MenuFlyout(expanded = true, onDismiss = onDismiss, items = items)
 }
+
+/**
+ * Whether the active tab of [this] shows a list whose view can change: a folder or search results, on a
+ * mounted drive (Home and the Recycle Bin have a look of their own).
+ */
+internal val ExplorerUiState.canView: Boolean
+    get() = (location is Location.Folder || location is Location.SearchResults) && unavailable == null
 
 private enum class BarMenu { NEW, SORT, VIEW }
 

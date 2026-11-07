@@ -53,6 +53,7 @@ import io.github.sakkijarvenpolkka.explorer.platform.Volume
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeEvent
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.state.BackTarget
+import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
@@ -463,6 +464,59 @@ class ViewerRoutingTest {
         // Pictures it is not among would start the viewer on another one.
         assertEquals(listOf(b), siblingsOrSelf(b, listOf(a)))
         assertEquals(listOf(b), siblingsOrSelf(b, emptyList()))
+    }
+
+    @Test
+    fun withThePaneOnWhatIsNotTappedInTheListOpensFullScreen() {
+        val notes = file("notes.txt")
+        file("b.txt")
+        settings.addRecent(Recent("primary", "notes.txt", OPENED_AT))
+        start()
+        show(WidthClass.EXPANDED)
+        vm.viewing.togglePane()
+
+        // Home lists no rows for the pane to show it in: a recent file opens full screen.
+        vm.navigate(Location.Home)
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.recent("notes.txt")).performClick()
+        rule.waitForIdle()
+        assertEquals(notes, ui.viewer?.entry?.path)
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
+
+        // Open in the context menu (as Enter) opens the file selected full screen, though the pane shows it.
+        vm.viewing.close()
+        vm.back()
+        rule.waitForIdle()
+        row("b.txt").performTouchInput { longClick() }
+        rule.waitForIdle()
+        inside(ViewerTags.PANE, hasText("text of b.txt")).assertIsDisplayed()
+        row("b.txt").performTouchInput { longClick() }
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.contextCommand(Command.OPEN)).performClick()
+        rule.waitForIdle()
+        assertEquals(entry("b.txt"), ui.viewer?.entry)
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
+
+        vm.viewing.close()
+        rule.waitForIdle()
+        vm.command(Command.OPEN)
+        rule.waitForIdle()
+        assertEquals(entry("b.txt"), ui.viewer?.entry)
+    }
+
+    @Test
+    fun linkToAFileOpensTheFileItLeadsTo() {
+        dir("logs")
+        val log = file("logs/2026-10-24.txt")
+        Files.createSymbolicLink(root.resolve("latest.txt"), log)
+        start()
+        show(WidthClass.COMPACT)
+        row("latest.txt").performClick()
+        rule.waitForIdle()
+        settle()
+        // As the file itself would: in its viewer.
+        assertEquals(log, ui.viewer?.entry?.path)
+        rule.onNodeWithTag(ViewerTags.SCREEN).assertIsDisplayed()
     }
 
     @Test

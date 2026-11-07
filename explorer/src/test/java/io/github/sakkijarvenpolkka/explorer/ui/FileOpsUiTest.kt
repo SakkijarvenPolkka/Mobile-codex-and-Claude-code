@@ -19,10 +19,15 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasScrollToIndexAction
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithText
@@ -30,6 +35,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.TextRange
@@ -68,18 +74,23 @@ import io.github.sakkijarvenpolkka.explorer.state.Command
 import io.github.sakkijarvenpolkka.explorer.state.ConfirmRequest
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
+import io.github.sakkijarvenpolkka.explorer.state.ExtractRequest
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
+import io.github.sakkijarvenpolkka.explorer.state.ListingState
 import io.github.sakkijarvenpolkka.explorer.state.Location
 import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 import io.github.sakkijarvenpolkka.explorer.util.UiText
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -142,8 +153,15 @@ class FileOpsUiTest {
         rule.waitForIdle()
     }
 
-    /** The shell on [root], whose operations run on [fs] on their own threads, with the app's [notice] of them. */
-    private fun showShell(fs: FsBackend = NioFsBackend, notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null)) {
+    /**
+     * The shell on [root], whose operations run on [fs] on their own threads, with the app's [notice] of them;
+     * folders are read (and the clipboard checked) on [io].
+     */
+    private fun showShell(
+        fs: FsBackend = NioFsBackend,
+        notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
+        io: CoroutineDispatcher = Dispatchers.Unconfined,
+    ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root))
         settings.startAt(root, volumes)
         val journal = OperationJournal(folder.newFolder("ops"), NioFsBackend)
@@ -151,7 +169,7 @@ class FileOpsUiTest {
         val fileOps = FileOps(fs, volumes, LABELS, journal, ids = ::newId, bin = bin)
         val runner = OperationRunner(runnerScope, fileOps, journal, Dispatchers.IO, host = null)
         val deps = ExplorerDeps(
-            NioFsBackend, settings, volumes, volumes, MimeResolver(), Dispatchers.Unconfined,
+            NioFsBackend, settings, volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
             opsNotice = notice, clearOpsNotice = { notice.value = null },
         )
@@ -183,6 +201,12 @@ class FileOpsUiTest {
     private fun waitFor(condition: () -> Boolean) = rule.waitUntil(10_000) {
         rule.waitForIdle()
         condition()
+    }
+
+    /** Runs what is queued on [io], then on the main thread, a few rounds over: each hands work to the other. */
+    private fun drain(io: TestDispatcher) = repeat(5) {
+        io.scheduler.advanceUntilIdle()
+        rule.waitForIdle()
     }
 
     /** Lets the question shown be seen long enough for its answers to be taken ([QUESTION_ARMING_MS]). */
@@ -314,6 +338,96 @@ class FileOpsUiTest {
         rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("a.xpart (2)")
         rule.onNodeWithText(str(R.string.name_reserved)).assertDoesNotExist()
         button(str(R.string.ok)).assertIsEnabled()
+    }
+
+    @Test
+    fun refreshingTheRecycleBinKeepsItsRowsAndScroll() {
+        repeat(60) { file("f%02d.txt".format(it)) }
+        val io = StandardTestDispatcher()
+        showShell(io = io)
+        drain(io)
+        vm.command(Command.SELECT_ALL)
+        vm.delete(permanent = false)
+        waitFor {
+            drain(io)
+            names().isEmpty()
+        }
+        vm.navigate(Location.RecycleBin)
+        drain(io)
+        assertEquals(60, names().size)
+        rule.onNode(hasScrollToIndexAction() and hasAnyAncestor(hasTestTag(Tags.RECYCLE_BIN))).performScrollToIndex(40)
+        rule.waitForIdle()
+        row("f40.txt").assertIsDisplayed()
+
+        // Read again (the app came back, F5, an item restored): the rows stay, where they were, until the new ones come.
+        vm.refresh()
+        rule.waitForIdle()
+        assertTrue(vm.ui.value.listing is ListingState.Loaded)
+        rule.onNodeWithTag(Tags.RECYCLE_BIN).assertExists()
+        row("f40.txt").assertIsDisplayed()
+        drain(io)
+        assertEquals(60, names().size)
+        row("f40.txt").assertIsDisplayed()
+        row("f00.txt").assertDoesNotExist()
+    }
+
+    @Test
+    fun pasteShowsThatItIsPreparing() {
+        file("a.txt")
+        val dst = Files.createDirectory(root.resolve("dst"))
+        val io = StandardTestDispatcher()
+        showShell(io = io)
+        drain(io)
+        vm.dispatch(TabAction.Select(root.resolve("a.txt")))
+        vm.copy()
+        vm.navigate(Location.Folder(dst))
+        drain(io)
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).performClick()
+        rule.waitForIdle()
+
+        // Finding out what to paste (on the I/O dispatcher, which has not run): said so, and Paste waits.
+        rule.onNodeWithText(str(R.string.paste_preparing)).assertIsDisplayed()
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).assertIsNotEnabled()
+        waitFor {
+            drain(io)
+            names() == listOf("a.txt")
+        }
+        rule.onNodeWithText(str(R.string.paste_preparing)).assertDoesNotExist()
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).assertIsEnabled()
+    }
+
+    @Test
+    fun renameKeepsWhatWasTypedWhenRecreated() {
+        val photo = entry(file("IMG_2041.jpg"))
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            FluentTheme(dark = false, accent = null) { RenameDialog(photo, VolumeTraits(), onCommit = {}, onDismiss = {}) }
+        }
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("Wedding cake.jpg")
+
+        // As when the activity is made again (rotation, a dark mode switch, a keyboard attached).
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithTag(Tags.RENAME_FIELD).assert(hasText("Wedding cake.jpg"))
+    }
+
+    @Test
+    fun conflictAndExtractChoicesSurviveRecreation() {
+        val a = entry(file("a.txt"))
+        val zip = entry(file("photos.zip"))
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            FluentTheme(dark = false, accent = null) {
+                val kind = ConflictKind.FILE_FILE
+                ConflictDialog(Conflict(kind, a, a), allowedActions(kind), 3, onAnswer = {}, onCancel = {})
+                ExtractDialog(ExtractRequest(zip, "UTF-8", root.resolve("photos")), emptyList(), {}, onDismiss = {})
+            }
+        }
+        rule.onNodeWithTag(Tags.APPLY_TO_ALL).performClick()
+        rule.onNodeWithTag(Tags.extractEncoding(null)).performClick()
+
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithTag(Tags.APPLY_TO_ALL).assertIsOn()
+        rule.onNodeWithTag(Tags.extractEncoding(null)).assertIsSelected()
     }
 
     @Test

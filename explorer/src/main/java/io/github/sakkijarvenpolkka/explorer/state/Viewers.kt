@@ -66,9 +66,10 @@ internal class Viewers(
     private var pickedVolume: String? = null
 
     /**
-     * Opens the file [entry], one of the active tab's [rows]: a file the viewers show goes in the preview
-     * pane while it shows, unless [fullScreen], else full screen (a picture with the other pictures of
-     * [rows], in their order, to swipe to); any other file goes to another app. A file gone since its
+     * Opens the file [entry], with the active tab's [rows]: a file the viewers show goes in the preview
+     * pane while it shows, if it is one of [rows] (a tap on it), unless [fullScreen]; else full screen (a
+     * picture with the other pictures of [rows], in their order, to swipe to), as a file not listed (a recent
+     * file on Home, a link's target) and Open are. Any other file goes to another app. A file gone since its
      * folder was read shows "not found" and the folder is read again. A file a viewer shows becomes a
      * recent one, as does one another app was started for.
      */
@@ -142,7 +143,7 @@ internal class Viewers(
     private fun show(entry: FileEntry, kind: PreviewKind, rows: List<Row>, fullScreen: Boolean) {
         deps.addRecent(entry.path)
         val volume = deps.lookup.volumeOf(entry.path)?.uuid
-        if (state.value.paneShown && !fullScreen) {
+        if (state.value.paneShown && !fullScreen && rows.any { it.entry.path == entry.path }) {
             pickedVolume = volume
             mutableState.update { it.copy(picked = entry) }
             return

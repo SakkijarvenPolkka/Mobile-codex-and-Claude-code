@@ -168,6 +168,8 @@
     <string name="op_name_empty_bin">emptying the Recycle Bin</string>
     <string name="op_name_compress">compressing</string>
     <string name="op_name_extract">extracting</string>
+    <string name="paste_gone">The items to paste are no longer there</string>
+    <string name="paste_preparing">Preparing to paste…</string>
 
     <!-- File operations: errors -->
     <string name="err_no_space">There isn\'t enough space</string>

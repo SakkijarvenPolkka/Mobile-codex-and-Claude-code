@@ -89,22 +89,23 @@ class CommandsTest {
     @Test
     fun twoSelectedCannotBeRenamedOrOpenedWith() {
         val two = commands(selection = listOf(file("a.txt"), file("b.txt")))
-        assertLacks(two, RENAME, OPEN_WITH)
-        assertHas(two, OPEN, CUT, COPY, SHARE, DELETE, DELETE_PERMANENT, COMPRESS, PROPERTIES)
+        // Open opens one item: offered for several, it would do nothing.
+        assertLacks(two, RENAME, OPEN_WITH, OPEN)
+        assertHas(two, CUT, COPY, SHARE, DELETE, DELETE_PERMANENT, COMPRESS, PROPERTIES)
     }
 
     @Test
     fun foldersCanBePinnedButNotShared() {
         val folders = listOf(folder("Music"), folder("Movies"))
         val unpinned = commands(selection = folders)
-        assertHas(unpinned, PIN, OPEN, CUT, COPY, DELETE)
-        assertLacks(unpinned, SHARE, UNPIN, OPEN_WITH)
+        assertHas(unpinned, PIN, CUT, COPY, DELETE)
+        assertLacks(unpinned, SHARE, UNPIN, OPEN_WITH, OPEN)
         val pinned = commands(selection = folders, pinned = true)
         assertHas(pinned, UNPIN)
         assertLacks(pinned, PIN)
 
         val single = commands(selection = listOf(folder("Music")))
-        assertHas(single, RENAME, PIN)
+        assertHas(single, RENAME, PIN, OPEN)
         assertLacks(single, OPEN_WITH, SHARE, EXTRACT)
 
         val mixed = commands(selection = listOf(folder("Music"), file("a.txt")))
@@ -172,8 +173,9 @@ class CommandsTest {
     @Test
     fun homeOffersRefreshAndOptionsOnly() {
         assertEquals(setOf(REFRESH, OPTIONS), commands(LocationKind.HOME, clipboard = clipboard))
+        assertEquals(setOf(REFRESH, OPTIONS, OPEN), commands(LocationKind.HOME, listOf(file("a.zip")), clipboard))
         assertEquals(
-            setOf(REFRESH, OPTIONS, OPEN),
+            setOf(REFRESH, OPTIONS),
             commands(LocationKind.HOME, listOf(folder("Music"), file("a.zip")), clipboard, binEmpty = false),
         )
     }

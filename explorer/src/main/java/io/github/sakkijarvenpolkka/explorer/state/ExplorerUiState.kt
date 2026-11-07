@@ -146,7 +146,8 @@ sealed interface Overlay {
  * until it is read), [favorites] the pinned folders, in the user's order, and [unavailableTabs] every tab
  * whose folder is on a volume that is not mounted, with where on it. [reveal] is an item to scroll the list
  * to once it is listed (such as the archive a compression made), and to report as done
- * ([ExplorerViewModel.revealed]).
+ * ([ExplorerViewModel.revealed]). [pasting] is set while a paste is being prepared (what to paste is looked
+ * at, and what a removable drive cannot store), before its operation runs.
  */
 data class ExplorerUiState(
     val tabs: TabsModel,
@@ -180,6 +181,7 @@ data class ExplorerUiState(
     val favorites: List<PinnedFolder> = emptyList(),
     val unavailableTabs: Map<TabId, DecodedLocation.Unavailable> = emptyMap(),
     val reveal: Path? = null,
+    val pasting: Boolean = false,
 ) {
     /** The active tab's location. */
     val location: Location get() = tabs.active.current.location

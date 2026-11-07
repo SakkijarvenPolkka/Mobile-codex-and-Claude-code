@@ -16,7 +16,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,7 +52,10 @@ fun ConflictDialog(
     onCancel: () -> Unit,
 ) {
     val armed = rememberArmed()
-    var toAll by remember(conflict) { mutableStateOf(false) }
+    // Kept when the activity is made again (the conflict waits in the runner, which outlives it).
+    var toAll by rememberSaveable(conflict.source.path.toString(), conflict.existing.path.toString()) {
+        mutableStateOf(false)
+    }
     val title = if (conflict.kind == ConflictKind.DIR_DIR) R.string.conflict_folder_title else R.string.conflict_title
     ContentDialog(
         title = stringResource(title),

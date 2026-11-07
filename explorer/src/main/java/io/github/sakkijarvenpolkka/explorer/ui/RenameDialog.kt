@@ -12,6 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -40,7 +41,8 @@ import io.github.sakkijarvenpolkka.explorer.util.text
  * name, by the rules of its volume ([traits], [NameValidator]), shows while typing, and OK is enabled
  * only without it; OK and Done call [onCommit] with the name as typed, Cancel and Back [onDismiss].
  * Why renaming to a name failed ([failure]) shows while that name is in the box; the dialog stays open
- * with what was typed until the rename is done. While it is [pending], OK and Done do nothing.
+ * with what was typed until the rename is done, also when the activity is made again (a rotation). While it
+ * is [pending], OK and Done do nothing.
  */
 @Composable
 fun RenameDialog(
@@ -51,7 +53,9 @@ fun RenameDialog(
     failure: RenameError? = null,
     pending: Boolean = false,
 ) {
-    var value by remember(entry) { mutableStateOf(TextFieldValue(entry.name, preselection(entry))) }
+    var value by rememberSaveable(entry.path.toString(), stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(entry.name, preselection(entry)))
+    }
     val problem = (NameValidator.validate(value.text, traits) as? NameCheck.Bad)?.problem
     val commit = { if (problem == null && !pending) onCommit(value.text) }
     ContentDialog(

@@ -30,6 +30,18 @@ class ClipboardHolder {
     }
 
     /**
+     * Drops the items in [gone], those no longer there, from a cut and a copied clipboard alike: it clears
+     * once none is left, so that Paste is not offered to paste nothing.
+     */
+    fun dropGone(gone: Set<Path>) {
+        if (gone.isEmpty()) return
+        current.update { clip ->
+            val left = clip?.paths?.filterNot { it in gone } ?: return@update null
+            if (left.isEmpty()) null else clip.copy(paths = left)
+        }
+    }
+
+    /**
      * After a paste: a cut drops the items in [moved], the ones actually moved, and keeps the
      * rest for another try; the clipboard clears once all are gone. A copy is kept as it is.
      */

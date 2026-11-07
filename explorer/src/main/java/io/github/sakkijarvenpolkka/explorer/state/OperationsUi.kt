@@ -70,8 +70,8 @@ internal class OperationsUi(
      * What the shell shows of the operations: the item the rename dialog is open for ([renaming]), whether
      * its rename is under way ([renamePending]) and why the name typed there could not be given to it
      * ([renameError]), the question to answer ([confirm]), whether the progress shows as a chip
-     * ([inBackground]), the operations whose failures to list, the first one first ([failures]), and the
-     * app's notice of them ([notice]).
+     * ([inBackground]), the operations whose failures to list, the first one first ([failures]), the
+     * app's notice of them ([notice]), and whether a paste is being prepared ([pasting]).
      */
     data class State(
         val renaming: FileEntry? = null,
@@ -81,6 +81,7 @@ internal class OperationsUi(
         val inBackground: Boolean = false,
         val failures: List<FinishedOp> = emptyList(),
         val notice: UiMessage? = null,
+        val pasting: Boolean = false,
     )
 
     private val mutableState = MutableStateFlow(State())
@@ -161,35 +162,48 @@ internal class OperationsUi(
 
     /**
      * Pastes the clipboard into the active tab's folder: the items still there, in clipboard order, are
-     * copied or moved; those gone are left out (and out of a cut clipboard). When that cannot be told, a
-     * message says why and the clipboard stays as it is. Onto removable media, the items it cannot store
-     * ([FileOps.precheck]) are asked about first ([ConfirmRequest.SkipUnstorable]).
+     * copied or moved; those gone leave the clipboard, cut or copied, and a message says when none is left.
+     * When that cannot be told, a message says why and the clipboard stays as it is. Onto removable media,
+     * the items it cannot store ([FileOps.precheck], which reads all that would be pasted) are asked about
+     * first ([ConfirmRequest.SkipUnstorable]). Until the operation is asked for or asked about
+     * ([State.pasting]), another paste does nothing.
      */
     fun paste() {
         val clip = clipboard.state.value ?: return
         val fileOps = deps.fileOps ?: return
         val at = shell.here()
         val target = (at as? Location.Folder)?.path ?: return
+        if (state.value.pasting) return
+        mutableState.update { it.copy(pasting = true) }
         scope.launch {
-            val there = try {
-                present(clip.paths)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                return@launch shell.showError(at, errorText(e.toFsError()))
+            try {
+                pasteInto(target, clip, fileOps, at)
+            } finally {
+                mutableState.update { it.copy(pasting = false) }
             }
-            if (clip.mode == ClipMode.CUT) clipboard.afterPaste(clip.paths.filterNot { it in there }.toSet())
-            if (there.isEmpty()) return@launch
-            val kind = if (clip.mode == ClipMode.CUT) OpKind.MOVE else OpKind.COPY
-            val spec = OperationSpec(newId(), kind, there.map { it.toString() }, target.toString())
-            val removable = deps.lookup.volumeOf(target)?.removable == true
-            val unstorable = if (removable) unstorableIn(fileOps, spec).map { it.path }.toSet() else emptySet()
-            // Only what is pasted can be left out: what is inside the folders that go fails by itself, and is listed.
-            val skipped = spec.sources.filter { it in unstorable }.toSet()
-            if (skipped.isEmpty()) return@launch submit(spec)
-            val rest = spec.copy(sources = spec.sources.filterNot { it in skipped })
-            ask(ConfirmRequest.SkipUnstorable(skipped.size, rest))
         }
+    }
+
+    /** Pastes [clip] into [target], the folder the active tab shows at [at], with [fileOps] ([paste]). */
+    private suspend fun pasteInto(target: Path, clip: Clipboard, fileOps: FileOps, at: Location) {
+        val there = try {
+            present(clip.paths)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return shell.showError(at, errorText(e.toFsError()))
+        }
+        clipboard.dropGone(clip.paths.filterNot { it in there }.toSet())
+        if (there.isEmpty()) return shell.showError(at, UiText.res(R.string.paste_gone))
+        val kind = if (clip.mode == ClipMode.CUT) OpKind.MOVE else OpKind.COPY
+        val spec = OperationSpec(newId(), kind, there.map { it.toString() }, target.toString())
+        val removable = deps.lookup.volumeOf(target)?.removable == true
+        val unstorable = if (removable) unstorableIn(fileOps, spec).map { it.path }.toSet() else emptySet()
+        // Only what is pasted can be left out: what is inside the folders that go fails by itself, and is listed.
+        val skipped = spec.sources.filter { it in unstorable }.toSet()
+        if (skipped.isEmpty()) return submit(spec)
+        val rest = spec.copy(sources = spec.sources.filterNot { it in skipped })
+        ask(ConfirmRequest.SkipUnstorable(skipped.size, rest))
     }
 
     /**

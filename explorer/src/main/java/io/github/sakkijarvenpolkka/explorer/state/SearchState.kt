@@ -12,6 +12,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.ListOptions
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
 import io.github.sakkijarvenpolkka.explorer.fs.SearchEvent
 import io.github.sakkijarvenpolkka.explorer.fs.SortSpec
+import io.github.sakkijarvenpolkka.explorer.fs.isPresent
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
 import io.github.sakkijarvenpolkka.explorer.fs.search
 import kotlinx.coroutines.CoroutineScope
@@ -25,6 +26,7 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
+import java.io.IOException
 import java.nio.file.Path
 
 /** How long the search box waits after the last change of its text before it searches. */
@@ -46,6 +48,9 @@ internal interface SearchHost {
 
     /** Goes back in the active tab. */
     fun back()
+
+    /** Takes [paths], gone, out of the active tab's selection. */
+    fun deselect(paths: Set<Path>)
 }
 
 /**
@@ -68,8 +73,8 @@ internal fun searchTarget(here: Location, query: String): Location.SearchResults
  * to [Location.SearchResults] in the same tab, pushed on its history from a folder; refined (from search
  * results, or from the folder a restored tab had its search results at), it takes their place, so that Back
  * goes to the folder. The tab's listing then comes from [results]; a new search there cancels the one before
- * with it, [cancel] stops one, keeping what it found, and [clear] goes back to the folder. Main thread only,
- * in [scope].
+ * with it, [cancel] stops one, keeping what it found, and [clear] goes back to the folder, as emptying the box
+ * does ([search]). Main thread only, in [scope].
  */
 internal class Searches(
     private val deps: ExplorerDeps,
@@ -93,7 +98,9 @@ internal class Searches(
 
     /**
      * Searches for [query], in the tab active now, once nothing else is asked for in [SEARCH_DELAY_MS]; not
-     * when that tab is no longer active by then, or has gone elsewhere (Back, a folder opened).
+     * when that tab is no longer active by then, or has gone elsewhere (Back, a folder opened). Emptied (with
+     * Backspace), the box leaves search results for the folder searched, as [clear] does; spaces alone are no
+     * search, and change nothing.
      */
     fun search(query: String, includeSubfolders: Boolean) {
         val tab = host.searchedTab()
@@ -101,7 +108,10 @@ internal class Searches(
         waiting = scope.launch {
             delay(SEARCH_DELAY_MS)
             val now = host.searchedTab()
-            if (tab != null && now?.id == tab.id && now.current.location == tab.current.location) {
+            if (tab == null || now?.id != tab.id || now.current.location != tab.current.location) return@launch
+            if (query.isEmpty() && now.current.location is Location.SearchResults) {
+                leaveResults(now)
+            } else {
                 start(query, includeSubfolders, again = false)
             }
         }
@@ -119,15 +129,10 @@ internal class Searches(
         host.searchedTab()?.let { stop(it.id) }
     }
 
-    /**
-     * The search box emptied (its ×): [cancel], and from search results back to the folder searched, as
-     * Back goes there; where Back goes elsewhere, the folder takes their place.
-     */
+    /** The search box emptied (its ×): [cancel], and out of the search results ([leaveResults]). */
     fun clear() {
         cancel()
-        val tab = host.searchedTab() ?: return
-        val folder = Location.Folder((tab.current.location as? Location.SearchResults)?.root ?: return)
-        if (tab.back.lastOrNull()?.location == folder) host.back() else host.replaceHere(folder)
+        host.searchedTab()?.let(::leaveResults)
     }
 
     /** Stops the walk of [tab]'s search, if one runs: what it found stays. */
@@ -155,7 +160,8 @@ internal class Searches(
      * not at all, nor what is under it), the folders Android withholds never ([isRestrictedAppDataPath]).
      * It walks and sorts on [ExplorerDeps.io]; once stopped ([cancel]), what it found shows as done and
      * stopped. A search run again shows the rows it had found before ([shown]) until it has found as many,
-     * or is done.
+     * or is done: but for those no longer there (an operation deleted, moved or renamed them), which leave
+     * the tab's selection too ([stillThere]).
      */
     fun results(
         tab: TabId,
@@ -166,8 +172,16 @@ internal class Searches(
         val walked = found(location, options.showHidden, subfolders[tab] ?: true, obbAllowed())
         val stop = Job().also { stops[tab] = it }
         val sort = MutableStateFlow(options.sort).also { sorts[tab] = it }
-        val before = shown.map { it.entry }
+        val rowsOf = { hits: List<FileEntry>, by: SortSpec ->
+            Listing.sort(hits, by).map { Row(it, RowExtra.SearchInfo(it.path.parent ?: location.root)) }
+        }
         return flow {
+            val before = stillThere(shown, tab)
+            // Shown at once, rather than once the walk has found something.
+            if (before.size < shown.size) {
+                val rows = rowsOf(before, sort.value)
+                emit(ListingState.Streaming(rows, done = false, capped = false, skippedDirs = 0, location.root))
+            }
             // Sorted again only when there are new hits, or a new sort: not at each report of where it is.
             var sorted: Pair<List<FileEntry>, SortSpec>? = null
             var rows = emptyList<Row>()
@@ -175,13 +189,43 @@ internal class Searches(
                 // Until it has caught up, what was found before stays: no list emptied, no scroll lost.
                 val hits = if (!found.done && found.hits.size < before.size) before else found.hits
                 if (sorted?.first !== hits || sorted?.second != by) {
-                    rows = Listing.sort(hits, by).map { Row(it, RowExtra.SearchInfo(it.path.parent ?: location.root)) }
+                    rows = rowsOf(hits, by)
                     sorted = hits to by
                 }
                 ListingState.Streaming(rows, found.done, found.capped, found.skipped, found.current, found.stopped)
             }
             emitAll(listed)
         }.flowOn(deps.io)
+    }
+
+    /**
+     * The entries of [shown] still there (one that cannot be looked at stays, for the walk to tell), looked at
+     * where it is called (off the main thread); those gone leave [tab]'s selection, if it is still active.
+     */
+    private fun stillThere(shown: List<Row>, tab: TabId): List<FileEntry> {
+        val (kept, gone) = shown.map { it.entry }.partition { entry ->
+            try {
+                deps.fs.isPresent(entry.path)
+            } catch (e: IOException) {
+                true
+            }
+        }
+        if (gone.isNotEmpty()) {
+            val paths = gone.mapTo(HashSet()) { it.path }
+            scope.launch { if (host.searchedTab()?.id == tab) host.deselect(paths) }
+        }
+        return kept
+    }
+
+    /**
+     * From [tab]'s search results back to the folder searched, as Back goes there (where Back goes elsewhere,
+     * the folder takes their place), its search stopped; nothing for a tab elsewhere. The search waiting to
+     * start, if any, is left as it is.
+     */
+    private fun leaveResults(tab: TabState) {
+        val folder = Location.Folder((tab.current.location as? Location.SearchResults)?.root ?: return)
+        stop(tab.id)
+        if (tab.back.lastOrNull()?.location == folder) host.back() else host.replaceHere(folder)
     }
 
     private fun start(query: String, includeSubfolders: Boolean, again: Boolean) {

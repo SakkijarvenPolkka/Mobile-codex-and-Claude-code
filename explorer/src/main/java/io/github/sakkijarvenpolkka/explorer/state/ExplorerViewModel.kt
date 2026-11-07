@@ -164,16 +164,17 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     fun refresh() = ensureLoaded(refresh = true)
 
     /**
-     * Opens [entry]: a folder here (a link is followed when it leads to a folder in storage), a ZIP archive in
-     * the extract dialog where its folder takes the new one ([ZipUi.extracts]), a file in its built-in viewer or
-     * else another app ([Viewers.open]). An APK needs the user to let this app install apps first, which a
-     * message offers to do.
+     * Opens [entry]: a folder here, a link as what it leads to in storage, a ZIP archive in the extract dialog
+     * where its folder takes the new one ([ZipUi.extracts]), a file in its built-in viewer (in the preview pane
+     * for a tap on it, unless [fullScreen]) or else another app ([Viewers.open]). An APK needs the user to let
+     * this app install apps first, which a message offers to do.
      */
-    fun open(entry: FileEntry) {
+    fun open(entry: FileEntry, fullScreen: Boolean = false) {
         when (entry.kind) {
             EntryKind.DIR -> navigate(Location.Folder(entry.path))
             EntryKind.SYMLINK -> goTo(entry.path.toString(), base = null, showFile = false)
-            EntryKind.FILE -> if (zips.extracts(entry)) requestExtract(entry) else viewing.open(entry, listedRows())
+            EntryKind.FILE ->
+                if (zips.extracts(entry)) requestExtract(entry) else viewing.open(entry, listedRows(), fullScreen)
             // A pipe, socket or device: no app reads it as a file.
             EntryKind.OTHER -> host.showError(here(), UiText.res(R.string.open_unsupported))
         }
@@ -244,7 +245,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     /** Sets the view of the active tab's folder; folders without a view of their own take it from now on. */
     fun setView(v: ViewSetting) {
-        val key = codec.encode(tabs.value.active.current.location) ?: return
+        // Home and the Recycle Bin have a look of their own.
+        if (here() == Location.Home || here() == Location.RecycleBin) return
+        val key = codec.encode(here()) ?: return
         settings.setView(key, v)
         settings.updateGlobal { it.copy(defaultView = v) }
         shell.update { it.copy(viewRevision = it.viewRevision + 1) }
@@ -352,7 +355,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             Command.INVERT -> reduce(TabAction.Invert(listedRows().map { it.entry.path }))
             Command.REFRESH -> refresh()
             Command.OPTIONS -> shell.update { it.copy(overlay = Overlay.Options) }
-            Command.OPEN -> selectedEntries().singleOrNull()?.let(::open)
+            Command.OPEN -> selectedEntries().singleOrNull()?.let { open(it, fullScreen = true) }
             Command.OPEN_WITH -> selectedEntries().singleOrNull()?.let(handOver::openWith)
             Command.SHARE -> handOver.share(selectedEntries().map { it.path })
             Command.PROPERTIES -> showProperties()
@@ -376,15 +379,19 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     /** What [entries] hold, counted off the main thread while the flow is collected ([countContents]). */
     fun contentsOf(entries: List<FileEntry>): Flow<ContentCount> = countContents(deps.fs, entries).flowOn(deps.io)
 
-    /** Opens the menu of [folder]'s subfolders (nothing when it has none or is on no mounted volume). */
+    /**
+     * Opens the menu of [folder]'s subfolders (nothing when it has none or is on no mounted volume), unless the
+     * active tab has gone elsewhere, or something else opened, while they were read.
+     */
     fun showSubfolders(folder: Path) {
         if (deps.lookup.volumeOf(folder) == null) return
         val options = ListOptions(showHidden = settings.global.value.showHidden)
-        val at = here()
+        val (tab, at) = tabs.value.activeId to here()
         viewModelScope.launch {
             val listed = readOrTell(at) { Listing.list(deps.fs, folder, options) { null } } ?: return@launch
             val children = listed.filter { it.kind == EntryKind.DIR }
-            if (children.isNotEmpty()) shell.update { it.copy(overlay = Overlay.Subfolders(folder, children)) }
+            if (children.isEmpty() || tabs.value.activeId != tab) return@launch
+            host.openAt(at, Overlay.Subfolders(folder, children))
         }
     }
 
@@ -488,7 +495,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             val results = searches.results(tab.id, search, options, shown = if (again) listedRows() else emptyList())
             return loader.setSource(tab.id, results, refresh = again)
         }
-        if (folder == null) return loader.setSource(tab.id, ops.binListing())
+        if (folder == null) return loader.setSource(tab.id, ops.binListing(), refresh = again)
         loader.load(tab.id, folder, options, refresh = again)
     }
 
@@ -520,13 +527,16 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun onRawMount(): Boolean = (here() as? Location.Folder)?.path?.let(deps.lookup::isOnRawMount) == true
 
     /**
-     * Resolves [text] (against [base] when relative) off the main thread and goes to the folder,
-     * or with [showFile] to a file's folder with the file selected.
+     * Resolves [text] (against [base] when relative) off the main thread and goes to the folder, or with
+     * [showFile] to a file's folder with the file selected, else opens the file (a link's); nothing once the
+     * active tab has gone elsewhere meanwhile.
      */
     private fun goTo(text: String, base: Path?, showFile: Boolean) {
-        val at = here()
+        val (tab, at) = tabs.value.activeId to here()
         viewModelScope.launch {
-            when (val target = readOrTell(at) { resolvePath(deps.fs, deps.lookup, text, base) } ?: return@launch) {
+            val target = readOrTell(at) { resolvePath(deps.fs, deps.lookup, text, base) } ?: return@launch
+            if (tabs.value.activeId != tab || here() != at) return@launch
+            when (target) {
                 is Resolved.Folder -> {
                     closeOverlay()
                     navigate(Location.Folder(target.path))
@@ -535,6 +545,8 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
                     closeOverlay()
                     navigate(Location.Folder(target.path.parent))
                     reduce(TabAction.Select(target.path))
+                } else {
+                    readOrTell(at) { Listing.entry(deps.fs, target.path, deps.mime::mimeOf) }?.let(::open)
                 }
                 Resolved.Outside -> host.showError(at, UiText.res(R.string.outside_storage))
                 is Resolved.Failed -> host.showError(at, errorText(target.error))
@@ -633,7 +645,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             env.volumes.any { it.uuid == volume.uuid && it.state == VolumeState.MOUNTED_READ_ONLY }
         val pinned = allPinned(selected, folder, env.pins.favorites, deps.lookup)
         val traits = Place(unavailable != null, restricted, writable = volume != null && !readOnly)
-        val commands = commandsAt(location, selected, rows, env.clipboard, traits, pinned)
+        val commands = commandsAt(location, selected, rows, env.clipboard, traits, pinned, opsState.pasting)
         return ExplorerUiState(
             tabs = core.tabs,
             listing = listing,
@@ -666,6 +678,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             favorites = env.pins.folders,
             unavailableTabs = core.unavailable,
             reveal = core.shell.reveal,
+            pasting = opsState.pasting,
         )
     }
 
@@ -690,6 +703,9 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
         override fun refresh() = this@ExplorerViewModel.refresh()
 
         override fun back() = this@ExplorerViewModel.back()
+
+        override fun deselect(paths: Set<Path>) =
+            reduce(TabAction.Prune(tabs.value.active.selection.items.filterNot { it in paths }))
 
         override fun refreshShowing(affected: (Location) -> Boolean) {
             val model = tabs.value

@@ -840,9 +840,63 @@ class ExplorerViewModelOpsTest {
         vm.paste()
         drain()
 
-        assertNull(ui.message)
+        assertEquals(UiMessage(UiText.res(R.string.paste_gone), MessageSeverity.ERROR), ui.message)
         assertNull(ui.clipboard)
         assertEquals(emptyList<String>(), names())
+    }
+
+    @Test
+    fun pastingWhatIsGoneSaysSoAndForgetsIt() {
+        val a = file("a.txt")
+        val dst = dir("dst")
+        start()
+        select("a.txt")
+        vm.copy()
+        Files.delete(a)
+        goTo(dst)
+        vm.paste()
+        drain()
+
+        // Nothing is left to copy: told so, and Paste is not offered again for it.
+        assertEquals(UiMessage(UiText.res(R.string.paste_gone), MessageSeverity.ERROR), ui.message)
+        assertNull(ui.clipboard)
+        assertFalse(Command.PASTE in ui.commands)
+    }
+
+    @Test
+    fun copiedItemsThatAreGoneLeaveTheClipboard() {
+        file("a.txt")
+        file("b.txt")
+        val dst = dir("dst")
+        start()
+        select("a.txt", "b.txt")
+        vm.copy()
+        Files.delete(root.resolve("a.txt"))
+        goTo(dst)
+        vm.paste()
+        drain()
+
+        assertEquals(listOf("b.txt"), names())
+        assertEquals(Clipboard(listOf(root.resolve("b.txt")), ClipMode.COPY), ui.clipboard)
+    }
+
+    @Test
+    fun pasteWhilePreparingIsIgnored() {
+        file("a.txt", "a")
+        start()
+        select("a.txt")
+        vm.copy()
+        vm.paste()
+        shadowOf(Looper.getMainLooper()).idle()
+
+        // Still finding out what to paste (on the I/O dispatcher): it says so, and no second paste starts.
+        assertTrue(ui.pasting)
+        assertFalse(Command.PASTE in ui.commands)
+        vm.paste()
+        drain()
+        assertEquals(listOf("a - Copy.txt", "a.txt"), names())
+        assertFalse(ui.pasting)
+        assertTrue(Command.PASTE in ui.commands)
     }
 
     @Test

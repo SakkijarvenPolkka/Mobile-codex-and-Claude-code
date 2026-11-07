@@ -164,6 +164,57 @@ class ExplorerViewModelTest {
     }
 
     @Test
+    fun pathResolvedLateGoesNowhereOnceTheTabMoved() {
+        dir("a")
+        dir("b")
+        val io = StandardTestDispatcher()
+        start(io = io)
+        drain(io)
+        val first = ui.tabs.activeId
+
+        // Still being resolved when the tab goes elsewhere: it stays there.
+        vm.typedPath("$root/a")
+        vm.navigate(Location.Folder(root.resolve("b")))
+        drain(io)
+        assertEquals(Location.Folder(root.resolve("b")), location())
+
+        // Nor does another tab, made active meanwhile, go there instead.
+        vm.typedPath("$root/a")
+        vm.newTab()
+        drain(io)
+        assertEquals(Location.Home, location())
+        vm.activate(first)
+        drain(io)
+        assertEquals(Location.Folder(root.resolve("b")), location())
+    }
+
+    @Test
+    fun subfoldersReadLateOpenNowhereElse() {
+        dir("a/x")
+        dir("b")
+        val io = StandardTestDispatcher()
+        start(io = io)
+        drain(io)
+
+        // The chevron of a, then another folder before its subfolders are read: no menu over that one.
+        vm.showSubfolders(root.resolve("a"))
+        vm.navigate(Location.Folder(root.resolve("b")))
+        drain(io)
+        assertNull(ui.overlay)
+
+        // Nor in place of what was opened meanwhile.
+        vm.showSubfolders(root.resolve("a"))
+        vm.command(Command.OPTIONS)
+        drain(io)
+        assertEquals(Overlay.Options, ui.overlay)
+
+        vm.closeOverlay()
+        vm.showSubfolders(root.resolve("a"))
+        drain(io)
+        assertEquals(listOf("x"), (ui.overlay as? Overlay.Subfolders)?.children?.map { it.name })
+    }
+
+    @Test
     fun longPressSelectsThenSecondLongPressOpensMenuFlag() {
         file("a.txt")
         file("b.txt")

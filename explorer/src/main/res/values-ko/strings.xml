@@ -166,6 +166,8 @@
     <string name="op_name_empty_bin">휴지통 비우기</string>
     <string name="op_name_compress">압축</string>
     <string name="op_name_extract">압축 풀기</string>
+    <string name="paste_gone">붙여 넣을 항목이 더 이상 없습니다</string>
+    <string name="paste_preparing">붙여넣기 준비 중…</string>
 
     <!-- File operations: errors -->
     <string name="err_no_space">공간이 부족합니다</string>

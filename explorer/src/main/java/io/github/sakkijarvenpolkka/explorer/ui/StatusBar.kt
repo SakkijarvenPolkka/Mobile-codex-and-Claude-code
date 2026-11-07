@@ -38,8 +38,9 @@ import io.github.sakkijarvenpolkka.explorer.util.Formats
 /**
  * "N items · M selected  size" and, at the end, the chip of the operation [running] in the
  * background ([ExplorerUiState.progressInBackground]; [onShowProgress] shows its dialog again) and
- * the details and large icons switches ([onSetMode]). The size of the selection shows only when it
- * holds files only; with a folder in it the bar reads "N items selected".
+ * the details and large icons switches ([onSetMode]), which work where the view can change
+ * ([canView]). The size of the selection shows only when it holds files only; with a folder in it
+ * the bar reads "N items selected".
  */
 @Composable
 fun StatusBar(
@@ -76,13 +77,14 @@ fun StatusBar(
             }
         }
         if (running != null && ui.progressInBackground) ProgressChip(running, onShowProgress)
-        val mode = ui.viewSetting.mode
+        // Nowhere to change the view, neither shows as the one on.
+        val mode = ui.viewSetting.mode.takeIf { ui.canView }
         val details = stringResource(R.string.view_details)
-        ViewSwitch(FluentIcons.Menu, details, mode == ViewMode.DETAILS, Tags.STATUS_DETAILS) {
+        ViewSwitch(FluentIcons.Menu, details, mode == ViewMode.DETAILS, ui.canView, Tags.STATUS_DETAILS) {
             onSetMode(ViewMode.DETAILS)
         }
         val large = stringResource(R.string.view_large)
-        ViewSwitch(FluentIcons.View, large, mode == ViewMode.LARGE_ICONS, Tags.STATUS_LARGE_ICONS) {
+        ViewSwitch(FluentIcons.View, large, mode == ViewMode.LARGE_ICONS, ui.canView, Tags.STATUS_LARGE_ICONS) {
             onSetMode(ViewMode.LARGE_ICONS)
         }
     }
@@ -99,15 +101,23 @@ private fun StatusText(text: String, tag: String?) {
     )
 }
 
-/** A quick view switch: outlined while its view is shown. */
+/** A quick view switch: outlined while its view is shown; it works only when [enabled]. */
 @Composable
-private fun ViewSwitch(icon: ImageVector, label: String, on: Boolean, tag: String, onClick: () -> Unit) {
+private fun ViewSwitch(
+    icon: ImageVector,
+    label: String,
+    on: Boolean,
+    enabled: Boolean,
+    tag: String,
+    onClick: () -> Unit,
+) {
     FluentButton(
         text = null,
         onClick = onClick,
         modifier = Modifier.testTag(tag).semantics { selected = on },
         icon = icon,
         style = if (on) ButtonStyle.STANDARD else ButtonStyle.SUBTLE,
+        enabled = enabled,
         contentDescription = label,
     )
 }

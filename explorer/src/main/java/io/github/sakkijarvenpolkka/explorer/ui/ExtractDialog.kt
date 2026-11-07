@@ -15,6 +15,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -34,8 +35,9 @@ import java.nio.charset.Charset
  * "Extract Compressed (Zipped) Folders" for [request]: the folder the files go into ([ExtractRequest.target],
  * from its drive among [volumes] down), and the character set to read the archive's file names with: Auto
  * (with the set it found), or one of those extracting knows ([zipCharsets]: UTF-8, Korean), the one the
- * names were found to be in chosen at first. Extract calls [onExtract] with the name of the set chosen (null
- * for Auto, which finds it again when it runs); Cancel and Back call [onDismiss].
+ * names were found to be in chosen at first (the choice is kept when the activity is made again). Extract
+ * calls [onExtract] with the name of the set chosen (null for Auto, which finds it again when it runs);
+ * Cancel and Back call [onDismiss].
  */
 @Composable
 fun ExtractDialog(
@@ -46,7 +48,9 @@ fun ExtractDialog(
 ) {
     val choices: List<Charset?> = remember { listOf(null) + zipCharsets() }
     val detected = choices.firstOrNull { it?.name() == request.detected }
-    var chosen by remember(request) { mutableStateOf(detected) }
+    // Kept by name ("" for Auto): a character set is not something the saved state holds.
+    var chosenName by rememberSaveable(request) { mutableStateOf(detected?.name().orEmpty()) }
+    val chosen = choices.firstOrNull { it?.name().orEmpty() == chosenName }
     val colors = FluentTheme.colors
     ContentDialog(
         title = stringResource(R.string.extract_title),
@@ -75,7 +79,9 @@ fun ExtractDialog(
                 } else {
                     stringResource(labelOf(charset))
                 }
-                RadioRow(label, chosen == charset, Tags.extractEncoding(charset?.name())) { chosen = charset }
+                RadioRow(label, chosen == charset, Tags.extractEncoding(charset?.name())) {
+                    chosenName = charset?.name().orEmpty()
+                }
             }
         }
     }

@@ -368,6 +368,29 @@ class ShellTest {
     }
 
     @Test
+    fun viewSwitchesOnlyWhereThereIsAViewToChange() {
+        file("a.txt")
+        show()
+        // Home and the Recycle Bin have a look of their own: nothing to switch (nor does View in the command bar).
+        for (place in listOf(Location.Home, Location.RecycleBin)) {
+            vm.navigate(place)
+            rule.waitForIdle()
+            rule.onNodeWithTag(Tags.STATUS_DETAILS).assertIsNotEnabled()
+            rule.onNodeWithTag(Tags.STATUS_LARGE_ICONS).assertIsNotEnabled()
+            // Nor is a view taken for them, which would be the one of every folder not seen yet.
+            vm.setView(vm.ui.value.viewSetting.copy(mode = ViewMode.LARGE_ICONS))
+            rule.waitForIdle()
+            assertEquals(ViewMode.DETAILS, settings.global.value.defaultView.mode)
+        }
+
+        vm.navigate(Location.Folder(root))
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.STATUS_LARGE_ICONS).assertIsEnabled().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.fileList(ViewMode.LARGE_ICONS)).assertExists()
+    }
+
+    @Test
     fun tilesAndLargeIconsShowThumbnails() {
         file("photo.jpg", 10)
         file("broken.png", 10)
