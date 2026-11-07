@@ -180,7 +180,8 @@ internal class Searches(
             // Shown at once, rather than once the walk has found something.
             if (before.size < shown.size) {
                 val rows = rowsOf(before, sort.value)
-                emit(ListingState.Streaming(rows, done = false, capped = false, skippedDirs = 0, location.root))
+                val walking = location.root
+                emit(ListingState.Streaming(rows, done = false, capped = false, skippedDirs = 0, currentDir = walking))
             }
             // Sorted again only when there are new hits, or a new sort: not at each report of where it is.
             var sorted: Pair<List<FileEntry>, SortSpec>? = null

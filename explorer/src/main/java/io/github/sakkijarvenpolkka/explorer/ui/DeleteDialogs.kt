@@ -59,10 +59,9 @@ private class SameObject(private val of: Any) {
 /**
  * Asks [request]; Yes calls [onAnswer] with true, No and Back with false (Restart and Cancel, for starting
  * the app again). Its answers are disabled for [QUESTION_ARMING_MS] once it shows ([rememberArmed]); Back
- * answers no at once. Deleting for good always
- * says how many items and that it cannot be undone, once: in one sentence when it is asked
- * ([R.string.delete_permanent_body]), else after what led to it (a Recycle Bin that cannot take the
- * items, emptying it), followed by [R.string.cannot_undo].
+ * answers no at once. Deleting for good always says how many items and that it cannot be undone, once: in
+ * one sentence when it is asked ([R.string.delete_permanent_body]), else after what led to it (a Recycle
+ * Bin that cannot take the items, emptying it), followed by [R.string.cannot_undo].
  */
 @Composable
 fun ConfirmDialog(request: ConfirmRequest, onAnswer: (Boolean) -> Unit) {
