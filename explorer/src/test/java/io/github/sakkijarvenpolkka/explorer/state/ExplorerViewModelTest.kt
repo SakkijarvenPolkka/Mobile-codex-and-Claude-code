@@ -596,6 +596,12 @@ class ExplorerViewModelTest {
     }
 
     @Test
+    fun timedOutNoticeSaysToOpenTheAppAndRetry() {
+        start(opsNotice = MutableStateFlow(OpsNotice.TimedOut))
+        assertEquals(UiMessage(UiText.res(R.string.fgs_timed_out), MessageSeverity.WARNING), ui.opsNotice)
+    }
+
+    @Test
     fun opsNoticeOutlivesOtherMessagesAndDismissedIsForgotten() {
         val notice = MutableStateFlow<OpsNotice?>(null)
         start(opsNotice = notice, clearOpsNotice = { notice.value = null })

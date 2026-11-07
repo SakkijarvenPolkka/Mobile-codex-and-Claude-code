@@ -36,6 +36,9 @@ private const val UPDATE_INTERVAL_MS = 500L
 sealed interface OpsNotice {
     /** They could not run in the foreground service: they go on while the app's process lives. */
     data object ForegroundRefused : OpsNotice
+
+    /** The system's time for them in the background ran out while there was work: it goes on in the process. */
+    data object TimedOut : OpsNotice
 }
 
 /**
@@ -56,7 +59,10 @@ interface FileOpsHost {
     /** The service could not go into the foreground ([OpsNotice.ForegroundRefused]); it stops. */
     fun onForegroundRefused()
 
-    /** The day's time for data sync services is used up ([FileOpsService.onTimeout]); the service stops. */
+    /**
+     * The day's time for data sync services is used up ([FileOpsService.onTimeout]); the service stops, and
+     * the work left goes on in the process only.
+     */
     fun onForegroundTimedOut()
 }
 
@@ -71,9 +77,9 @@ interface FileOpsHost {
  *   can then go into the foreground.
  * - While there is work, it holds a partial wake lock (6 hours at most at once), let go of when there is
  *   none and when the service goes.
- * - When the system's daily time for data sync services runs out ([onTimeout]), it cancels the running
- *   operation, which cleans up as any cancelled one does, tells the app
- *   ([FileOpsHost.onForegroundTimedOut]) and stops.
+ * - When the system's daily time for data sync services runs out ([onTimeout]), it stops the running
+ *   operation, which cleans up as any cancelled one does and fails for the time limit (what it had not
+ *   done can be retried), tells the app ([FileOpsHost.onForegroundTimedOut]) and stops.
  * - If it cannot go into the foreground, it tells the app ([FileOpsHost.onForegroundRefused]) and stops;
  *   the operations go on in the process.
  *
@@ -132,12 +138,13 @@ class FileOpsService : Service() {
 
     /**
      * The day's time for data sync services is used up, and the service has to stop within seconds: the
-     * running operation is cancelled (it cleans up as any cancelled one does). Those queued go on in the
-     * process, until the app starts the service again.
+     * running operation is stopped for the time limit ([OperationRunner.stopForTimeLimit]: it cleans up as a
+     * cancelled one does, and can be retried). Those queued go on in the process, until the app starts the
+     * service again.
      */
     override fun onTimeout(startId: Int, fgsType: Int) {
         val runner = host.runner
-        runner.state.value.running?.let { runner.cancel(it.spec.id) }
+        runner.state.value.running?.let { runner.stopForTimeLimit(it.spec.id) }
         host.onForegroundTimedOut()
         stopSelf()
     }

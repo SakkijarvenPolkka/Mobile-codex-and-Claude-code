@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer.preview
 
+import android.app.Activity
+import androidx.activity.compose.LocalActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -10,6 +12,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -31,6 +34,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.util.ReflectionHelpers
 import java.nio.file.Path
 import java.nio.file.Paths
 import kotlin.math.abs
@@ -184,6 +188,48 @@ class MediaViewerTest {
         // It stays paused until asked to play.
         rule.onNodeWithContentDescription("재생").assertIsDisplayed()
         rule.runOnIdle { assertFalse(player.isPlaying) }
+    }
+
+    @Test
+    fun playingGoesOnWhenTheActivityIsMadeAgain() {
+        val player = FakePlayer()
+        val lifecycle = TestLifecycle()
+        var activity: Activity? = null
+        val restoration = StateRestorationTester(rule)
+        restoration.setContent {
+            activity = LocalActivity.current
+            CompositionLocalProvider(LocalLifecycleOwner provides lifecycle) {
+                FluentTheme(dark = false, accent = null) { MediaViewer(file, true, player, onClose = {}) }
+            }
+        }
+        rule.runOnIdle { player.ready(120_000) }
+        rule.onNodeWithContentDescription("재생").performClick()
+        rule.runOnIdle { assertTrue(player.isPlaying) }
+
+        // Rotated: the activity stops as it is made again, and the viewer in the new one prepares the video anew.
+        val rotated = checkNotNull(activity)
+        ReflectionHelpers.setField(rotated, "mChangingConfigurations", true)
+        try {
+            rule.runOnIdle {
+                player.positionMs = 42_000
+                lifecycle.registry.currentState = Lifecycle.State.CREATED
+            }
+            rule.runOnIdle { assertFalse(player.isPlaying) }
+            restoration.emulateSavedInstanceStateRestore()
+        } finally {
+            ReflectionHelpers.setField(rotated, "mChangingConfigurations", false)
+        }
+        rule.runOnIdle {
+            lifecycle.registry.currentState = Lifecycle.State.RESUMED
+            player.positionMs = 0
+            player.ready(120_000)
+        }
+        // Where it was, playing as it was.
+        rule.runOnIdle {
+            assertEquals(listOf(42_000), player.seeks())
+            assertTrue(player.isPlaying)
+        }
+        rule.onNodeWithContentDescription("일시정지").assertIsDisplayed()
     }
 
     @Test

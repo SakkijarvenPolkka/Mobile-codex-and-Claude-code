@@ -7,6 +7,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.preview
 
+import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -75,11 +76,12 @@ private const val TICK_MS = 250L
  * [port] has prepared the file; it plays when asked to. When the app goes to the background it
  * pauses and keeps the position, which a file prepared anew (a video whose surface came back, the
  * viewer made again after a configuration change) goes back to; a video's controls wait for that,
- * as its player went with its surface. A file that cannot be played says so, with an "Open with"
- * button when [onOpenWith] is given. [port] is released when the viewer leaves, and one port feeds
- * one viewer (and so one [MediaPort.VideoSurface]). The title row has the name and a close button
- * ([onClose]); a host that draws its own top bar sets [showTitle] false (no title row, nor window
- * insets).
+ * as its player went with its surface. Playing when the activity is made again (a rotation, a
+ * window resized), it plays on from there; back from the background, it waits to be asked. A file
+ * that cannot be played says so, with an "Open with" button when [onOpenWith] is given. [port] is
+ * released when the viewer leaves, and one port feeds one viewer (and so one
+ * [MediaPort.VideoSurface]). The title row has the name and a close button ([onClose]); a host that
+ * draws its own top bar sets [showTitle] false (no title row, nor window insets).
  */
 @Composable
 fun MediaViewer(
@@ -96,6 +98,9 @@ fun MediaViewer(
     var position by remember(file, video, port) { mutableIntStateOf(0) }
     // Where it was when the app went to the background.
     var resumeAt by rememberSaveable(file) { mutableStateOf<Int?>(null) }
+    // Whether it was playing when the activity stopped to be made again: it plays on once prepared anew.
+    var playOn by rememberSaveable(file) { mutableStateOf(false) }
+    val activity = LocalActivity.current
     DisposableEffect(file, video, port) {
         port.prepare(
             file,
@@ -107,6 +112,11 @@ fun MediaViewer(
                     position = it
                     resumeAt = null
                 }
+                if (playOn) {
+                    playOn = false
+                    port.play()
+                    playing = port.isPlaying
+                }
             },
             onError = {
                 state = MediaState.Failed
@@ -117,6 +127,7 @@ fun MediaViewer(
     }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         val ready = state as? MediaState.Ready ?: return@LifecycleEventEffect
+        playOn = port.isPlaying && activity?.isChangingConfigurations == true
         port.pause()
         playing = false
         position = port.positionMs

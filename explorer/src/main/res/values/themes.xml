@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Files — window theme (the UI itself is drawn by Compose). SPDX-License-Identifier: MIT -->
+<!-- Files — window theme (the UI itself is drawn by Compose): light by day, the dark one under
+     values-night; its background, which the window and the splash screen show before the app
+     draws, is the app's own. SPDX-License-Identifier: MIT -->
 <resources>
-    <style name="Theme.Explorer" parent="android:Theme.Material.NoActionBar" />
+    <style name="Theme.Explorer" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">#F3F3F3</item>
+    </style>
 </resources>

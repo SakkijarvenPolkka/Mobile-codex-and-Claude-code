@@ -615,6 +615,18 @@ class FileOpsUiTest {
     }
 
     @Test
+    fun restartQuestionSaysWhatItStops() {
+        val answers = mutableListOf<Boolean>()
+        showAlone { ConfirmDialog(ConfirmRequest.RestartBusy, onAnswer = { answers += it }) }
+        rule.onNodeWithText(str(R.string.restart_busy)).assertExists()
+
+        armed()
+        button(str(R.string.restart)).performClick()
+        button(str(R.string.cancel)).performClick()
+        assertEquals(listOf(true, false), answers)
+    }
+
+    @Test
     fun emptyBinDialogDoesNotRepeat() {
         showAlone { ConfirmDialog(ConfirmRequest.EmptyBin(3), onAnswer = {}) }
         rule.onNodeWithText(str(R.string.empty_bin_body, 3)).assertExists()

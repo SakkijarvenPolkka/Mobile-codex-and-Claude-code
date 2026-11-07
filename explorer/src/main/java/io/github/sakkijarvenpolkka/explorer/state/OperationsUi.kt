@@ -7,6 +7,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import android.app.Application
 import android.util.Log
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.fs.BinItem
@@ -58,9 +59,11 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * The file operations of the view model [shell]. Renaming and new items run at once with
  * [ExplorerDeps.fileOps]; the others go to the app's runner ([ExplorerDeps.runner]), whose state this
- * follows ([follow]): without them, nothing changes. Main thread only, in [scope].
+ * follows ([follow]): without them, nothing changes. Starting [app] again ([restart]) waits for the user
+ * while they run. Main thread only, in [scope].
  */
 internal class OperationsUi(
+    private val app: Application,
     private val deps: ExplorerDeps,
     private val scope: CoroutineScope,
     private val clipboard: ClipboardHolder,
@@ -126,6 +129,7 @@ internal class OperationsUi(
             deps.opsNotice.collect { notice ->
                 val shown = when (notice) {
                     OpsNotice.ForegroundRefused -> KEEP_APP_OPEN
+                    OpsNotice.TimedOut -> TIMED_OUT
                     null -> null
                 }
                 mutableState.update { it.copy(notice = shown) }
@@ -314,7 +318,19 @@ internal class OperationsUi(
             is ConfirmRequest.ExtensionChange -> commitRename(request.entry, request.newName, extensionConfirmed = true)
             is ConfirmRequest.EmptyBin -> deletePermanently(emptying)
             is ConfirmRequest.SkipUnstorable -> if (request.spec.sources.isNotEmpty()) submit(request.spec)
+            ConfirmRequest.RestartBusy -> deps.restart(app)
         }
+    }
+
+    /**
+     * Starts the app again ([ExplorerDeps.restart]): at once while the runner has nothing running, queued or
+     * waiting on a conflict; else once the user says so ([ConfirmRequest.RestartBusy]), as that stops them
+     * (the journal offers them again).
+     */
+    fun restart() {
+        val now = runner.value
+        if (now.running == null && now.queue.isEmpty() && now.pending == null) return deps.restart(app)
+        ask(ConfirmRequest.RestartBusy)
     }
 
     /** Cancels the operation [opId], queued or running. */
@@ -470,10 +486,14 @@ internal class OperationsUi(
 
     /**
      * Tells how [op] ended ([tellingOf]): its message about no place, a success only as [showSuccess] lets
-     * it; its question once no other is open ([ask]); its failures listed ([State.failures]).
+     * it (one the time limit stopped can be retried from it); its question once no other is open ([ask]); its
+     * failures listed ([State.failures]).
      */
     private suspend fun tell(op: FinishedOp) {
-        val telling = tellingOf(op, freeableFor(op))
+        val telling = tellingOf(op, freeableFor(op)) {
+            shell.dismissMessage()
+            deps.runner?.retryStopped(op)
+        }
         telling.message?.let { if (it.severity == MessageSeverity.SUCCESS) showSuccess(it) else shell.showUnbound(it) }
         telling.question?.let(::ask)
         telling.listed?.let { listed -> mutableState.update { it.copy(failures = it.failures + listed) } }
@@ -593,6 +613,9 @@ internal class OperationsUi(
     private companion object {
         /** The message of [OpsNotice.ForegroundRefused]. */
         val KEEP_APP_OPEN = UiMessage(UiText.res(R.string.fgs_refused), MessageSeverity.WARNING)
+
+        /** The message of [OpsNotice.TimedOut]. */
+        val TIMED_OUT = UiMessage(UiText.res(R.string.fgs_timed_out), MessageSeverity.WARNING)
 
         /** How long the bar of an operation that did all it was asked shows. */
         val SUCCESS_SHOWN_FOR = 4.seconds

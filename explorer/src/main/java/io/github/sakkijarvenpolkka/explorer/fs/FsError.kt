@@ -50,6 +50,9 @@ sealed interface FsError {
     /** The volume's Recycle Bin cannot be used. */
     data object BinUnavailable : FsError
     data object Busy : FsError
+
+    /** The system's time for the operations in the background ran out (Android 15 and later). */
+    data object TimeLimit : FsError
     data class Unknown(val message: String?) : FsError
 }
 
@@ -78,7 +81,7 @@ sealed interface NameProblem {
 /** Errors that stop a whole operation rather than one item of it. */
 val FsError.isFatal: Boolean
     get() = when (this) {
-        FsError.NoSpace, FsError.IoError, FsError.ReadOnly, FsError.VolumeRemoved -> true
+        FsError.NoSpace, FsError.IoError, FsError.ReadOnly, FsError.VolumeRemoved, FsError.TimeLimit -> true
         // Listed one by one, so a new error has to be sorted here rather than fall through.
         FsError.AccessDenied, FsError.NotFound, FsError.AlreadyExists, is FsError.NameInvalid,
         FsError.TooLargeForVolume, FsError.CrossesIntoSelf, FsError.Restricted, FsError.Corrupt,

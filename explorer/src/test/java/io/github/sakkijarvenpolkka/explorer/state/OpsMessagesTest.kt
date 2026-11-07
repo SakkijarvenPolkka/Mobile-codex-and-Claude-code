@@ -47,6 +47,24 @@ class OpsMessagesTest {
     }
 
     @Test
+    fun stopForTheTimeLimitOffersRetry() {
+        val spec = OperationSpec("op", OpKind.COPY, listOf(root.resolve("a.txt").toString()), root.resolve("d").toString())
+        var retried = 0
+
+        val told = tellingOf(FinishedOp(spec, OpResult.Failed(FsError.TimeLimit, 1, 3)), retry = { retried++ })
+
+        // How far it got, why it stopped, and a Retry for what is left.
+        val message = checkNotNull(told.message)
+        assertEquals(UiText.res(R.string.op_fatal, 1, 3, UiText.res(R.string.op_name_copy)), message.text)
+        assertEquals(UiText.res(R.string.err_time_limit), message.detail)
+        assertEquals(UiText.res(R.string.retry), message.action?.first)
+        message.action?.second?.invoke()
+        assertEquals(1, retried)
+        // A stop for another reason has nothing to retry from here.
+        assertNull(tellingOf(FinishedOp(spec, OpResult.Failed(FsError.IoError, 1, 3)), retry = { retried++ }).message?.action)
+    }
+
+    @Test
     fun extractWithRenamedDuplicatesSaysHowMany() {
         val spec = OperationSpec("op", OpKind.EXTRACT, listOf(root.resolve("a.zip").toString()), root.toString())
         val done = OpResult.Done(listOf(root.resolve("a")), emptyList(), renamedDuplicates = 2)

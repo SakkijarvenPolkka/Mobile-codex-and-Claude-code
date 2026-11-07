@@ -6,6 +6,7 @@
  */
 package io.github.sakkijarvenpolkka.explorer.state
 
+import android.app.Application
 import android.content.Intent
 import io.github.sakkijarvenpolkka.explorer.data.DecodedLocation
 import io.github.sakkijarvenpolkka.explorer.data.GlobalSettings
@@ -43,7 +44,8 @@ import java.nio.file.Path
  * [builtInViewers], the files the built-in viewers show open in them (the shell is given what they read
  * files with); without, every file opens in another app. [clock] is when a file is opened, for the
  * recent files. [usage] is how full the volume at a root is, (total, free) bytes, for the drives on Home:
- * null when that is not known.
+ * null when that is not known. [restart] starts the app again in a new process ([restartApp]), to read
+ * a USB drive this one may not.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -62,6 +64,7 @@ data class ExplorerDeps(
     val builtInViewers: Boolean = false,
     val clock: () -> Long = System::currentTimeMillis,
     val usage: (Path) -> Pair<Long, Long>? = ::storageUsage,
+    val restart: (Application) -> Unit = ::restartApp,
 )
 
 /** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */
@@ -103,6 +106,9 @@ sealed interface ConfirmRequest {
 
     /** [count] items cannot be stored on the destination drive: skip them, running [spec] (the rest)? */
     data class SkipUnstorable(val count: Int, val spec: OperationSpec) : ConfirmRequest
+
+    /** Start the app again, which stops the file operations running, queued or waiting on a conflict? */
+    data object RestartBusy : ConfirmRequest
 }
 
 /** What is open over the shell; Back closes it before anything else. */

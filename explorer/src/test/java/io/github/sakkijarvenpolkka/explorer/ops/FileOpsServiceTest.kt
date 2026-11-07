@@ -11,6 +11,7 @@ import android.os.Looper
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.fs.ConflictAction
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.KO_LABELS
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
@@ -179,7 +180,7 @@ class FileOpsServiceTest {
     }
 
     @Test
-    fun onTimeoutCancelsAndStops() {
+    fun onTimeoutStopsTheOperationForTheTimeLimit() {
         val dst = submitConflictingCopy()
         runOps()
         val service = start().get()
@@ -191,8 +192,9 @@ class FileOpsServiceTest {
         // The app starts it again for the next operation.
         assertEquals(1, app.timeouts)
         runOps()
-        assertEquals(OpResult.Cancelled, runner.state.value.finished.single().result)
-        // Cancelled as any operation is: what it was asked about is as it was.
+        // Failed, saying why, after what it had done, so that the rest can be retried.
+        assertEquals(OpResult.Failed(FsError.TimeLimit, 0, 1), runner.state.value.finished.single().result)
+        // Stopped as any operation is: what it was asked about is as it was.
         assertEquals("old", String(Files.readAllBytes(dst.resolve("a.txt"))))
     }
 

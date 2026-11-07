@@ -28,6 +28,7 @@
     <string name="outside_storage">Paths outside your storage can\'t be opened</string>
     <string name="usb_restart">Restart the app to open this drive</string>
     <string name="restart">Restart</string>
+    <string name="restart_busy">File operations are running. Restarting stops them; you can retry them later. Restart anyway?</string>
     <string name="address_edit">Edit address</string>
     <string name="folders_in">Folders in %s</string>
 
@@ -134,6 +135,7 @@
     <string name="notif_needs_decision">Your decision is needed</string>
     <string name="cancel">Cancel</string>
     <string name="fgs_refused">Couldn\'t start in the background. Keep the app open.</string>
+    <string name="fgs_timed_out">Android stopped the background work after its time limit. Open the app and retry.</string>
 
     <!-- File operations: conflicts -->
     <string name="conflict_title">Replace or Skip Files</string>
@@ -182,6 +184,7 @@
     <string name="err_unsupported_item">Unsupported item (link or special file)</string>
     <string name="err_busy">An operation in progress is using this item</string>
     <string name="err_already_exists">An item with this name already exists</string>
+    <string name="err_time_limit">Stopped by the background time limit</string>
     <string name="hint_empty_bin">Emptying the Recycle Bin frees %s</string>
 
     <!-- ZIP -->

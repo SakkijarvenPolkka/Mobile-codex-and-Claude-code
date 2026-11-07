@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — window theme at night: dark, with the app's dark background. SPDX-License-Identifier: MIT -->
+<resources>
+    <style name="Theme.Explorer" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#202020</item>
+    </style>
+</resources>

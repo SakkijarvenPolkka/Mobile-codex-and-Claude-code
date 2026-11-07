@@ -34,10 +34,11 @@ internal data class Telling(
 
 /**
  * What to tell of [op], where emptying the Recycle Bin of its target's volume would free [freeable]
- * bytes:
+ * bytes, and [retry] runs again what one the system stopped for its time limit had not done:
  * - one that did all it was asked, how many items it did (a success);
  * - a refused one (nothing done), its error only;
  * - one that stopped, how far it got and why;
+ * - one stopped by the system's time limit, also a Retry ([retry]) of what it had not done;
  * - one out of space, also what emptying the bin would free, when that is anything;
  * - a move that left items in its sources, how many;
  * - an extraction that gave entries a ` (2)` name, theirs being taken, how many (to know, not a success);
@@ -47,22 +48,24 @@ internal data class Telling(
  * them, when there was no bin to use) are asked about ([ConfirmRequest.BinUnavailable]), those already
  * gone need no word, and any other failure is listed.
  */
-internal fun tellingOf(op: FinishedOp, freeable: Long = 0): Telling {
+internal fun tellingOf(op: FinishedOp, freeable: Long = 0, retry: () -> Unit = {}): Telling {
     val spec = op.spec
     return when (val result = op.result) {
         OpResult.Cancelled -> Telling()
         is OpResult.Failed -> {
             val hint = UiText.res(R.string.hint_empty_bin, UiText.size(freeable))
                 .takeIf { result.error == FsError.NoSpace && freeable > 0 }
+            val again = (UiText.res(R.string.retry) to retry).takeIf { result.error == FsError.TimeLimit }
             when {
                 spec.kind == OpKind.DELETE_TO_BIN && result.error == FsError.BinUnavailable ->
                     Telling(question = ConfirmRequest.BinUnavailable(spec.sources.map { Paths.get(it) }))
                 result.done == 0 && result.total == 0 ->
-                    Telling(UiMessage(errorText(result.error), MessageSeverity.ERROR, hint = hint))
+                    Telling(UiMessage(errorText(result.error), MessageSeverity.ERROR, again, hint = hint))
                 else -> {
                     val name = UiText.res(nameOf(spec.kind))
                     val stopped = UiText.res(R.string.op_fatal, result.done, result.total, name)
-                    Telling(UiMessage(stopped, MessageSeverity.ERROR, detail = errorText(result.error), hint = hint))
+                    val why = errorText(result.error)
+                    Telling(UiMessage(stopped, MessageSeverity.ERROR, again, detail = why, hint = hint))
                 }
             }
         }

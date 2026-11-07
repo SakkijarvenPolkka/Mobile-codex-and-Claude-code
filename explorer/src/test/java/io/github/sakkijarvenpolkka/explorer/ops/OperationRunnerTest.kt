@@ -248,6 +248,41 @@ class OperationRunnerTest {
     }
 
     @Test
+    fun timeLimitStopsTheRunningOneAsFailedAndRetriesWhatWasLeft() = runTest {
+        val a = write(internal, "src/a.txt", "a")
+        val b = write(internal, "src/b.txt", "new b")
+        val c = write(internal, "src/c.txt", "c")
+        val dst = write(internal, "dst/b.txt", "old b").parent
+        val runner = runner()
+        // a.txt is copied; b.txt waits for an answer when the system's time for the service runs out.
+        runner.submit(copy("op1", listOf(a, b, c), dst))
+        runner.pending()
+        runner.stopForTimeLimit("op1")
+        advanceUntilIdle()
+
+        // Cleaned up as a cancelled one is, but failed: why, after how much (of three), and what is left to retry.
+        val stopped = runner.state.value.finished.single()
+        assertEquals(FsError.TimeLimit, (stopped.result as OpResult.Failed).error)
+        assertEquals(3, (stopped.result as OpResult.Failed).total)
+        assertEquals(mapOf("a.txt" to "a", "b.txt" to "old b"), tree(dst))
+
+        runner.retryStopped(stopped)
+        runner.retryStopped(stopped)
+        runner.pending().answer(Resolution(ConflictAction.REPLACE))
+        advanceUntilIdle()
+        assertEquals(mapOf("a.txt" to "a", "b.txt" to "new b", "c.txt" to "c"), tree(dst))
+        // Once: the second retry found nothing to run again.
+        assertEquals(2, runner.state.value.finished.size)
+
+        // Nor does one stopped otherwise run again from here.
+        runner.submit(copy("op3", listOf(a), internal.resolve("missing")))
+        advanceUntilIdle()
+        runner.retryStopped(runner.state.value.finished.last())
+        advanceUntilIdle()
+        assertEquals(3, runner.state.value.finished.size)
+    }
+
+    @Test
     fun busyPathsDuringRun() = runTest {
         val a = write(internal, "src/a.txt", "new")
         val d = write(internal, "src/d/x.txt", "x").parent

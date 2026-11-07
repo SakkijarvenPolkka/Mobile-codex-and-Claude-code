@@ -168,7 +168,14 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost {
         leftWithoutService()
     }
 
-    override fun onForegroundTimedOut() = leftWithoutService()
+    /**
+     * The day's time for the service ran out: the work left, if any, goes on in the process only, slowly once
+     * the screen is off, which the user is told (to open the app and retry what was stopped).
+     */
+    override fun onForegroundTimedOut() {
+        if (workOf(runner.state.value).isNotEmpty()) mutableOpsNotice.value = OpsNotice.TimedOut
+        leftWithoutService()
+    }
 
     /** Forgets the notice of the file operations, once the user has dismissed it. */
     fun clearOpsNotice() {

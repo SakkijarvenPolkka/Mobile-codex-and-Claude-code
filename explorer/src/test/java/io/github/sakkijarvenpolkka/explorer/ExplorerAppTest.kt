@@ -254,6 +254,20 @@ class ExplorerAppTest {
         cancel("t1", "t2")
     }
 
+    @Test
+    fun timeoutTellsTheUserWhileWorkRemains() {
+        app.serviceStarter = ServiceStarter { _, _ -> }
+        // Nothing left to do: nothing to tell.
+        app.onForegroundTimedOut()
+        assertNull(app.opsNotice.value)
+
+        // Work left goes on in the process only, slowly once the screen is off: the user is told.
+        submitWaitingCopy("t1")
+        app.onForegroundTimedOut()
+        assertEquals(OpsNotice.TimedOut, app.opsNotice.value)
+        cancel("t1")
+    }
+
     /** The SD card [fsUuid] (none if null) mounted at [card] in [state]. */
     private fun cardIn(card: Path, state: String, fsUuid: String? = "1A2B-3C4D"): StorageVolume =
         StorageVolumeBuilder("public:1A2B-3C4D", card.toFile(), "SD card", Process.myUserHandle(), state)

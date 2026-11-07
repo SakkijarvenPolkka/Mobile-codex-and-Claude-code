@@ -70,7 +70,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private val clipboard = ClipboardHolder()
     private val host = Host()
     private val handOver = HandOver(app, deps, viewModelScope, host)
-    private val ops = OperationsUi(deps, viewModelScope, clipboard, host)
+    private val ops = OperationsUi(app, deps, viewModelScope, clipboard, host)
     private val home = HomeLoader(deps, codec, viewModelScope)
     internal val searches = Searches(deps, viewModelScope, host) { shell.value.obbAllowed }
     private val zips = ZipUi(deps, viewModelScope, host) { shell.value.obbAllowed }
@@ -510,7 +510,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
     private fun onListing(id: TabId, state: ListingState) {
         if (id != tabs.value.activeId) return
         val denied = state is ListingState.Error && state.error == FsError.AccessDenied
-        if (denied && onRawMount()) showAt(here(), restartOffer(getApplication()))
+        if (denied && onRawMount()) showAt(here(), restartOffer(ops::restart))
         // All there is here, read or found: what is gone is no longer selected, and its menu not left open unseen.
         val complete = state is ListingState.Loaded && !state.refreshing ||
             state is ListingState.Streaming && state.done

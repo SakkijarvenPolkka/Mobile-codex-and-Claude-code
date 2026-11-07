@@ -57,8 +57,9 @@ private class SameObject(private val of: Any) {
 }
 
 /**
- * Asks [request]; Yes calls [onAnswer] with true, No and Back with false. Yes and No are disabled for
- * [QUESTION_ARMING_MS] once it shows ([rememberArmed]); Back answers no at once. Deleting for good always
+ * Asks [request]; Yes calls [onAnswer] with true, No and Back with false (Restart and Cancel, for starting
+ * the app again). Its answers are disabled for [QUESTION_ARMING_MS] once it shows ([rememberArmed]); Back
+ * answers no at once. Deleting for good always
  * says how many items and that it cannot be undone, once: in one sentence when it is asked
  * ([R.string.delete_permanent_body]), else after what led to it (a Recycle Bin that cannot take the
  * items, emptying it), followed by [R.string.cannot_undo].
@@ -80,12 +81,15 @@ fun ConfirmDialog(request: ConfirmRequest, onAnswer: (Boolean) -> Unit) {
         is ConfirmRequest.SkipUnstorable ->
             R.string.cmd_paste to listOf(stringResource(R.string.precheck_skip, request.count))
         is ConfirmRequest.ExtensionChange -> R.string.rename_title to listOf(stringResource(R.string.ext_change))
+        ConfirmRequest.RestartBusy -> R.string.restart to listOf(stringResource(R.string.restart_busy))
     }
+    val restarting = request == ConfirmRequest.RestartBusy
+    val (yes, no) = if (restarting) R.string.restart to R.string.cancel else R.string.yes to R.string.no
     ContentDialog(
         title = stringResource(title),
         onDismiss = { onAnswer(false) },
-        primary = stringResource(R.string.yes) to { onAnswer(true) },
-        close = stringResource(R.string.no) to { onAnswer(false) },
+        primary = stringResource(yes) to { onAnswer(true) },
+        close = stringResource(no) to { onAnswer(false) },
         primaryEnabled = armed,
         closeEnabled = armed,
     ) {

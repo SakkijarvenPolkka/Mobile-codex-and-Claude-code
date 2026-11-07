@@ -55,6 +55,7 @@ import java.io.File
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Duration
 import java.util.UUID
@@ -96,13 +97,14 @@ class ExplorerViewModelOpsTest {
     /**
      * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
      * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there. The
-     * Recycle Bin finds the volumes through [binLookup] of them.
+     * Recycle Bin finds the volumes through [binLookup] of them. Starting the app again does [restart].
      */
     private fun start(
         extra: List<Volume> = emptyList(),
         fs: FsBackend = NioFsBackend,
         notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
         binLookup: (VolumeLookup) -> VolumeLookup = { it },
+        restart: (Application) -> Unit = {},
         beforeViewModel: () -> Unit = {},
     ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
@@ -114,7 +116,7 @@ class ExplorerViewModelOpsTest {
         val deps = ExplorerDeps(
             fs, settings, volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
-            opsNotice = notice, clearOpsNotice = { notice.value = null },
+            opsNotice = notice, clearOpsNotice = { notice.value = null }, restart = restart,
         )
         beforeViewModel()
         vm = ExplorerViewModel(app, deps)
@@ -344,6 +346,51 @@ class ExplorerViewModelOpsTest {
         drain()
         vm.startRename(entry("other.txt"))
         assertEquals(entry("other.txt"), ui.renaming)
+    }
+
+    @Test
+    fun restartAsksFirstWhileOperationsRun() {
+        val usb = Paths.get("/mnt/media_rw/1A2B-3C4D")
+        file("a.txt", "new")
+        dir("dst")
+        file("dst/a.txt", "old")
+        var restarts = 0
+        // A USB drive this process cannot read: it was started before it had all files access.
+        val fs = object : FsBackend by NioFsBackend {
+            override fun list(dir: Path): List<Path> =
+                if (dir.startsWith(usb)) throw AccessDeniedException(dir.toString()) else NioFsBackend.list(dir)
+        }
+        start(listOf(FakeVolumes.removable("1A2B-3C4D", "USB drive", usb)), fs, restart = { restarts++ })
+        select("a.txt")
+        vm.copy()
+        goTo(root.resolve("dst"))
+        vm.paste()
+        drain()
+        assertNotNull(vm.runner.value.pending)
+        goTo(usb)
+        assertEquals(UiText.res(R.string.usb_restart), ui.message?.text)
+        val restart = checkNotNull(ui.message?.action).second
+
+        // A copy waits on its conflict, which restarting would stop: asked first.
+        restart()
+        drain()
+        assertEquals(ConfirmRequest.RestartBusy, ui.confirm)
+        assertEquals(0, restarts)
+        answer(yes = false)
+        drain()
+        assertEquals(0, restarts)
+        restart()
+        drain()
+        answer(yes = true)
+        assertEquals(1, restarts)
+
+        // Nothing running, queued or waiting: at once.
+        checkNotNull(vm.runner.value.pending).answer(Resolution(ConflictAction.SKIP))
+        drain()
+        restart()
+        drain()
+        assertNull(ui.confirm)
+        assertEquals(2, restarts)
     }
 
     @Test

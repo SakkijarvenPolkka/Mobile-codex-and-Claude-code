@@ -133,6 +133,9 @@ class OperationRunner(
     private class Current(val spec: OperationSpec, val job: Job) {
         /** Set once it is to stop: the error it then fails with, or null to cancel it. */
         var stop: Stop? = null
+
+        /** How many of its top-level sources are done. */
+        var committed = 0
     }
 
     private class Stop(val error: FsError?)
@@ -142,6 +145,12 @@ class OperationRunner(
      * its new run has one of its own, or has ended.
      */
     private val replaced = HashMap<String, String>()
+
+    /**
+     * The operations the system's time limit stopped ([stopForTimeLimit]), by id, with how many of their
+     * top-level sources they had done, until [retryStopped] runs the rest again.
+     */
+    private val stoppedForTime = HashMap<String, Int>()
 
     init {
         scope.launch(dispatcher) {
@@ -167,6 +176,23 @@ class OperationRunner(
      * (the file being written is deleted, and a conflict it waits on goes). Either is [OpResult.Cancelled].
      */
     fun cancel(opId: String) = stop(Stop(null)) { it.id == opId }
+
+    /**
+     * Stops the running operation [opId] for the system's time limit on work in the background: it cleans up as
+     * a cancelled one does, and fails with [FsError.TimeLimit] after the items it has done; what it had not
+     * done can be run again ([retryStopped]).
+     */
+    fun stopForTimeLimit(opId: String) = stop(Stop(FsError.TimeLimit)) { it.id == opId }
+
+    /**
+     * Runs again, under a new id, what [op] had not done when the system's time limit stopped it
+     * ([stopForTimeLimit]): its top-level sources after those it had done, as [retry] runs those of one a crash
+     * interrupted. Once; nothing for an operation not stopped so.
+     */
+    fun retryStopped(op: FinishedOp) {
+        val committed = synchronized(lock) { stoppedForTime.remove(op.spec.id) } ?: return
+        scope.launch(dispatcher) { remainderOf(InterruptedOp(op.spec, committed))?.let(::submit) }
+    }
 
     /**
      * Stops every operation with a source or a target under [root] (a volume going away): each fails with
@@ -289,9 +315,13 @@ class OperationRunner(
         }
         if (!ran) return
         journal.end(spec.id)
-        val stop = synchronized(lock) { current?.stop }
+        val (stop, committed) = synchronized(lock) { current?.stop to (current?.committed ?: 0) }
         val progress = state.value.running?.progress
         val stopped = stop?.error?.let { OpResult.Failed(it, progress.done, progress.total) } ?: OpResult.Cancelled
+        // Stopped before its end by the time limit: what it had not done can be run again.
+        if (result == null && stop?.error == FsError.TimeLimit) {
+            synchronized(lock) { stoppedForTime[spec.id] = committed }
+        }
         finish(FinishedOp(spec, result ?: stopped))
     }
 
@@ -309,7 +339,10 @@ class OperationRunner(
             spec,
             resolverFor(spec),
             onProgress = { progress -> report(spec, progress) },
-            onCommitted = { count -> journal.committed(spec.id, count) },
+            onCommitted = { count ->
+                journal.committed(spec.id, count)
+                synchronized(lock) { current?.takeIf { it.spec == spec }?.committed = count }
+            },
         )
     } catch (e: CancellationException) {
         throw e
