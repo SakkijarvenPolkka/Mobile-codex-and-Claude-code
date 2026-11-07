@@ -36,14 +36,15 @@
 새 패키지 두 개를 더한다. 본 사양 §1.2의 계층을 지킨다.
 
 ```
-pick/      PickRequest(요청 해석, MIME 일치), PickResult(돌려줄 Intent 만들기), PickActivity
+pick/      PickResult(돌려줄 Intent 만들기), PickActivity
+state/     PickRequest(요청 해석, MIME 일치 — 순수, state/가 pick/을 참조하지 않도록 여기에 둠)
 provider/  DocumentIds(문서 ID ↔ 경로, 검증), DocumentRows(커서 행), SafeSave(덮어쓰기 저장 핵심),
            ExplorerDocumentsProvider(시스템 연결부), ProviderDeps(의존성 찾기)
 ```
 
 - `provider/`는 `fs/`, `platform/`, `data/`, `util/`, `ops/OperationJournal`만 쓴다. `state/`·`ui/`·`preview/`·`pick/`을
   쓰지 않는다(LayeringTest에 규칙 추가).
-- `pick/`의 `PickRequest`·`PickResult`는 순수 Kotlin(+ Intent 만들기만 Android)이고, `PickActivity`는 기존
+- `state/PickRequest`는 순수 Kotlin이고, `pick/PickResult`는 Intent 만들기만 Android이며, `PickActivity`는 기존
   셸을 선택 모드로 띄운다.
 - `DocumentIds`, `PickRequest`의 MIME 일치, `SafeSave`의 핵심은 JVM 단위 테스트가 가능하게 Android 의존 없이
   만든다.
