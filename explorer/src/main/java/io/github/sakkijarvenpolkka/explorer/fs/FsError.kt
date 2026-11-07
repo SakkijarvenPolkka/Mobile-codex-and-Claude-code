@@ -70,6 +70,9 @@ sealed interface NameProblem {
 
     /** The volume refused the name (EINVAL or ENAMETOOLONG). */
     data object NotAllowedByVolume : NameProblem
+
+    /** One of the app's own names ([HiddenNames.isInternal]), which it never lists. */
+    data object Reserved : NameProblem
 }
 
 /** Errors that stop a whole operation rather than one item of it. */

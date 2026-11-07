@@ -285,11 +285,13 @@ internal class OperationsUi(
     }
 
     /**
-     * The answer to [State.confirm]: yes does what it asked about; no leaves things as they are. The next
-     * question waiting is asked then.
+     * The answer to [request], the question asked ([State.confirm]): yes does what it asked about; no leaves
+     * things as they are. The next question waiting is asked then. An answer to a question no longer asked
+     * (one equal to it included: the same deletion asked twice) does nothing: a second tap is not taken for an
+     * answer to the question that took its place.
      */
-    fun answerConfirm(yes: Boolean) {
-        val request = state.value.confirm ?: return
+    fun answerConfirm(request: ConfirmRequest, yes: Boolean) {
+        if (state.value.confirm !== request) return
         closeQuestion()
         if (!yes) return
         when (request) {
@@ -522,14 +524,15 @@ internal class OperationsUi(
     }
 
     /**
-     * Whether the operation running uses [path]: [path] is one of its sources or inside one, or holds one
-     * of them or its target.
+     * Whether the operation running uses [path]: [path] is one of its sources or its target, is inside one of
+     * them (what it reads, or what it makes), or holds one of them. The operations queued are not asked:
+     * they find what is there when they run.
      */
     private fun isBusy(path: Path): Boolean {
         val spec = runner.value.running?.spec ?: return false
         val target = spec.target?.let { Paths.get(it) }
         return spec.sources.map { Paths.get(it) }.any { it.startsWith(path) || path.startsWith(it) } ||
-            target?.startsWith(path) == true
+            target != null && (target.startsWith(path) || path.startsWith(target))
     }
 
     /**

@@ -267,7 +267,7 @@ fun ExplorerShell(vm: ExplorerViewModel, widthClass: WidthClass, viewers: Viewer
  * The dialogs of the file operations, the later over the earlier: the conflict the running one waits
  * on, else its progress (unless it runs in the background); the failures of one that ended; the
  * rename dialog (with why the name typed failed); and a question to answer, over the rename dialog it
- * may come from.
+ * may come from. Each conflict and question is asked anew ([Asking]), and answered as the one it is.
  */
 @Composable
 private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: ExplorerViewModel) {
@@ -277,7 +277,9 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
         val progress = running?.progress
         // The items still to come, of which some may clash too.
         val remaining = progress?.let { (it.totalItems - it.doneItems - 1).coerceAtLeast(0) } ?: 0
-        ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer) { vm.cancelOperation(pending.opId) }
+        Asking(pending) {
+            ConflictDialog(pending.conflict, pending.allowed, remaining, pending::answer) { vm.cancelOperation(pending.opId) }
+        }
     } else if (running != null && !ui.progressInBackground) {
         ProgressDialog(running, onBackground = vm::runInBackground) { vm.cancelOperation(running.spec.id) }
     }
@@ -294,7 +296,9 @@ private fun OperationsDialogs(ui: ExplorerUiState, runner: RunnerState, vm: Expl
             pending = ui.renamePending,
         )
     }
-    ui.confirm?.let { ConfirmDialog(it, onAnswer = vm::answerConfirm) }
+    ui.confirm?.let { request ->
+        Asking(request) { ConfirmDialog(request, onAnswer = { yes -> vm.answerConfirm(request, yes) }) }
+    }
 }
 
 /**

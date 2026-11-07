@@ -84,7 +84,10 @@ data class UiMessage(
 /** Why renaming an item to [name], as typed, failed: [error]. */
 data class RenameError(val name: String, val error: UiText)
 
-/** A question about a file operation, answered yes or no ([ExplorerViewModel.answerConfirm]). */
+/**
+ * A question about a file operation, answered yes or no ([ExplorerViewModel.answerConfirm]): the answer goes with
+ * the very question object asked, not with one equal to it asked later.
+ */
 sealed interface ConfirmRequest {
     /** Delete [paths] for good, [count] items: always asked, it cannot be undone. */
     data class PermanentDelete(val paths: List<Path>, val count: Int) : ConfirmRequest

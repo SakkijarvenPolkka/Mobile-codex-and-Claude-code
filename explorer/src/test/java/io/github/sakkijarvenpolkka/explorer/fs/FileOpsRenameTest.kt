@@ -155,6 +155,9 @@ class FileOpsRenameTest {
             ".." to NameProblem.DotOrDotDot,
             "a\u0000b" to NameProblem.ControlChar,
             "a‮b" to NameProblem.BidiControl,
+            // The app's own names, which it would never list again.
+            "a.xpart" to NameProblem.Reserved,
+            ".Recycle.Bin" to NameProblem.Reserved,
         )) {
             val e = assertThrows(FsException::class.java) { ops().renameBlocking(a, name) }
             assertEquals(name, FsError.NameInvalid(problem), e.error)

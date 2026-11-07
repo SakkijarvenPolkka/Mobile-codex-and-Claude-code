@@ -24,6 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
+/** The most files shared at once: the system passes no more on (its buffer for a call holds about 1 MB). */
+private const val MAX_SHARED = 500
+
 /** An [intent] for the shell to start, asked for while the active tab was [at]; the file it [opens], if any. */
 internal class PendingLaunch(val intent: Intent, val at: Location, val opens: Path? = null)
 
@@ -56,9 +59,13 @@ internal class HandOver(
         handOver(listOf(entry.path)) { Prepared.Launch(it.chooserIntent(entry.path, title)) }
     }
 
-    /** Shares the files [paths] through the system share sheet. */
+    /**
+     * Shares the files [paths] through the system share sheet; more than [MAX_SHARED] at once are refused
+     * with a message, before anything is looked at: the system would not pass them on.
+     */
     fun share(paths: List<Path>) {
         if (paths.isEmpty()) return
+        if (paths.size > MAX_SHARED) return shell.showError(shell.here(), UiText.res(R.string.share_too_many))
         handOver(paths) { Prepared.Launch(Intent.createChooser(it.shareIntent(paths), null)) }
     }
 
@@ -102,6 +109,7 @@ internal class HandOver(
         when (result) {
             OpenResult.Started -> Unit
             OpenResult.NoApp -> shell.showError(at, UiText.res(R.string.open_no_app))
+            OpenResult.TooMany -> shell.showError(at, UiText.res(R.string.share_too_many))
             OpenResult.Unsupported -> shell.showError(at, UiText.res(R.string.open_unsupported))
             OpenResult.NotFound -> {
                 shell.showError(at, UiText.res(R.string.error_not_found))

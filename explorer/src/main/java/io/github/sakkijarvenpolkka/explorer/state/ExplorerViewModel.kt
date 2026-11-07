@@ -314,7 +314,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
 
     fun emptyBin() = ops.emptyBin()
 
-    fun answerConfirm(yes: Boolean) = ops.answerConfirm(yes)
+    fun answerConfirm(request: ConfirmRequest, yes: Boolean) = ops.answerConfirm(request, yes)
 
     fun cancelOperation(opId: String) = ops.cancel(opId)
 

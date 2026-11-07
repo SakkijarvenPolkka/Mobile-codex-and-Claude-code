@@ -157,6 +157,22 @@ class NamesTest {
         assertEquals(bad(NameProblem.Empty), check("", fat))
     }
 
+    @Test
+    fun internalNamesAreReserved() {
+        // The app never lists them: an item given one would be lost to it.
+        for (name in listOf("backup.xpart", "a.XPART", ".x.op1.xpart", ".Recycle.Bin", ".recycle.bin", " notes.xpart ")) {
+            assertEquals(name, bad(NameProblem.Reserved), check(name))
+            assertEquals(name, bad(NameProblem.Reserved), check(name, fat))
+        }
+        // Numbered, they are names like any other.
+        assertEquals(NameCheck.Ok("notes.xpart (2)"), check("notes.xpart (2)"))
+        assertEquals(NameCheck.Ok(".Recycle.Bin (2)"), check(".Recycle.Bin (2)"))
+        assertEquals(NameCheck.Ok("xpart"), check("xpart"))
+        // What FAT cannot store is said first: a copy there is refused for it, reserved or not.
+        assertEquals(bad(NameProblem.FatChar(':')), check("a:b.xpart", fat))
+        assertEquals(NameProblem.FatChar(':'), fatProblemOf("a:b.xpart", fat))
+    }
+
     // --- splitName ---
 
     @Test

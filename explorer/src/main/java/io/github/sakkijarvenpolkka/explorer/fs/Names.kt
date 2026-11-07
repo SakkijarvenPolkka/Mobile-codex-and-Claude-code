@@ -39,7 +39,8 @@ object NameValidator {
      * refuses an empty name, `/`, `.` and `..`, C0 and C1 control characters (NUL included), the
      * line and paragraph separators, the bidirectional controls that reorder text, and more than
      * 255 UTF-8 bytes. FAT volumes ([VolumeTraits.fatNames]) also refuse `\ : * ? " < > |` and a
-     * trailing dot.
+     * trailing dot. Last, the app's own names ([HiddenNames.isInternal]) are [NameProblem.Reserved]: it
+     * never lists them, so an item given one would be lost to it.
      */
     fun validate(raw: String, traits: VolumeTraits): NameCheck {
         val name = raw.trim(' ')
@@ -60,6 +61,8 @@ object NameValidator {
             // A trailing space was trimmed above, so only a dot can end the name here.
             if (name.last() == '.') return NameProblem.TrailingDotOrSpace
         }
+        // After what a volume cannot store, which a copy there is refused for ([fatProblemOf]).
+        if (HiddenNames.isInternal(name)) return NameProblem.Reserved
         return null
     }
 

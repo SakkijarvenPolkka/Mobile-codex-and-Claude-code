@@ -136,13 +136,17 @@ internal class Extraction(
         }
     }
 
-    /** Writes the file [entry] at [path] in [temp], under a ` (2)` name if that is taken. */
+    /**
+     * Writes the file [entry] at [path] in [temp], under a ` (2)` name if that is taken; one of the app's own
+     * names is numbered from the start, as a whole (`a.xpart (2)`, not `a (2).xpart`: [firstNumberFor]).
+     */
     private suspend fun extractFile(entry: ZipEntry, path: String, progress: Progress) {
         val dir = folderFor(path.substringBeforeLast('/', ""))
         val name = path.substringAfterLast('/')
-        val (stem, ext) = splitName(name)
+        val first = firstNumberFor(name)
+        val (stem, ext) = if (first > 1) name to "" else splitName(name)
         val startBytes = progress.doneBytes
-        val written = claimUniqueName(dir, stem, ext, UniqueStyle.KEEP_BOTH, labels, 1) { candidate ->
+        val written = claimUniqueName(dir, stem, ext, UniqueStyle.KEEP_BOTH, labels, first) { candidate ->
             if (fs.exists(candidate)) throw FileAlreadyExistsException(candidate.toString())
             var read = 0L
             val data = archive.getInputStream(entry) ?: throw FsException(FsError.Corrupt)
@@ -155,7 +159,8 @@ internal class Extraction(
                 }
             }
         }.first
-        if (written.fileName.toString() != name) renamed++
+        // Renamed for an entry of its name, not for being one of the app's.
+        if (written.fileName.toString() != firstName(name)) renamed++
     }
 
     /** The folder the archive's folder [path] (`a/b`; "" for [temp]) is extracted to, made if need be. */
@@ -174,22 +179,34 @@ internal class Extraction(
 
     /**
      * The folder [name] in [parent]: the one there (in whatever case: a volume that ignores it has one
-     * folder for both), else a new one; if a file has the name, a new one numbered ` (2)` on.
+     * folder for both), else a new one; if a file has the name, a new one numbered ` (2)` on. One of the
+     * app's own names is numbered from the start ([firstNumberFor]): `.Recycle.Bin (2)`, then ` (3)` on.
      */
     private fun folderIn(parent: Path, name: String): Path {
-        val dir = parent.resolve(name)
+        val dir = parent.resolve(firstName(name))
         if (!fs.exists(dir)) {
             fs.createDirectory(dir)
             return dir
         }
         if (fs.attributes(dir).isDirectory) return dir
         renamed++
-        return claimUniqueName(parent, name, "", UniqueStyle.KEEP_BOTH, labels, 2) { fs.createDirectory(it) }.first
+        val next = firstNumberFor(name) + 1
+        return claimUniqueName(parent, name, "", UniqueStyle.KEEP_BOTH, labels, next) { fs.createDirectory(it) }.first
     }
 
-    /** Gives [temp] the folder's name, numbered if it is taken: a folder that is there is never merged into. */
+    /** The name [name] is extracted under when nothing else there has it: itself, or numbered ([firstNumberFor]). */
+    private fun firstName(name: String): String {
+        val first = firstNumberFor(name)
+        return if (first > 1) candidateName(name, "", UniqueStyle.KEEP_BOTH, first, labels) else name
+    }
+
+    /**
+     * Gives [temp] the folder's name, numbered if it is taken (or is one of the app's own: [firstNumberFor]): a
+     * folder that is there is never merged into.
+     */
     private fun rename(): Path {
-        val (folder, _) = claimUniqueName(targetDir, stem, "", UniqueStyle.KEEP_BOTH, labels, 1) { candidate ->
+        val first = firstNumberFor(stem)
+        val (folder, _) = claimUniqueName(targetDir, stem, "", UniqueStyle.KEEP_BOTH, labels, first) { candidate ->
             if (fs.exists(candidate)) throw FileAlreadyExistsException(candidate.toString())
             try {
                 fs.atomicMove(temp, candidate)
@@ -266,6 +283,12 @@ private class Checked(input: InputStream, private val size: Long, private val cr
         return read
     }
 }
+
+/**
+ * The first number [claimUniqueName] tries for [name] in an extraction: 2 for one of the app's own names
+ * ([HiddenNames.isInternal]), which nothing would list (`notes.xpart (2)` and `.Recycle.Bin (2)` are not), else 1.
+ */
+internal fun firstNumberFor(name: String): Int = if (HiddenNames.isInternal(name)) 2 else 1
 
 /** Whether the safe entry name [name] ([ZipNames.sanitize]) is a file's: not a folder's, nor empty. */
 private fun isFile(name: String) = name.isNotEmpty() && !name.endsWith('/')

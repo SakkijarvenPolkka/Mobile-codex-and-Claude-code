@@ -11,6 +11,7 @@ import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.RemoteException
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
@@ -108,11 +109,16 @@ sealed interface OpenResult {
 
     /** The file is gone. */
     data object NotFound : OpenResult
+
+    /** More files at once than the system can pass on. */
+    data object TooMany : OpenResult
 }
 
 /**
  * Starts [intent] from [context]: [OpenResult.NoApp] when no app takes it, or the one that would
- * refuses this app (an activity it does not export, a permission this app lacks).
+ * refuses this app (an activity it does not export, a permission this app lacks); [OpenResult.TooMany]
+ * when the call to the system failed, as one too large for its buffer (about 1 MB, shared by all
+ * calls) does: thousands of files shared at once. Anything else fails as it does.
  */
 fun launch(context: Context, intent: Intent): OpenResult = try {
     context.startActivity(intent)
@@ -121,4 +127,7 @@ fun launch(context: Context, intent: Intent): OpenResult = try {
     OpenResult.NoApp
 } catch (e: SecurityException) {
     OpenResult.NoApp
+} catch (e: RuntimeException) {
+    // Instrumentation rethrows what the call failed with (TransactionTooLargeException) as "Failure from system".
+    if (generateSequence(e.cause) { it.cause }.any { it is RemoteException }) OpenResult.TooMany else throw e
 }

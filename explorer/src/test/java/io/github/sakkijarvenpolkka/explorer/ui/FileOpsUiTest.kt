@@ -70,6 +70,7 @@ import io.github.sakkijarvenpolkka.explorer.state.ExplorerDeps
 import io.github.sakkijarvenpolkka.explorer.state.ExplorerViewModel
 import io.github.sakkijarvenpolkka.explorer.state.FakeVolumes
 import io.github.sakkijarvenpolkka.explorer.state.Location
+import io.github.sakkijarvenpolkka.explorer.state.TabAction
 import io.github.sakkijarvenpolkka.explorer.state.startAt
 import io.github.sakkijarvenpolkka.explorer.ui.fluent.FluentTheme
 import io.github.sakkijarvenpolkka.explorer.util.DisplayName
@@ -82,6 +83,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -182,6 +185,14 @@ class FileOpsUiTest {
         condition()
     }
 
+    /** Lets the question shown be seen long enough for its answers to be taken ([QUESTION_ARMING_MS]). */
+    private fun armed() {
+        rule.mainClock.advanceTimeBy(QUESTION_ARMING_MS)
+        rule.waitForIdle()
+    }
+
+    private fun content(path: Path): String = String(Files.readAllBytes(path))
+
     @Test
     fun conflictDialogShowsAllowedActionsOnly() {
         val src = entry(file("a.txt"))
@@ -215,6 +226,7 @@ class FileOpsUiTest {
             val kind = ConflictKind.FILE_FILE
             ConflictDialog(Conflict(kind, a, a), allowedActions(kind), 3, onAnswer = { answers += it }, onCancel = {})
         }
+        armed()
         button(str(R.string.conflict_skip)).performClick()
         // No count: how many of the items to come clash is not known.
         rule.onNodeWithTag(Tags.APPLY_TO_ALL).assert(hasText(str(R.string.conflict_apply_all))).performClick()
@@ -224,6 +236,84 @@ class FileOpsUiTest {
             listOf(Resolution(ConflictAction.SKIP, applyToAll = false), Resolution(ConflictAction.KEEP_BOTH, applyToAll = true)),
             answers,
         )
+    }
+
+    @Test
+    fun aSecondTapOnTheNextConflictDoesNothing() {
+        file("a.txt", "new a")
+        file("b.txt", "new b")
+        val dst = Files.createDirectory(root.resolve("dst"))
+        Files.write(dst.resolve("a.txt"), "old a".toByteArray())
+        Files.write(dst.resolve("b.txt"), "old b".toByteArray())
+        showShell()
+        vm.dispatch(TabAction.SelectAll(listOf(root.resolve("a.txt"), root.resolve("b.txt"))))
+        vm.copy()
+        vm.navigate(Location.Folder(dst))
+        rule.waitForIdle()
+        rule.onNodeWithTag(Tags.command(Command.PASTE)).performClick()
+        waitFor { vm.runner.value.pending?.conflict?.existing?.name == "a.txt" }
+
+        // Replace tapped twice: the second tap comes as the question about b.txt shows, unseen.
+        armed()
+        button(str(R.string.conflict_replace)).performClick()
+        waitFor { vm.runner.value.pending?.conflict?.existing?.name == "b.txt" }
+        val second = vm.runner.value.pending
+        button(str(R.string.conflict_replace)).performClick()
+        rule.waitForIdle()
+        assertSame(second, vm.runner.value.pending)
+        assertEquals("old b", content(dst.resolve("b.txt")))
+
+        // Seen for a moment, it is answered.
+        armed()
+        button(str(R.string.conflict_skip)).performClick()
+        waitFor { vm.runner.value.running == null }
+        assertEquals("new a", content(dst.resolve("a.txt")))
+        assertEquals("old b", content(dst.resolve("b.txt")))
+    }
+
+    @Test
+    fun aSecondTapOnTheNextQuestionDoesNothing() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        showShell()
+        // Two questions, the second waiting for the first to be answered.
+        vm.dispatch(TabAction.Select(a))
+        vm.delete(permanent = true)
+        vm.dispatch(TabAction.Select(b))
+        vm.delete(permanent = true)
+        rule.waitForIdle()
+
+        // Yes tapped twice: the second tap comes as the question about b.txt shows, unseen.
+        armed()
+        button(str(R.string.yes)).performClick()
+        val second = vm.ui.value.confirm
+        assertEquals(ConfirmRequest.PermanentDelete(listOf(b), 1), second)
+        button(str(R.string.yes)).performClick()
+        waitFor { !Files.exists(a) }
+        assertSame(second, vm.ui.value.confirm)
+        assertTrue(Files.exists(b))
+
+        // Seen for a moment, it is answered.
+        armed()
+        button(str(R.string.no)).performClick()
+        rule.waitForIdle()
+        assertNull(vm.ui.value.confirm)
+        assertTrue(Files.exists(b))
+    }
+
+    @Test
+    fun renameRefusesTheAppsOwnNamesWhileTyping() {
+        val a = entry(file("a.txt"))
+        showAlone { RenameDialog(a, VolumeTraits(), onCommit = {}, onDismiss = {}) }
+        // Named so, the item would never be listed again.
+        for (name in listOf("a.xpart", ".Recycle.Bin")) {
+            rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement(name)
+            rule.onNodeWithText(str(R.string.name_reserved)).assertExists()
+            button(str(R.string.ok)).assertIsNotEnabled()
+        }
+        rule.onNodeWithTag(Tags.RENAME_FIELD).performTextReplacement("a.xpart (2)")
+        rule.onNodeWithText(str(R.string.name_reserved)).assertDoesNotExist()
+        button(str(R.string.ok)).assertIsEnabled()
     }
 
     @Test
@@ -301,10 +391,12 @@ class FileOpsUiTest {
         rule.onNodeWithText(str(R.string.ext_change)).assertExists()
 
         // No goes back to the name as typed.
+        armed()
         button(str(R.string.no)).performClick()
         rule.onNodeWithText(str(R.string.ext_change)).assertDoesNotExist()
         rule.onNodeWithTag(Tags.RENAME_FIELD).assert(hasText("report.txt"))
         button(str(R.string.ok)).performClick()
+        armed()
         button(str(R.string.yes)).performClick()
         waitFor { names() == listOf("report.txt") }
         rule.onNodeWithTag(Tags.RENAME_FIELD).assertDoesNotExist()
@@ -385,6 +477,7 @@ class FileOpsUiTest {
         rule.onNodeWithTag(Tags.command(Command.EMPTY_BIN)).performClick()
         rule.onNodeWithText(str(R.string.empty_bin_body, 1)).assertExists()
         rule.onNodeWithText(str(R.string.cannot_undo)).assertExists()
+        armed()
         button(str(R.string.yes)).performClick()
         waitFor { names().isEmpty() }
         assertFalse(Files.exists(root.resolve("b.txt")))

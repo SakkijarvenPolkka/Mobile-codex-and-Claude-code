@@ -150,6 +150,25 @@ class ZipTest {
     }
 
     @Test
+    fun internalNamesAreExtractedNumbered() {
+        // Named as the app names its own items, they would never be listed again: each is numbered from (2).
+        val entries = zipOf("a.xpart" to "a", ".Recycle.Bin/x.txt" to "x", "b.txt" to "b")
+        val zip = putZip(src, "notes.xpart.zip", entries)
+
+        assertEquals(dst.resolve("notes.xpart (2)"), zipOps().extractFolder(zip, dst))
+        val result = zipOps().extractNow(zip)
+
+        // Not counted as duplicates: no other entry had their names.
+        assertEquals(ExtractResult(dst.resolve("notes.xpart (2)"), 0), result)
+        assertEquals(
+            mapOf("a.xpart (2)" to "a", ".Recycle.Bin (2)/" to "", ".Recycle.Bin (2)/x.txt" to "x", "b.txt" to "b"),
+            tree(result.folder),
+        )
+        assertEquals(dst.resolve("notes.xpart (3)"), zipOps().extractNow(zip).folder)
+        assertEquals(emptyList<Path>(), partsUnder(dst))
+    }
+
+    @Test
     fun entryLargerThanDeclaredAborts() {
         val bytes = zipOf("ok.txt" to "ok", "big.txt" to "0123456789".repeat(100))
         // The central directory says big.txt is 10 bytes; it inflates to 1000.

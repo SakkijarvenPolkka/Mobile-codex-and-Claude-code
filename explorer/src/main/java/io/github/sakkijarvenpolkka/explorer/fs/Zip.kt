@@ -128,11 +128,11 @@ class ZipOps(
 
     /**
      * The folder [extract] would make for [zip] in [targetDir] if it ran now: the first of its names
-     * (numbered as [extract] numbers them) that nothing in [targetDir] has.
+     * (numbered as [extract] numbers them, [firstNumberFor]) that nothing in [targetDir] has.
      */
     fun extractFolder(zip: Path, targetDir: Path): Path {
         val stem = splitName(zip.fileName.toString()).first
-        return (1..MAX_UNIQUE_NUMBER).asSequence()
+        return (firstNumberFor(stem)..MAX_UNIQUE_NUMBER).asSequence()
             .map { targetDir.resolve(candidateName(stem, "", UniqueStyle.KEEP_BOTH, it, labels)) }
             .firstOrNull { !fs.exists(it) }
             ?: throw FsException(FsError.AlreadyExists)

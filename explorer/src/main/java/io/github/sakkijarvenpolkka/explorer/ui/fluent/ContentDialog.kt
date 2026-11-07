@@ -36,13 +36,13 @@ import androidx.compose.ui.window.DialogProperties
 
 /**
  * A modal dialog with [title], [content] (scrolls when long) and a row of buttons: [primary]
- * as the accent button (disabled unless [primaryEnabled]), then [secondary] and [close]; each
- * pair is a label and its action. The buttons only call their actions; the caller removes the
- * dialog. Back calls [onDismiss]; touching outside does not, so typed input is not lost by
- * accident. The dialog is as wide as its content and buttons need, from 280 to 548 dp (longer
- * text wraps); with [fullWidth] it is always as wide as it gets, for content that changes while
- * it is shown (a progress, a name being typed, a count), so the dialog does not resize with it. It
- * keeps clear of the system bars and of the keyboard.
+ * as the accent button (disabled unless [primaryEnabled]), then [secondary] and [close] (disabled
+ * unless [closeEnabled]); each pair is a label and its action. The buttons only call their
+ * actions; the caller removes the dialog. Back calls [onDismiss]; touching outside does not, so
+ * typed input is not lost by accident. The dialog is as wide as its content and buttons need,
+ * from 280 to 548 dp (longer text wraps); with [fullWidth] it is always as wide as it gets, for
+ * content that changes while it is shown (a progress, a name being typed, a count), so the dialog
+ * does not resize with it. It keeps clear of the system bars and of the keyboard.
  */
 @Composable
 fun ContentDialog(
@@ -53,6 +53,7 @@ fun ContentDialog(
     close: Pair<String, () -> Unit>?,
     primaryEnabled: Boolean = true,
     fullWidth: Boolean = false,
+    closeEnabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
     Dialog(
@@ -104,7 +105,7 @@ fun ContentDialog(
                     FluentButton(label, action, Modifier.weight(1f), style = ButtonStyle.ACCENT, enabled = primaryEnabled)
                 }
                 secondary?.let { (label, action) -> FluentButton(label, action, Modifier.weight(1f)) }
-                close?.let { (label, action) -> FluentButton(label, action, Modifier.weight(1f)) }
+                close?.let { (label, action) -> FluentButton(label, action, Modifier.weight(1f), enabled = closeEnabled) }
             }
         }
     }

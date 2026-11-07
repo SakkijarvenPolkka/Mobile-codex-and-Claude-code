@@ -107,6 +107,39 @@ class OpenFlowTest {
         FileEntry(path, "photo.jpg", EntryKind.FILE, 1, 0, "image/jpeg", hidden = false, fileKey = null)
 
     @Test
+    fun sharingMoreThan500FilesIsRefused() {
+        repeat(501) { file("f%03d.txt".format(it)) }
+        start()
+        vm.command(Command.SELECT_ALL)
+        vm.command(Command.SHARE)
+        settle()
+        // Nothing is handed over: the system could not pass so many on, and the app would stop.
+        assertNull(ui.launch)
+        assertEquals(UiText.res(R.string.share_too_many), ui.message?.text)
+
+        // 500 are not refused for their number (these, outside the folders the app shares, for where they are).
+        vm.dismissMessage()
+        Files.delete(root.resolve("f500.txt"))
+        vm.refresh()
+        settle()
+        vm.command(Command.SELECT_ALL)
+        vm.command(Command.SHARE)
+        settle()
+        assertEquals(UiText.res(R.string.open_unsupported), ui.message?.text)
+    }
+
+    @Test
+    fun handOverTooLargeForTheSystemSaysHowManyCanGo() {
+        val photo = SD.resolve("DCIM/photo.jpg")
+        start(fs = backendWith(photo))
+        vm.open(photo(photo))
+        settle()
+        vm.launched(checkNotNull(ui.launch), OpenResult.TooMany)
+        settle()
+        assertEquals(UiText.res(R.string.share_too_many), ui.message?.text)
+    }
+
+    @Test
     fun openingVanishedFileShowsNotFoundAndRefreshes() {
         file("a.txt")
         file("b.txt")

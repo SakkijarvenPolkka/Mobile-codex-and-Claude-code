@@ -93,6 +93,7 @@ internal fun nameProblemText(problem: NameProblem, traits: VolumeTraits): UiText
         NameProblem.Slash -> if (traits.fatNames) R.string.name_fat_chars else R.string.name_invalid
         NameProblem.Empty -> R.string.name_empty
         NameProblem.TooLong -> R.string.name_too_long
+        NameProblem.Reserved -> R.string.name_reserved
         NameProblem.DotOrDotDot, NameProblem.ControlChar, NameProblem.BidiControl,
         NameProblem.TrailingDotOrSpace, NameProblem.NotAllowedByVolume,
         -> R.string.name_invalid

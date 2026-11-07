@@ -41,6 +41,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -159,6 +160,9 @@ class ExplorerViewModelOpsTest {
         drain()
     }
 
+    /** Answers the question asked now. */
+    private fun answer(yes: Boolean) = vm.answerConfirm(checkNotNull(ui.confirm) { "No question is asked" }, yes)
+
     @Test
     fun copyPasteIntoSameFolderCreatesCopy() {
         file("a.txt", "a")
@@ -249,13 +253,13 @@ class ExplorerViewModelOpsTest {
         assertTrue(Files.exists(a))
 
         // No keeps it.
-        vm.answerConfirm(yes = false)
+        answer(yes = false)
         drain()
         assertNull(ui.confirm)
         assertTrue(Files.exists(a))
 
         vm.delete(permanent = true)
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
         assertNull(ui.confirm)
         assertFalse(Files.exists(a))
@@ -276,7 +280,7 @@ class ExplorerViewModelOpsTest {
         assertEquals(ConfirmRequest.BinUnavailable(listOf(a)), ui.confirm)
         assertTrue(Files.exists(a))
         assertNull(ui.failedOp)
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
         assertNull(ui.confirm)
         assertFalse(Files.exists(a))
@@ -311,6 +315,65 @@ class ExplorerViewModelOpsTest {
         assertFalse(Files.exists(root.resolve("b.txt")))
         vm.runner.value.pending?.answer(Resolution(ConflictAction.SKIP))
         drain()
+    }
+
+    @Test
+    fun renameInsideTheRunningPastesTargetRefused() {
+        dir("src/X")
+        file("src/X/f.txt", "new")
+        dir("dst/X")
+        file("dst/X/f.txt", "old")
+        file("dst/other.txt")
+        start()
+        goTo(root.resolve("src"))
+        select("X")
+        vm.copy()
+        goTo(root.resolve("dst"))
+        vm.paste()
+        drain()
+        // The copy asks about dst/X, which it fills: dst and all in it are what it writes to.
+        assertNotNull(vm.runner.value.pending)
+
+        for (name in listOf("X", "other.txt")) {
+            vm.dismissMessage()
+            vm.startRename(entry(name))
+            assertNull(name, ui.renaming)
+            assertEquals(name, UiText.res(R.string.err_busy), ui.message?.text)
+        }
+        checkNotNull(vm.runner.value.pending).answer(Resolution(ConflictAction.SKIP))
+        drain()
+        vm.startRename(entry("other.txt"))
+        assertEquals(entry("other.txt"), ui.renaming)
+    }
+
+    @Test
+    fun anAnswerCountsOnlyForTheQuestionItAnswers() {
+        val a = file("a.txt")
+        val b = file("b.txt")
+        start()
+        select("a.txt")
+        vm.delete(permanent = true)
+        vm.dispatch(TabAction.Select(b))
+        vm.delete(permanent = true)
+        drain()
+        val first = checkNotNull(ui.confirm)
+        assertEquals(ConfirmRequest.PermanentDelete(listOf(a), 1), first)
+
+        vm.answerConfirm(first, yes = true)
+        drain()
+        val second = checkNotNull(ui.confirm)
+        assertEquals(ConfirmRequest.PermanentDelete(listOf(b), 1), second)
+        // Yes again for the first question (tapped twice): the one asked now is not taken as answered.
+        vm.answerConfirm(first, yes = true)
+        drain()
+        assertSame(second, ui.confirm)
+        assertFalse(Files.exists(a))
+        assertTrue(Files.exists(b))
+
+        vm.answerConfirm(second, yes = false)
+        drain()
+        assertNull(ui.confirm)
+        assertTrue(Files.exists(b))
     }
 
     @Test
@@ -471,7 +534,7 @@ class ExplorerViewModelOpsTest {
         val confirm = ui.confirm as ConfirmRequest.SkipUnstorable
         assertEquals(1, confirm.count)
         assertFalse(Files.exists(sd.resolve("c.txt")))
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
         assertNull(ui.confirm)
         assertEquals(listOf("c.txt"), names())
@@ -566,7 +629,7 @@ class ExplorerViewModelOpsTest {
         drain()
         assertEquals(listOf("a.txt", "b.txt"), names())
         runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(c.toString())))
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
 
         // Only the item asked about is gone for good.
@@ -727,7 +790,7 @@ class ExplorerViewModelOpsTest {
         assertEquals(ConfirmRequest.BinUnavailable(listOf(b)), ui.confirm)
         val listed = checkNotNull(ui.failedOp) { "No failures listed" }
         assertEquals(listOf(a.toString()), (listed.result as OpResult.Done).failed.map { it.path })
-        vm.answerConfirm(yes = false)
+        answer(yes = false)
 
         // Only a.txt is tried again: b.txt is not asked about again, nor is gone.txt looked for.
         vm.retryFailed(listed)
@@ -797,9 +860,9 @@ class ExplorerViewModelOpsTest {
         runner.submit(OperationSpec(newId(), OpKind.DELETE_TO_BIN, listOf(a.toString())))
         drain()
         assertEquals(first, ui.confirm)
-        vm.answerConfirm(yes = false)
+        answer(yes = false)
         assertEquals(ConfirmRequest.BinUnavailable(listOf(a)), ui.confirm)
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
         assertNull(ui.confirm)
         assertFalse(Files.exists(a))
@@ -823,7 +886,7 @@ class ExplorerViewModelOpsTest {
         // Only a:b.txt is left out; d/x:y.txt goes with d, fails and is listed.
         val confirm = ui.confirm as ConfirmRequest.SkipUnstorable
         assertEquals(1, confirm.count)
-        vm.answerConfirm(yes = true)
+        answer(yes = true)
         drain()
         assertEquals(setOf("c.txt", "d"), names().toSet())
         val failed = checkNotNull(ui.failedOp) { "No failures listed" }.result as OpResult.Done

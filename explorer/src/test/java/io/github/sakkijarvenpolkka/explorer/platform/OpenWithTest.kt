@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
+import android.os.TransactionTooLargeException
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.test.core.app.ApplicationProvider
@@ -119,6 +120,22 @@ class OpenWithTest {
             override fun startActivity(intent: Intent?) = throw SecurityException("Permission Denial")
         }
         assertEquals(OpenResult.NoApp, launch(refusing, openWith.viewIntent(sd("a.pdf"))))
+    }
+
+    @Test
+    fun launchTooLargeForTheSystemReturnsTooMany() {
+        // What the binder could not carry (thousands of files shared), as Instrumentation rethrows it.
+        val tooLarge = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent?) =
+                throw RuntimeException("Failure from system", TransactionTooLargeException("data parcel size 1200000 bytes"))
+        }
+        assertEquals(OpenResult.TooMany, launch(tooLarge, openWith.shareIntent(listOf(sd("a.jpg"), sd("b.jpg")))))
+
+        // Anything else is a bug, not a refusal: it is not passed off as one.
+        val broken = object : ContextWrapper(context) {
+            override fun startActivity(intent: Intent?) = throw IllegalStateException("bug")
+        }
+        assertThrows(IllegalStateException::class.java) { launch(broken, openWith.viewIntent(sd("a.pdf"))) }
     }
 
     @Test

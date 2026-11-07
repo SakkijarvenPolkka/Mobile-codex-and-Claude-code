@@ -38,9 +38,10 @@ import io.github.sakkijarvenpolkka.explorer.util.DisplayName
 /**
  * Asks about [conflict]: "Merge folders" for two folders, else "Replace or Skip Files", with a button
  * for each of the [allowed] answers ([io.github.sakkijarvenpolkka.explorer.fs.allowedActions]), which
- * calls [onAnswer]. While [remaining] items of the operation are still to come, a check box gives the
- * answer to the conflicts of the same kind among them too (how many of them clash is not known, so it
- * says no number). Cancel and Back call [onCancel], which stops the operation.
+ * calls [onAnswer]; they are disabled for [QUESTION_ARMING_MS] once it shows ([rememberArmed]). While
+ * [remaining] items of the operation are still to come, a check box gives the answer to the conflicts of
+ * the same kind among them too (how many of them clash is not known, so it says no number). Cancel and
+ * Back call [onCancel], which stops the operation.
  */
 @Composable
 fun ConflictDialog(
@@ -50,6 +51,7 @@ fun ConflictDialog(
     onAnswer: (Resolution) -> Unit,
     onCancel: () -> Unit,
 ) {
+    val armed = rememberArmed()
     var toAll by remember(conflict) { mutableStateOf(false) }
     val title = if (conflict.kind == ConflictKind.DIR_DIR) R.string.conflict_folder_title else R.string.conflict_title
     ContentDialog(
@@ -64,7 +66,8 @@ fun ConflictDialog(
                 style = FluentTheme.type.body.copy(color = FluentTheme.colors.text),
             )
             for (action in allowed) {
-                FluentButton(stringResource(labelOf(action)), { onAnswer(Resolution(action, toAll)) }, Modifier.fillMaxWidth())
+                val answer = { onAnswer(Resolution(action, toAll)) }
+                FluentButton(stringResource(labelOf(action)), answer, Modifier.fillMaxWidth(), enabled = armed)
             }
             if (remaining > 0) {
                 Row(
