@@ -246,8 +246,10 @@ class ExplorerAppTest {
         submitWaitingCopy("t1")
         assertEquals(1, started.size)
 
-        // The day's time for data sync services ran out: the service stopped, the work goes on in the process.
+        // The day's time for data sync services ran out: the service stopped, the work goes on in the process,
+        // which the user is told.
         app.onForegroundTimedOut()
+        assertEquals(OpsNotice.TimedOut, app.opsNotice.value)
         submitQueuedCopy("t2")
 
         assertEquals(2, started.size)
