@@ -371,8 +371,8 @@ suspend fun FileOps.run(spec: OperationSpec, resolver: ConflictResolver,
   `START_NOT_STICKY`, 큐가 비면 `stopSelf`.
   - 작업 중에는 `PARTIAL_WAKE_LOCK`(타임아웃 있음, `finally`에서 해제).
   - 진행 중 알림 하나: 진행률, 취소 동작. 충돌 대기 중이면 "확인이 필요합니다", 누르면 앱이 열린다.
-  - `onTimeout(int, int)`(targetSdk 35+의 dataSync 하루 6시간 한도): 실행 중 작업을 정상 정리로 취소한 뒤
-    `stopSelf`.
+  - `onTimeout(int, int)`(targetSdk 35+의 dataSync 하루 6시간 한도): 실행 중 작업을 정상 정리를 거쳐 멈추고
+    `Failed(TimeLimit)`("N/M 완료"와 다시 시도)로 끝낸 뒤 `stopSelf`. 남은 작업이 있으면 "앱을 열고 다시 시도하세요" 안내.
   - 시작이 거부되면(`ForegroundServiceStartNotAllowedException`) 프로세스 안에서 실행하고 "앱을 연 채로
     두세요"를 알린다.
   - `POST_NOTIFICATIONS`는 첫 작업 때 한 번 요청(거부해도 서비스는 동작).
