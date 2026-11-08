@@ -126,28 +126,31 @@ class PickActivity : ComponentActivity() {
 
     /**
      * Answers the app that asked with how picking ended: the files chosen, or nothing. Their URIs are made off the main
-     * thread (each walks its file's real path). One that cannot be given out ([OpenWith.uriFor]) answers nothing, and
-     * a toast says why: the shell goes with the activity.
+     * thread (each walks its file's real path); the answer is given on it, whichever thread the wait for them was
+     * resumed on. One that cannot be given out ([OpenWith.uriFor]) answers nothing, and a toast says why: the shell
+     * goes with the activity.
      */
     private suspend fun answer(outcome: PickOutcome) {
-        when (outcome) {
-            is PickOutcome.Chosen -> {
-                val result = try {
-                    withContext(Dispatchers.IO) {
-                        pickResultIntent(outcome.paths, uriFor) { mime.mimeOf(it.fileName.toString()) }
-                    }
-                } catch (e: FsException) {
-                    null
+        val chosen = outcome as? PickOutcome.Chosen
+        val result = chosen?.let {
+            try {
+                withContext(Dispatchers.IO) {
+                    pickResultIntent(it.paths, uriFor) { path -> mime.mimeOf(path.fileName.toString()) }
                 }
-                if (result != null) {
-                    setResult(RESULT_OK, result)
-                } else {
-                    Toast.makeText(this, R.string.open_unsupported, Toast.LENGTH_LONG).show()
+            } catch (e: FsException) {
+                null
+            }
+        }
+        withContext(Dispatchers.Main.immediate) {
+            when {
+                result != null -> setResult(RESULT_OK, result)
+                chosen != null -> {
+                    Toast.makeText(this@PickActivity, R.string.open_unsupported, Toast.LENGTH_LONG).show()
                     setResult(RESULT_CANCELED)
                 }
+                else -> setResult(RESULT_CANCELED)
             }
-            PickOutcome.Cancelled -> setResult(RESULT_CANCELED)
+            finish()
         }
-        finish()
     }
 }

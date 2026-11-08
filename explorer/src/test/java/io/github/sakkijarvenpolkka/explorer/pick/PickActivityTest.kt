@@ -242,8 +242,12 @@ class PickActivityTest {
         startIn(root)
         ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
             val activity = activityOf(scenario)
-            // The FileProvider serves no path outside the storage volumes.
-            activity.uriFor = { throw FsException(FsError.Unsupported) }
+            // The FileProvider serves no path outside the storage volumes; telling takes a moment (the real path is
+            // walked), so the answer comes back from the thread that made it.
+            activity.uriFor = {
+                Thread.sleep(URI_MOMENT_MS)
+                throw FsException(FsError.Unsupported)
+            }
             tap(Tags.row("a.jpg"))
             waitFor { activity.isFinishing }
 
@@ -411,6 +415,9 @@ class PickActivityTest {
     private companion object {
         const val MANAGE_EXTERNAL_STORAGE_OP = "android:manage_external_storage"
         const val ANDROID = "http://schemas.android.com/apk/res/android"
+
+        /** How long making a URI takes in a test that needs it to take a while, in milliseconds. */
+        const val URI_MOMENT_MS = 200L
 
         /** Where the primary volume is on a device. */
         val STORAGE: Path = Paths.get("/storage/emulated/0")
