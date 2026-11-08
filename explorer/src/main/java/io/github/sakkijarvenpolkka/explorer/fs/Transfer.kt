@@ -14,6 +14,7 @@ import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.NoSuchFileException
 import java.nio.file.Path
+import java.nio.file.attribute.FileTime
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.TimeMark
 import kotlin.time.TimeSource
@@ -191,7 +192,8 @@ internal class Transfer(
 
     /**
      * Puts the file [entry] at [dst], replacing a file there if [replace]: renamed if [renameFirst] and
-     * the volume allows, else written, and then, for a move, its source deleted.
+     * the volume allows, else written, and then, for a move, its source deleted, if it is still the file
+     * that was copied ([deleteSource]).
      */
     private suspend fun putFile(
         entry: FileEntry,
@@ -203,6 +205,7 @@ internal class Transfer(
         if (renameFirst && renamed(entry.path, dst)) return dst
         val startBytes = progress.doneBytes
         var read = 0L
+        val copied = if (move) stampOf(entry.path) else null
         fs.openRead(entry.path).use { input ->
             val sync = move || replace || removable
             writer.write(dst, spec.id, sync, replace, entry.modified, input, entry.size) { bytes ->
@@ -212,12 +215,21 @@ internal class Transfer(
                 progress.report()
             }
         }
-        if (move) deleteSource(entry.path, parent)
+        if (move) deleteSource(entry.path, copied, parent)
         return dst
     }
 
-    /** Deletes a moved file's source, now that its copy has its name; a failure is listed as such. */
-    private fun deleteSource(source: Path, parent: Frame) {
+    /**
+     * Deletes a moved file's source, now that its copy has its name, if it is still the file that was copied, as
+     * [copied] stamped it before: another file in its place (a save another app made meanwhile, renamed over it), or one
+     * that cannot be told, stays, listed as [FsError.Busy], with both versions kept. A failure is listed as such.
+     */
+    private fun deleteSource(source: Path, copied: Stamp?, parent: Frame) {
+        if (copied == null || stampOf(source) != copied) {
+            failed += ItemFailure(source.toString(), FsError.Busy, copiedButSourceKept = true)
+            stays(parent)
+            return
+        }
         try {
             fs.delete(source)
         } catch (e: NoSuchFileException) {
@@ -229,6 +241,20 @@ internal class Transfer(
             stays(parent)
         }
     }
+
+    /**
+     * What tells the file at [path] apart from one put in its place (NOFOLLOW_LINKS): its file key, where the file
+     * system has one, its size and its modified time; null when they cannot be read.
+     */
+    private fun stampOf(path: Path): Stamp? = try {
+        val attributes = fs.attributes(path)
+        Stamp(attributes.fileKey(), attributes.size(), attributes.lastModifiedTime())
+    } catch (e: IOException) {
+        null
+    }
+
+    /** A file as [stampOf] tells it apart. */
+    private data class Stamp(val key: Any?, val size: Long, val modified: FileTime)
 
     /**
      * Puts the link or special file [entry], an item a restore takes out of the bin, into [dir] by renaming

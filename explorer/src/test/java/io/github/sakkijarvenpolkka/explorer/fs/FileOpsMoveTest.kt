@@ -7,9 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import java.io.FilterInputStream
 import java.nio.file.AccessDeniedException
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.StandardCopyOption
 import java.nio.file.attribute.FileTime
 
 class FileOpsMoveTest {
@@ -156,6 +158,34 @@ class FileOpsMoveTest {
             mapOf("d/" to "", "d/skipped/" to "", "d/skipped/c.txt" to "c", "d/sub/" to "", "d/sub/kept.txt" to "kept"),
             tree(internal),
         )
+    }
+
+    @Test
+    fun moveKeepsASourceSavedOverWhileItWasCopied() {
+        val source = write(internal, "edit.prj", "old")
+        // Another app saves the file as it is copied to the card: a new file of the same size, renamed over it.
+        var saved = false
+        val fs = twoVolumes().apply {
+            wrapRead("edit.prj") { input ->
+                object : FilterInputStream(input) {
+                    override fun read(b: ByteArray, off: Int, len: Int): Int = super.read(b, off, len).also { read ->
+                        if (read < 0 && !saved) {
+                            saved = true
+                            val temp = Files.write(internal.resolve(".edit.prj.id.xpart"), "new".toByteArray())
+                            Files.move(temp, source, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                        }
+                    }
+                }
+            }
+        }
+
+        val result = ops(fs).runToEnd(move(source, into = sd))
+
+        // What was saved is not deleted: both versions stay, for the user to sort out.
+        val kept = ItemFailure(source.toString(), FsError.Busy, copiedButSourceKept = true)
+        assertEquals(OpResult.Done(listOf(sd.resolve("edit.prj")), listOf(kept)), result)
+        assertEquals("new", String(Files.readAllBytes(source)))
+        assertEquals("old", String(Files.readAllBytes(sd.resolve("edit.prj"))))
     }
 
     @Test
