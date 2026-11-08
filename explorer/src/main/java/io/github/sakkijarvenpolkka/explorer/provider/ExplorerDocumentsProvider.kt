@@ -333,8 +333,9 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /**
      * Deletes the file or folder [documentId] (no drive) into the Recycle Bin of its volume, where the app can
-     * restore it from. On a volume where no bin can be had, it is deleted for good, with all it holds: no one can
-     * be asked, so what was asked for is done (pick spec §3.5). It is no longer granted to any app.
+     * restore it from. When it cannot go there (the bin cannot be made, its record cannot be written, as on a full
+     * drive, or the item cannot be moved: internal storage too), it is deleted for good, with all it holds: no one
+     * can be asked, so what was asked for is done (pick spec §3.5). It is no longer granted to any app.
      */
     override fun deleteDocument(documentId: String) {
         requireAccess()
@@ -431,8 +432,8 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     }
 
     /**
-     * Moves [path] into the Recycle Bin of its volume or, where none can be had, deletes it for good, all it holds
-     * too; returns why not all of it went, or null.
+     * Moves [path] into the Recycle Bin of its volume or, when it cannot go there ([FsError.BinUnavailable]), deletes
+     * it for good, all it holds too; returns why not all of it went, or null.
      */
     private suspend fun binOrDelete(path: Path): IOException? {
         try {
