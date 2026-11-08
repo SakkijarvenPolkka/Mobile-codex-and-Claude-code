@@ -13,12 +13,19 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.VolumeState
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestDispatcher
 import org.junit.After
@@ -75,9 +82,12 @@ class PickModeTest {
         fs: FsBackend = NioFsBackend,
         io: CoroutineDispatcher = Dispatchers.Unconfined,
         clock: () -> Long = System::currentTimeMillis,
+        finishedOps: Flow<FinishedOp> = emptyFlow(),
     ): ExplorerViewModel {
         val request = PickRequest(types.toList(), multiple)
-        val deps = ExplorerDeps(fs, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request)
+        val deps = ExplorerDeps(
+            fs, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request, finishedOps = finishedOps,
+        )
         vm = ExplorerViewModel(app, deps).also { made += it }
         settle()
         return vm
@@ -484,6 +494,63 @@ class PickModeTest {
         pick("image/*")
         tap("a link")
         assertEquals(PickOutcome.Chosen(listOf(a)), outcome())
+    }
+
+    @Test
+    fun linkToAFileListedHereAddsItToTheSelection() {
+        file("c.jpg")
+        val d = file("d.jpg")
+        Files.createSymbolicLink(root.resolve("d link"), d)
+        lastPickedIn(root)
+        pick("image/*", multiple = true)
+        tap("c.jpg")
+        val back = ui.tabs.active.back
+
+        // What it leads to is listed here: it joins the files chosen, and the tab stays where it is.
+        tap("d link")
+        assertEquals(Location.Folder(root), location())
+        assertEquals(back, ui.tabs.active.back)
+        assertEquals(listOf("c.jpg", "d.jpg"), ui.selected.map { it.name })
+        vm.choose()
+        settle()
+        assertEquals(PickOutcome.Chosen(listOf(root.resolve("c.jpg"), d)), outcome())
+    }
+
+    @Test
+    fun linkToAFileFoundBySearchAddsItToTheSelection() {
+        file("pic c.jpg")
+        val d = file("pic d.jpg")
+        Files.createSymbolicLink(root.resolve("pic d link"), d)
+        lastPickedIn(root)
+        pick("image/*", multiple = true)
+        vm.searchNow("pic")
+        settle()
+        val results = location()
+        tap("pic c.jpg")
+
+        // Found by the search as well: it joins the files chosen, among the results.
+        tap("pic d link")
+        assertEquals(results, location())
+        assertEquals(listOf("pic c.jpg", "pic d.jpg"), ui.selected.map { it.name }.sorted())
+    }
+
+    @Test
+    fun appOperationEndingReadsTheShownFolderAgain() {
+        file("a.jpg")
+        lastPickedIn(root)
+        val finished = MutableSharedFlow<FinishedOp>(extraBufferCapacity = 8)
+        pick("image/*", finishedOps = finished)
+        assertEquals(listOf("a.jpg"), names())
+
+        // The app copies b.jpg here meanwhile, in its own task: picking shows it once that ends, as the app does.
+        val b = file("b.jpg")
+        val copy = OperationSpec("op", OpKind.COPY, listOf("/elsewhere/b.jpg"), target = root.toString())
+        finished.tryEmit(FinishedOp(copy, OpResult.Done(listOf(b), emptyList())))
+        settle()
+
+        assertEquals(listOf("a.jpg", "b.jpg"), names())
+        // Nothing of how it went shows over the app that asked.
+        assertNull(ui.message)
     }
 
     @Test

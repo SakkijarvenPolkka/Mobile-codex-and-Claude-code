@@ -46,6 +46,12 @@ internal interface ShellHost {
      */
     fun selectAt(at: Location, paths: List<Path>, reveal: Boolean = false)
 
+    /**
+     * Adds [path] to the active tab's selection, and its list scrolls to it, if what the tab shows now lists it (its
+     * folder, or search results that found it); whether it did.
+     */
+    fun addToSelection(path: Path): Boolean
+
     /** Opens [overlay] when the active tab is still at [at] and nothing else is open over the shell. */
     fun openAt(at: Location, overlay: Overlay)
 

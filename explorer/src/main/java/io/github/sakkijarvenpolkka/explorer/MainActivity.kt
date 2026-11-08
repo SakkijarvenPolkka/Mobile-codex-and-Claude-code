@@ -46,10 +46,14 @@ class MainActivity : ComponentActivity() {
     /** Whether the app has all files access, checked again whenever the activity comes back. */
     private var granted by mutableStateOf(false)
 
+    /** Whether this activity made its view model, rather than getting back the one it had before it was recreated. */
+    private var madeModel = false
+
     /** Created on first use, which is after the access is granted: nothing reads volumes before. */
     private val model = viewModels<ExplorerViewModel> {
         viewModelFactory {
             initializer {
+                madeModel = true
                 val app = application as ExplorerApp
                 val mime = MimeResolver()
                 // Files open in the built-in viewers, which the shell shows with the app's ExplorerApp.viewers.
@@ -89,7 +93,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        granted = recheckAccess(model)
+        granted = recheckAccess(model) { madeModel }
         // The access may have changed while the app was away, and the system file picker lists the app only with it.
         DocumentsNotifier.roots(this)
     }

@@ -147,7 +147,7 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             val unavailable = volumeTracking.unavailable
             combine(tabs, unavailable, settings.global, viewRevision) { _, _, _, _ -> }.collect { ensureLoaded() }
         }
-        picking?.checkStart()
+        picking?.started()
     }
 
     /** Goes to [l] in the active tab, remembering where the list was scrolled for Back. */
@@ -750,6 +750,14 @@ class ExplorerViewModel(app: Application, private val deps: ExplorerDeps) : Andr
             if (here() != at) return
             reduce(TabAction.SetSelection(paths))
             if (reveal) shell.update { it.copy(reveal = paths.firstOrNull()) }
+        }
+
+        override fun addToSelection(path: Path): Boolean {
+            if (listedRows().none { it.entry.path == path }) return false
+            // plusElement: a Path is an Iterable<Path> of its names.
+            reduce(TabAction.SetSelection(tabs.value.active.selection.items.toList().plusElement(path)))
+            shell.update { it.copy(reveal = path) }
+            return true
         }
 
         override fun openAt(at: Location, overlay: Overlay) {

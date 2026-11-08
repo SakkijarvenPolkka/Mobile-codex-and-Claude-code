@@ -38,6 +38,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.TextEncoding
 import io.github.sakkijarvenpolkka.explorer.fs.write
 import io.github.sakkijarvenpolkka.explorer.ops.FileOpsService
+import io.github.sakkijarvenpolkka.explorer.ops.FinishedOp
 import io.github.sakkijarvenpolkka.explorer.ops.InterruptedOp
 import io.github.sakkijarvenpolkka.explorer.ops.OperationJournal
 import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
@@ -57,7 +58,9 @@ import io.github.sakkijarvenpolkka.explorer.preview.TextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
 import io.github.sakkijarvenpolkka.explorer.provider.ExplorerDocumentsProvider
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -334,6 +337,20 @@ class ExplorerAppTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(heard, picker.take(heard.size))
         }
+    }
+
+    @Test
+    fun finishedOperationsReachThePickers() {
+        val op = FinishedOp(OperationSpec("t1", OpKind.COPY, listOf("/nowhere/a.txt"), "/nowhere"), OpResult.Cancelled)
+
+        // Another app's picker, which has no runner, reads again what the app's own operations changed.
+        val heard = runBlocking {
+            val first = async(start = CoroutineStart.UNDISPATCHED) { app.finished.first() }
+            app.onFinished(op)
+            withTimeout(10_000) { first.await() }
+        }
+
+        assertEquals(op, heard)
     }
 
     @Test

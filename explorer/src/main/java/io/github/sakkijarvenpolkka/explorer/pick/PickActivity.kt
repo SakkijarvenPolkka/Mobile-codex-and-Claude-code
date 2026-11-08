@@ -10,6 +10,7 @@ package io.github.sakkijarvenpolkka.explorer.pick
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -23,6 +24,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import io.github.sakkijarvenpolkka.explorer.ExplorerApp
+import io.github.sakkijarvenpolkka.explorer.R
+import io.github.sakkijarvenpolkka.explorer.fs.FsException
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
@@ -42,6 +45,7 @@ import io.github.sakkijarvenpolkka.explorer.ui.recheckAccess
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.mapNotNull
+import kotlinx.coroutines.withContext
 import java.nio.file.Path
 
 /**
@@ -64,14 +68,19 @@ class PickActivity : ComponentActivity() {
      */
     internal var uriFor: (Path) -> Uri = { openWith.uriFor(it) }
 
+    /** Whether this activity made its view model, rather than getting back the one it had before it was recreated. */
+    private var madeModel = false
+
     /**
      * Created on first use, which is after the access is granted: nothing reads volumes before. Read only, it has no
-     * file operations, nor their runner, nor the Recycle Bin: the app's own operations show nothing over the app that
-     * asked. Files are chosen, never opened, so there are no viewers either.
+     * file operations, nor their runner, nor the Recycle Bin, nor their notice: the app's own operations show nothing
+     * over the app that asked; what they change is read again as they end ([ExplorerDeps.finishedOps]). Files are
+     * chosen, never opened, so there are no viewers either.
      */
     private val model = viewModels<ExplorerViewModel> {
         viewModelFactory {
             initializer {
+                madeModel = true
                 val app = application as ExplorerApp
                 val request = PickRequest.of(
                     intent.type,
@@ -80,8 +89,7 @@ class PickActivity : ComponentActivity() {
                 )
                 val deps = ExplorerDeps(
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, openWith,
-                    opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice, thumbnails = app.thumbnails,
-                    pick = request,
+                    thumbnails = app.thumbnails, pick = request, finishedOps = app.finished,
                 )
                 ExplorerViewModel(app, deps)
             }
@@ -110,18 +118,33 @@ class PickActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        granted = recheckAccess(model)
+        granted = recheckAccess(model) { madeModel }
         // The access may have changed while the activity was away (its permission screen asks for it too), and the
         // system file picker lists the app only with it.
         DocumentsNotifier.roots(this)
     }
 
-    /** Answers the app that asked with how picking ended: the files chosen, or nothing. */
-    private fun answer(outcome: PickOutcome) {
+    /**
+     * Answers the app that asked with how picking ended: the files chosen, or nothing. Their URIs are made off the main
+     * thread (each walks its file's real path). One that cannot be given out ([OpenWith.uriFor]) answers nothing, and
+     * a toast says why: the shell goes with the activity.
+     */
+    private suspend fun answer(outcome: PickOutcome) {
         when (outcome) {
             is PickOutcome.Chosen -> {
-                val result = pickResultIntent(outcome.paths, uriFor) { mime.mimeOf(it.fileName.toString()) }
-                setResult(RESULT_OK, result)
+                val result = try {
+                    withContext(Dispatchers.IO) {
+                        pickResultIntent(outcome.paths, uriFor) { mime.mimeOf(it.fileName.toString()) }
+                    }
+                } catch (e: FsException) {
+                    null
+                }
+                if (result != null) {
+                    setResult(RESULT_OK, result)
+                } else {
+                    Toast.makeText(this, R.string.open_unsupported, Toast.LENGTH_LONG).show()
+                    setResult(RESULT_CANCELED)
+                }
             }
             PickOutcome.Cancelled -> setResult(RESULT_CANCELED)
         }

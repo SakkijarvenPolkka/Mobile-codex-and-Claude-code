@@ -83,7 +83,7 @@ internal class PickMode(
 
     /**
      * Where picking starts: the folder files were last picked from, if its volume is mounted; else Home. Whether
-     * that folder is still there is looked at once the tab is in it ([checkStart]).
+     * that folder is still there is looked at once the tab is in it ([started]).
      */
     fun start(): Location {
         val last = deps.settings.pickLast?.let(codec::decode)
@@ -92,11 +92,21 @@ internal class PickMode(
     }
 
     /**
-     * Picking has just started at [start]: a folder that is gone since files were picked from it (or is a file now, or
-     * cannot be read) gives way to Home, with nothing to go back to. Looked at off the main thread; nothing once the
-     * tab has gone elsewhere meanwhile.
+     * Picking has just started at [start], once the view model is made: the start folder is looked at ([checkStart]),
+     * and from now on the app's own operations, as they end, have the folders they changed read again here, as the app
+     * reads them ([changedBy]). Nothing else of them shows over the app that asked: picking has no runner to take
+     * them from, to answer or to tell of.
      */
-    fun checkStart() {
+    fun started() {
+        checkStart()
+        scope.launch { deps.finishedOps.collect { shell.refreshShowing(changedBy(it)) } }
+    }
+
+    /**
+     * A folder that is gone since files were picked from it (or is a file now, or cannot be read) gives way to Home,
+     * with nothing to go back to. Looked at off the main thread; nothing once the tab has gone elsewhere meanwhile.
+     */
+    private fun checkStart() {
         val folder = shell.here() as? Location.Folder ?: return
         scope.launch {
             val usable = try {
@@ -133,12 +143,14 @@ internal class PickMode(
 
     /**
      * Opens the file [entry], reached elsewhere than by its row (a recent file on Home, what a link leads to), if it
-     * can be chosen: picking one file, it is; picking several, it shows selected in its folder instead, scrolled to,
+     * can be chosen: picking one file, it is; picking several, it joins those selected where the tab is, if that
+     * lists it (its folder, or search results that found it), and else shows selected in its folder, scrolled to,
      * for the others there to be chosen with it.
      */
     fun openUnlisted(entry: FileEntry) {
         if (!canChoose(entry)) return
         if (!request.allowMultiple) return choose(listOf(entry))
+        if (shell.addToSelection(entry.path)) return
         val folder = Location.Folder(entry.path.parent)
         shell.navigate(folder)
         shell.selectAt(folder, listOf(entry.path), reveal = true)

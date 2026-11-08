@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AppOpsManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Looper
 import android.os.Process
 import android.os.storage.StorageManager
 import android.provider.Settings
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.Lifecycle
@@ -22,7 +24,11 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.ExplorerApp
 import io.github.sakkijarvenpolkka.explorer.PickerChanges
+import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.VolumeLocationCodec
+import io.github.sakkijarvenpolkka.explorer.fs.FsError
+import io.github.sakkijarvenpolkka.explorer.fs.FsException
+import io.github.sakkijarvenpolkka.explorer.ops.OpsNotice
 import io.github.sakkijarvenpolkka.explorer.platform.MimeResolver
 import io.github.sakkijarvenpolkka.explorer.platform.OpenWith
 import io.github.sakkijarvenpolkka.explorer.state.Location
@@ -44,11 +50,13 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowEnvironment
+import org.robolectric.shadows.ShadowToast
 import org.robolectric.shadows.StorageVolumeBuilder
 import org.xmlpull.v1.XmlPullParser
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Another app's request for files (`ACTION_GET_CONTENT`, pick spec §1.1, §2) as the activity answers it, on a
@@ -225,6 +233,77 @@ class PickActivityTest {
             assertEquals(uris, (0 until clip.itemCount).map { clip.getItemAt(it).uri })
             assertNull(result.resultData.data)
             assertEquals("*/*", result.resultData.type)
+        }
+    }
+
+    @Test
+    fun fileThatCannotBeGivenOutCancelsWithAToast() {
+        file("a.jpg")
+        startIn(root)
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            val activity = activityOf(scenario)
+            // The FileProvider serves no path outside the storage volumes.
+            activity.uriFor = { throw FsException(FsError.Unsupported) }
+            tap(Tags.row("a.jpg"))
+            waitFor { activity.isFinishing }
+
+            // The app that asked hears nothing was chosen, and the user why: the shell is gone with the activity.
+            assertEquals(Activity.RESULT_CANCELED, scenario.result.resultCode)
+            assertEquals(app.getString(R.string.open_unsupported), ShadowToast.getTextOfLatestToast())
+        }
+    }
+
+    @Test
+    fun answerIsMadeOffTheMainThread() {
+        file("a.jpg")
+        startIn(root)
+        val onMain = CopyOnWriteArrayList<Boolean>()
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            val activity = activityOf(scenario)
+            // Each file's URI walks its real path, which is slow over FUSE.
+            activity.uriFor = { path ->
+                onMain += Looper.myLooper() == Looper.getMainLooper()
+                openWith.uriFor(STORAGE.resolve(root.relativize(path).toString()))
+            }
+            tap(Tags.row("a.jpg"))
+            waitFor { activity.isFinishing }
+
+            assertEquals(Activity.RESULT_OK, scenario.result.resultCode)
+            assertEquals(openWith.uriFor(STORAGE.resolve("a.jpg")), scenario.result.resultData.data)
+        }
+        assertEquals(listOf(false), onMain.toList())
+    }
+
+    @Test
+    fun appsOperationNoticeDoesNotShowOverTheAppThatAsks() {
+        file("a.jpg")
+        startIn(root)
+        // An operation of the app's own could not get its foreground service.
+        app.onForegroundRefused()
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            val activity = activityOf(scenario)
+            waitFor { shown(Tags.row("a.jpg")) }
+            assertTrue(rule.onAllNodesWithText(app.getString(R.string.fgs_refused)).fetchSemanticsNodes().isEmpty())
+            tap(Tags.PICK_CANCEL)
+            waitFor { activity.isFinishing }
+        }
+        // Still the app's to show, where the retry is.
+        assertEquals(OpsNotice.ForegroundRefused, app.opsNotice.value)
+    }
+
+    @Test
+    fun recreatedActivityReadsTheFolderAgain() {
+        file("a.jpg")
+        startIn(root)
+        ActivityScenario.launchActivityForResult<PickActivity>(getContent("image/*")).use { scenario ->
+            waitFor { shown(Tags.row("a.jpg")) }
+            // Made meanwhile, as by another app; then the activity is made again (the dark mode changed while it was
+            // away, say). Its view model is the one it had, read before: the new activity's first resume reads it
+            // again. (Recreated from RESUMED: Robolectric brings a stopped activity back to RESUMED before it makes
+            // the new one, which would read it there.)
+            file("b.jpg")
+            scenario.recreate()
+            waitFor { shown(Tags.row("b.jpg")) }
         }
     }
 

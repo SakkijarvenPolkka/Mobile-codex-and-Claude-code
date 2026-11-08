@@ -76,11 +76,16 @@ fun PermissionScreen(onOpenSettings: () -> Unit) {
 
 /**
  * Whether the app has all files access ([PermissionGate.granted]), checked again as an activity showing the shell of
- * [model] comes back: with it, the view model reads again what it shows ([ExplorerViewModel.onResume]).
+ * [model] comes back: with it, the view model reads again what it shows ([ExplorerViewModel.onResume]). It is taken
+ * then (made, if it is not there yet): one the activity's factory made just now, which [made] tells, has just read
+ * everything; any other reads again, the one a recreated activity gets back from before too.
  */
-fun recheckAccess(model: Lazy<ExplorerViewModel>): Boolean {
+fun recheckAccess(model: Lazy<ExplorerViewModel>, made: () -> Boolean): Boolean {
     val granted = PermissionGate.granted()
-    // A view model created for this activity has just read everything; one that was already there reads again.
-    if (granted && model.isInitialized()) model.value.onResume()
+    if (granted) {
+        val madeBefore = made()
+        val vm = model.value
+        if (madeBefore || !made()) vm.onResume()
+    }
     return granted
 }

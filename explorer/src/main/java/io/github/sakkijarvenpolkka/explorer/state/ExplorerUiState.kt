@@ -30,8 +30,10 @@ import io.github.sakkijarvenpolkka.explorer.platform.VolumeSource
 import io.github.sakkijarvenpolkka.explorer.platform.storageUsage
 import io.github.sakkijarvenpolkka.explorer.util.UiText
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.emptyFlow
 import java.nio.file.Path
 
 /**
@@ -49,7 +51,8 @@ import java.nio.file.Path
  * a USB drive this one may not. With [pick], the shell picks files for another app instead ([PickMode]).
  * [openSaves] are the saves other apps have open through the system file picker: what they use is not
  * renamed; without them, none is known. [foldersChanged] is told of the items the shell renamed or made
- * itself (not through the runner), for the system file picker to read their folders again.
+ * itself (not through the runner), for the system file picker to read their folders again. [finishedOps] are
+ * the app's own operations as they end, for a shell that has no runner (picking) to read again what they changed.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -72,6 +75,7 @@ data class ExplorerDeps(
     val pick: PickRequest? = null,
     val openSaves: OpenSaves? = null,
     val foldersChanged: (List<Path>) -> Unit = {},
+    val finishedOps: Flow<FinishedOp> = emptyFlow(),
 )
 
 /** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */

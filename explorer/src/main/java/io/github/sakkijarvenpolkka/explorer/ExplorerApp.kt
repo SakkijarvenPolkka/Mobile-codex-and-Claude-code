@@ -59,8 +59,11 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -160,6 +163,14 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
      */
     val opsNotice: StateFlow<OpsNotice?> = mutableOpsNotice.asStateFlow()
 
+    private val finishedOps = MutableSharedFlow<FinishedOp>(extraBufferCapacity = 64)
+
+    /**
+     * The operations as they end ([onFinished]), for another app's picker, which has no runner: it reads again what
+     * they changed. One that ends while none listens is not kept.
+     */
+    val finished: SharedFlow<FinishedOp> = finishedOps.asSharedFlow()
+
     /** Guards [workWithoutService]. */
     private val serviceLock = Any()
 
@@ -205,6 +216,8 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     override fun onFinished(op: FinishedOp) {
         mediaScan.scan(scanTargets(op, volumes))
         tellThePickerOfFolders(op)
+        // Never waits: it is called with the runner's lock held. A picker 64 behind misses what is past that.
+        finishedOps.tryEmit(op)
     }
 
     /** The user is told to keep the app open: the operations go on in the process only. */
