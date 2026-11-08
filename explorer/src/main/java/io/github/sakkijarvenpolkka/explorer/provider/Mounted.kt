@@ -13,6 +13,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
 import io.github.sakkijarvenpolkka.explorer.fs.ListOptions
 import io.github.sakkijarvenpolkka.explorer.fs.Listing
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.SearchEvent
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeRoot
 import io.github.sakkijarvenpolkka.explorer.fs.isRestrictedAppDataPath
@@ -27,6 +28,21 @@ import java.nio.file.Path
 
 /** A document a call found: its [id], [entry] as read, and the [label] it is shown by instead of its name. */
 internal data class Found(val id: String, val entry: FileEntry, val label: String? = null)
+
+/**
+ * What a call waits for before it reads a document ([OpenSaves.settle]), so that it finds what another app has just
+ * saved there.
+ */
+internal enum class Wait {
+    /** Nothing: a listing never waits. */
+    NONE,
+
+    /** A save of the document itself: before it is read, opened or shown. */
+    SAVE,
+
+    /** A save of the document or of anything in it: before it is renamed or deleted. */
+    SAVES_UNDER,
+}
 
 /**
  * The mounted volumes of [volumes], as [DocumentIds] takes them. An id names its volume up to its first colon, so one
@@ -48,9 +64,17 @@ internal class Mounted(private val deps: ProviderDeps) {
 
     val ids = DocumentIds(deps.fs) { roots }
 
-    /** The file or folder [id] names; [FileNotFoundException] if it names anything else, or nothing there. */
-    fun entryOf(id: String): FileEntry {
+    /**
+     * The file or folder [id] names, read once what [wait] says is settled; [FileNotFoundException] if it names
+     * anything else, or nothing there.
+     */
+    fun entryOf(id: String, wait: Wait = Wait.NONE): FileEntry {
         val path = ids.resolve(id)
+        when (wait) {
+            Wait.NONE -> Unit
+            Wait.SAVE -> deps.openSaves.settle(path)
+            Wait.SAVES_UNDER -> deps.openSaves.settle(path, under = true)
+        }
         val entry = try {
             Listing.entry(deps.fs, path, deps.mime::mimeOf)
         } catch (e: IOException) {
@@ -69,27 +93,35 @@ internal class Mounted(private val deps: ProviderDeps) {
         null
     }
 
-    /** The file [id] names: [FileNotFoundException] as [entryOf], and for a folder. */
+    /**
+     * The file [id] names, to be read once a save of it is settled: [FileNotFoundException] as [entryOf], and for a
+     * folder.
+     */
     fun fileOf(id: String): FileEntry {
-        val entry = entryOf(id)
+        val entry = entryOf(id, Wait.SAVE)
         if (entry.kind != EntryKind.FILE) throw notFound("not a file", id)
         return entry
     }
 
     /**
-     * The file or folder [id] names, to be changed: [FileNotFoundException] as [entryOf], and while its volume takes
-     * no changes (mounted read-only).
+     * The file or folder [id] names, to be changed once what [wait] says is settled: [FileNotFoundException] as
+     * [entryOf], and while its volume takes no changes (mounted read-only).
      */
-    fun changeable(id: String): FileEntry {
-        val entry = entryOf(id)
+    fun changeable(id: String, wait: Wait = Wait.NONE): FileEntry {
+        val entry = entryOf(id, wait)
         if (!takesChanges(volumeOf(id))) throw notFound("read-only", id)
         return entry
     }
 
-    /** The file or folder [id] names, to be renamed or deleted: as [changeable], but no drive (pick spec §3.3). */
+    /**
+     * The file or folder [id] names, to be renamed or deleted once the saves of it and of what is in it are settled:
+     * as [changeable], but no drive (pick spec §3.3), and nothing a save still in flight uses ([OpenSaves.uses]: it
+     * would land nowhere) or the operation the app is running ([ProviderDeps.busy]: it would lose what it works on).
+     */
     fun changeableItem(id: String): FileEntry {
-        val entry = changeable(id)
+        val entry = changeable(id, Wait.SAVES_UNDER)
         if (id.substringAfter(':').isEmpty()) throw notFound("a drive", id)
+        if (deps.openSaves.uses(entry.path) || deps.busy(entry.path)) throw notFound("in use", id)
         return entry
     }
 

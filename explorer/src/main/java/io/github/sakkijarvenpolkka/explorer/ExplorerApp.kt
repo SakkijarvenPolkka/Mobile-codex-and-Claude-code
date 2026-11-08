@@ -18,6 +18,8 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
+import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.WriteProtocol
 import io.github.sakkijarvenpolkka.explorer.fs.ZipOps
@@ -86,7 +88,16 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     /** The journal of the file operations, in `files/ops`. */
     override val journal: OperationJournal by lazy { OperationJournal(File(filesDir, "ops"), NioFsBackend) }
 
-    /** The file operations, journaled, with the Recycle Bin, ZIP archives and the names of the app's language. */
+    /**
+     * The saves other apps have in flight through the system file picker, for the whole app: the picker's calls on
+     * those files wait for them, and neither the picker nor the app moves them away meanwhile.
+     */
+    override val openSaves = OpenSaves()
+
+    /**
+     * The file operations, journaled, with the Recycle Bin, ZIP archives and the names of the app's language; a move or
+     * a deletion leaves alone what a save in flight uses ([openSaves]).
+     */
     override val fileOps: FileOps by lazy {
         val labels = NameLabels(
             newFolder = getString(R.string.label_new_folder),
@@ -94,7 +105,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
             copySuffix = getString(R.string.label_copy_suffix),
         )
         val zip = ZipOps(NioFsBackend, WriteProtocol(NioFsBackend, journal), labels, volumes)
-        FileOps(NioFsBackend, volumes, labels, journal, ids = ::newId, bin = bin, zip = zip)
+        FileOps(NioFsBackend, volumes, labels, journal, ids = ::newId, bin = bin, zip = zip, inUse = openSaves::uses)
     }
 
     /** Runs the file operations, one at a time, outside any activity; the app hears of them ([RunnerHost]). */
@@ -168,6 +179,9 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
         // What a crash left behind is cleaned up, and the operations it interrupted are offered again.
         runner.loadInterrupted()
     }
+
+    /** Whether the operation running uses [path] ([OperationSpec.uses]), for the picker's renames and deletes. */
+    override fun busy(path: Path): Boolean = runner.state.value.running?.spec?.uses(path) == true
 
     /** Work came: it goes on in the foreground service ([startService]). */
     override fun onBusy() = startService()

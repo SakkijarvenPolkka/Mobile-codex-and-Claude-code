@@ -36,7 +36,9 @@ data class Precheck(val unstorable: List<ItemFailure>, val copyBytes: Long, val 
  * items, deletes them, to the Recycle Bin [bin] or for good (§4.6), and compresses and extracts ZIP
  * archives with [zip] (§6.2). [volumes] says which volume a path is on, [labels] name new items and
  * copies, [time] paces the progress reports, [clock] is the wall clock, and [ids] makes the temporary
- * names of renames. Nothing here switches threads: the caller runs it where blocking calls belong.
+ * names of renames. [inUse] says whether something else is using a path (a save another app has open
+ * through the system file picker, [OpenSaves.uses]): a move or a deletion leaves such a source alone.
+ * Nothing here switches threads: the caller runs it where blocking calls belong.
  */
 class FileOps(
     private val fs: FsBackend,
@@ -48,11 +50,12 @@ class FileOps(
     private val ids: () -> String,
     private val bin: RecycleBin? = null,
     private val zip: ZipOps? = null,
+    private val inUse: (Path) -> Boolean = { false },
 ) {
     private val writer = WriteProtocol(fs, journal)
 
     /** The runs that delete or use the Recycle Bin; a bin item is taken with all it holds. */
-    private val binRuns = BinRuns(fs, volumes, labels, time, writer) { stepsFrom(topOf(it), everything = true) }
+    private val binRuns = BinRuns(fs, volumes, labels, time, writer, inUse) { stepsFrom(topOf(it), everything = true) }
 
     /**
      * Runs [spec], as its kind says:
@@ -93,7 +96,10 @@ class FileOps(
      *   names in no character set it knows or that the target's volume refuses, no room).
      *
      * The kinds that use the Recycle Bin are [FsError.BinUnavailable], after 0 of 0 items, without [bin],
-     * and the ZIP kinds are [FsError.Unsupported], after 0 of 0 items, without [zip].
+     * and the ZIP kinds are [FsError.Unsupported], after 0 of 0 items, without [zip]. A move, a deletion to the
+     * Recycle Bin or a deletion for good leaves where it is a top-level source that [inUse] says something else
+     * uses as the run comes to it, with all it holds: it is listed in [OpResult.Done.failed] as [FsError.Busy],
+     * and the rest goes on.
      * A failure that ends everything ([isFatal]: no space, I/O error, read-only, volume gone) stops at once
      * with [OpResult.Failed] after the items done so far. Cancelling throws [CancellationException]; anything
      * else [resolver], [onProgress] or [onCommitted] throws ends the run with it. [onProgress] gets the
@@ -262,7 +268,7 @@ class FileOps(
         }
         val removable = volumes.volumeOf(target)?.removable == true
         val transfer = Transfer(
-            fs, writer, labels, time, spec, plan, check.unstorable, removable, resolver, onProgress, onCommitted,
+            fs, writer, labels, time, spec, plan, check.unstorable, removable, resolver, onProgress, onCommitted, inUse,
         )
         return transfer.run()
     }

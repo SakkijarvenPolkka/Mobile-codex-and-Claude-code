@@ -20,6 +20,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.Resolution
@@ -97,7 +98,8 @@ class ExplorerViewModelOpsTest {
     /**
      * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
      * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there. The
-     * Recycle Bin finds the volumes through [binLookup] of them. Starting the app again does [restart].
+     * Recycle Bin finds the volumes through [binLookup] of them. Starting the app again does [restart]. Other apps
+     * have [openSaves] in flight through the system file picker.
      */
     private fun start(
         extra: List<Volume> = emptyList(),
@@ -105,6 +107,7 @@ class ExplorerViewModelOpsTest {
         notice: MutableStateFlow<OpsNotice?> = MutableStateFlow(null),
         binLookup: (VolumeLookup) -> VolumeLookup = { it },
         restart: (Application) -> Unit = {},
+        openSaves: OpenSaves? = null,
         beforeViewModel: () -> Unit = {},
     ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
@@ -116,7 +119,7 @@ class ExplorerViewModelOpsTest {
         val deps = ExplorerDeps(
             fs, settings, volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
-            opsNotice = notice, clearOpsNotice = { notice.value = null }, restart = restart,
+            opsNotice = notice, clearOpsNotice = { notice.value = null }, restart = restart, openSaves = openSaves,
         )
         beforeViewModel()
         vm = ExplorerViewModel(app, deps)
@@ -317,6 +320,30 @@ class ExplorerViewModelOpsTest {
         assertFalse(Files.exists(root.resolve("b.txt")))
         vm.runner.value.pending?.answer(Resolution(ConflictAction.SKIP))
         drain()
+    }
+
+    @Test
+    fun renameOfWhatAnOpenSaveUsesRefused() {
+        dir("docs")
+        file("docs/a.txt", "old")
+        file("b.txt")
+        // Another app is saving docs/a.txt through the system file picker.
+        val saves = OpenSaves()
+        saves.begin(root.resolve("docs/a.txt"), root.resolve("docs/.a.txt.id.xpart"))
+        start(openSaves = saves)
+
+        vm.startRename(entry("docs"))
+        assertNull(ui.renaming)
+        assertEquals(UiText.res(R.string.err_busy), ui.message?.text)
+
+        // Asked for once the dialog was open, it is refused too; what no save uses is renamed as ever.
+        vm.dismissMessage()
+        vm.commitRename(entry("docs"), "papers")
+        drain()
+        assertEquals(UiText.res(R.string.err_busy), ui.message?.text)
+        assertTrue(Files.isDirectory(root.resolve("docs")))
+        vm.startRename(entry("b.txt"))
+        assertEquals(entry("b.txt"), ui.renaming)
     }
 
     @Test

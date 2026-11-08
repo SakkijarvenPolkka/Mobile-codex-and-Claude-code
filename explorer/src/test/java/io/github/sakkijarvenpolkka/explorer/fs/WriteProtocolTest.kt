@@ -14,6 +14,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
+import java.io.InputStream
 import java.nio.file.FileAlreadyExistsException
 import java.nio.file.FileSystemException
 import java.nio.file.Files
@@ -147,6 +148,34 @@ class WriteProtocolTest {
         // The write's own failure is reported, and the part it could not delete is left for the sweep.
         assertEquals(FsError.NoSpace, e.error)
         assertEquals(listOf(temp.fileName.toString()), names())
+        assertEquals(setOf(temp), journal.recorded)
+    }
+
+    @Test
+    fun discardWhoseFolderIsGoneStaysRecorded() {
+        val docs = Files.createDirectory(dir.resolve("docs"))
+        val journal = MemoryJournal()
+        val temp = docs.resolve(tempNameFor("out.txt", OP))
+        // The folder is renamed as the file is written (or its drive is pulled): the part is not where it was.
+        val source = object : InputStream() {
+            private val bytes = ByteArrayInputStream(content)
+
+            override fun read(): Int = bytes.read()
+
+            override fun read(b: ByteArray, off: Int, len: Int): Int = bytes.read(b, off, len).also { read ->
+                if (read < 0 && Files.exists(docs)) Files.move(docs, dir.resolve("papers"))
+            }
+        }
+
+        val e = assertThrows(FsException::class.java) {
+            runBlocking { protocol(journal = journal).write(docs.resolve("out.txt"), OP, false, false, null, source) {} }
+        }
+
+        assertEquals(FsError.NotFound, e.error)
+        // It may be on disk still, under the folder's new name or once the drive is back: it stays recorded, for the
+        // sweep, as the journal itself keeps one whose folder is not there.
+        assertTrue(Files.exists(dir.resolve("papers").resolve(temp.fileName)))
+        assertEquals(listOf("add ${temp.fileName}"), journal.events)
         assertEquals(setOf(temp), journal.recorded)
     }
 

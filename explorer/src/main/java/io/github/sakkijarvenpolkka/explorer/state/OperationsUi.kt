@@ -23,6 +23,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.NameValidator
 import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpOptions
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
@@ -558,16 +559,12 @@ internal class OperationsUi(
     }
 
     /**
-     * Whether the operation running uses [path]: [path] is one of its sources or its target, is inside one of
-     * them (what it reads, or what it makes), or holds one of them. The operations queued are not asked:
-     * they find what is there when they run.
+     * Whether the operation running uses [path] ([OperationSpec.uses]: [path] is one of its sources or its target, is
+     * inside one of them, or holds one of them), or a save another app has open through the system file picker does
+     * ([OpenSaves.uses]). The operations queued are not asked: they find what is there when they run.
      */
-    private fun isBusy(path: Path): Boolean {
-        val spec = runner.value.running?.spec ?: return false
-        val target = spec.target?.let { Paths.get(it) }
-        return spec.sources.map { Paths.get(it) }.any { it.startsWith(path) || path.startsWith(it) } ||
-            target != null && (target.startsWith(path) || path.startsWith(target))
-    }
+    private fun isBusy(path: Path): Boolean =
+        runner.value.running?.spec?.uses(path) == true || deps.openSaves?.uses(path) == true
 
     /**
      * The items of [paths] that are there ([isPresent]), looked for off the main thread; throws when that

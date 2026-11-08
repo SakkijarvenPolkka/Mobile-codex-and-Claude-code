@@ -55,6 +55,24 @@ class FileOpsMoveTest {
     }
 
     @Test
+    fun moveLeavesASourceAnOpenSaveUses() {
+        val docs = write(internal, "docs/a.txt", "a").parent
+        val x = write(internal, "x.txt", "x")
+        val target = Files.createDirectory(internal.resolve("t"))
+        // Another app is saving docs/a.txt through the system file picker.
+        val saves = OpenSaves()
+        saves.begin(docs.resolve("a.txt"), docs.resolve(".a.txt.id.xpart"))
+        val ops = FileOps(NioFsBackend, volumes, KO_LABELS, journal, ids = { "r1" }, inUse = saves::uses)
+
+        val result = ops.runToEnd(move(docs, x, into = target))
+
+        // The folder holding it stays where the save will land; the rest goes.
+        val busy = ItemFailure(docs.toString(), FsError.Busy, into = target.toString())
+        assertEquals(OpResult.Done(listOf(target.resolve("x.txt")), listOf(busy)), result)
+        assertEquals(mapOf("docs/" to "", "docs/a.txt" to "a", "t/" to "", "t/x.txt" to "x"), tree(internal))
+    }
+
+    @Test
     fun crossVolumeMoveCopiesThenDeletes() {
         val d = write(internal, "d/f.txt", "f").parent
         write(internal, "d/g/h.txt", "h")

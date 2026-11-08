@@ -7,6 +7,7 @@ package io.github.sakkijarvenpolkka.explorer.fs
 
 import kotlinx.serialization.Serializable
 import java.nio.file.Path
+import java.nio.file.Paths
 
 /** What an operation does. */
 enum class OpKind { COPY, MOVE, DELETE_TO_BIN, DELETE_PERMANENT, RESTORE, EMPTY_BIN, COMPRESS, EXTRACT }
@@ -30,7 +31,17 @@ data class OperationSpec(
     val sources: List<String>,
     val target: String? = null,
     val options: OpOptions = OpOptions(),
-)
+) {
+    /**
+     * Whether this operation uses [path]: [path] is one of its sources or its target, is inside one of them (what it
+     * reads, or what it makes), or holds one of them.
+     */
+    fun uses(path: Path): Boolean {
+        val target = target?.let { Paths.get(it) }
+        return sources.map { Paths.get(it) }.any { it.startsWith(path) || path.startsWith(it) } ||
+            target != null && (target.startsWith(path) || path.startsWith(target))
+    }
+}
 
 /** How far an operation is, in bytes and items, and the name it is working on. */
 data class OpProgress(

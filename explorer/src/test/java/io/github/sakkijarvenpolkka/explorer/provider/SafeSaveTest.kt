@@ -5,10 +5,12 @@ import io.github.sakkijarvenpolkka.explorer.fs.FaultyFs
 import io.github.sakkijarvenpolkka.explorer.fs.FaultyFs.Call
 import io.github.sakkijarvenpolkka.explorer.fs.FaultyFs.Op
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.SimulatedCrash
 import io.github.sakkijarvenpolkka.explorer.fs.TempJournal
 import io.github.sakkijarvenpolkka.explorer.fs.write
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -28,6 +30,7 @@ class SafeSaveTest {
     private lateinit var dir: Path
     private val fs = FaultyFs()
     private val journal = EventJournal()
+    private val saves = OpenSaves()
 
     /** A journal that keeps every call, in order. */
     private class EventJournal : TempJournal {
@@ -47,7 +50,7 @@ class SafeSaveTest {
         dir = folder.root.toPath()
     }
 
-    private fun save(target: Path, id: String = "op1") = SafeSave(fs, journal).begin(target, id)
+    private fun save(target: Path, id: String = "op1") = SafeSave(fs, journal, saves).begin(target, id)
 
     private fun read(path: Path): String = String(Files.readAllBytes(path))
 
@@ -90,6 +93,49 @@ class SafeSaveTest {
         assertEquals("old", read(target))
         assertEquals(listOf("a.txt"), names())
         assertEquals(listOf("add .a.txt.op2.xpart", "remove .a.txt.op2.xpart"), journal.events.drop(2))
+    }
+
+    @Test
+    fun abortWhoseFolderIsGoneStaysRecorded() {
+        val target = write(dir, "docs/a.txt", "old")
+        val pending = save(target)
+        Files.write(pending.temp, "half".toByteArray())
+
+        // Its folder is renamed meanwhile (or its drive is pulled): the temporary file is not where it was, but it
+        // may well be on disk still.
+        Files.move(dir.resolve("docs"), dir.resolve("papers"))
+        pending.abort()
+
+        // It stays recorded, for the journal's sweep, as the journal itself keeps one whose folder is not there.
+        assertEquals(listOf("add .a.txt.op1.xpart"), journal.events)
+        assertTrue(Files.exists(dir.resolve("papers/.a.txt.op1.xpart")))
+        // The save itself has ended.
+        assertFalse(saves.uses(target))
+    }
+
+    @Test
+    fun saveIsInFlightUntilItEnds() {
+        val target = write(dir, "a.txt", "old")
+
+        // From its beginning until it is put in place.
+        val committed = save(target)
+        assertTrue(saves.uses(target))
+        assertTrue(saves.uses(committed.temp))
+        committed.closing()
+        assertTrue(saves.uses(dir))
+        committed.commit()
+        assertFalse(saves.uses(dir))
+
+        // Or until it is dropped.
+        val dropped = save(target, "op2")
+        assertTrue(saves.uses(target))
+        dropped.abort()
+        assertFalse(saves.uses(target))
+
+        // One that cannot begin is not in flight at all.
+        fs.refuse(Op.CREATE_NEW, ".a.txt.op3.xpart", "Read-only file system")
+        assertThrows(FileSystemException::class.java) { save(target, "op3") }
+        assertFalse(saves.uses(target))
     }
 
     @Test

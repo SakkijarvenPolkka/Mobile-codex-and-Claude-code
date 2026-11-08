@@ -16,9 +16,9 @@ import kotlin.time.TimeSource
 
 /**
  * The runs of [FileOps] for [OpKind.DELETE_TO_BIN], [OpKind.DELETE_PERMANENT], [OpKind.RESTORE] and
- * [OpKind.EMPTY_BIN], as [FileOps.run] describes them, with its [fs], [volumes], [labels], [time] and
- * [writer]. [itemSteps] walks a bin item ([BinItem.payload]): it and everything under it, in walk order,
- * the app's internal names included.
+ * [OpKind.EMPTY_BIN], as [FileOps.run] describes them, with its [fs], [volumes], [labels], [time],
+ * [writer] and [inUse]. [itemSteps] walks a bin item ([BinItem.payload]): it and everything under it, in
+ * walk order, the app's internal names included.
  */
 internal class BinRuns(
     private val fs: FsBackend,
@@ -26,6 +26,7 @@ internal class BinRuns(
     private val labels: NameLabels,
     private val time: TimeSource,
     private val writer: WriteProtocol,
+    private val inUse: (Path) -> Boolean,
     private val itemSteps: suspend (Path) -> List<Step>,
 ) {
     /** Each source into the Recycle Bin of its volume, as [FileOps.run] describes it. */
@@ -45,10 +46,15 @@ internal class BinRuns(
             currentCoroutineContext().ensureActive()
             val path = Paths.get(raw)
             progress.currentName = path.fileName?.toString()
-            try {
-                created.add(bin.moveToBin(path, sizes[index]).payload)
-            } catch (e: FsException) {
-                failed += ItemFailure(raw, e.error)
+            if (inUse(path)) {
+                // Another app's save in flight would land nowhere: it stays.
+                failed += ItemFailure(raw, FsError.Busy)
+            } else {
+                try {
+                    created.add(bin.moveToBin(path, sizes[index]).payload)
+                } catch (e: FsException) {
+                    failed += ItemFailure(raw, e.error)
+                }
             }
             progress.doneItems++
             progress.doneBytes += sizes[index] ?: 0L
@@ -89,7 +95,15 @@ internal class BinRuns(
         val progress = Progress(time, onProgress, entries.size, entries.sumOf { it.size })
         progress.report(force = true)
         for ((index, tree) in trees.withIndex()) {
-            if (tree != null) {
+            if (tree != null && inUse(Paths.get(spec.sources[index]))) {
+                // Another app's save in flight would land nowhere: it stays, with all it holds.
+                failed += ItemFailure(spec.sources[index], FsError.Busy)
+                for (entry in tree.entries) {
+                    progress.doneItems++
+                    progress.doneBytes += entry.size
+                }
+                progress.report()
+            } else if (tree != null) {
                 val onFailed = { path: Path, error: FsError -> failed += ItemFailure(path.toString(), error) }
                 val fatal = deleteTree(fs, tree, onFailed) {
                     progress.currentName = it.name
@@ -149,8 +163,10 @@ internal class BinRuns(
         }
         // A restore is a move within the item's volume, which flushes what it copies anyway.
         val plan = Plan(sources, totalItems, totalBytes)
+        // Out of the bin: no save of another app is in there.
         val transfer = Transfer(
             fs, writer, labels, time, spec, plan, emptyList(), removable = false, resolver, onProgress, committed,
+            inUse = { false },
         )
         val result = transfer.run()
         if (items.isEmpty() && ids.isNotEmpty()) onCommitted(ids.size)

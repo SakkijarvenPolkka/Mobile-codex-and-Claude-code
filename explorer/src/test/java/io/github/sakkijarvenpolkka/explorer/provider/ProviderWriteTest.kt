@@ -25,6 +25,9 @@ import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpKind
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
+import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.TempJournal
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
@@ -62,6 +65,11 @@ import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /** What other apps change through the system file picker: saves, new items, renames and deletes (pick spec §3.5). */
 @RunWith(RobolectricTestRunner::class)
@@ -86,6 +94,16 @@ class ProviderWriteTest {
     /** The bytes free for apps on every drive, as the provider reads them; null: no telling (the reading fails). */
     @Volatile
     private var room: Long? = Long.MAX_VALUE
+
+    /** The saves other apps have in flight, as the app keeps them. */
+    private var saves = OpenSaves()
+
+    /** The operation the app is running, if any. */
+    @Volatile
+    private var running: OperationSpec? = null
+
+    /** The threads other apps' calls come on, one each (binder threads). */
+    private val calls = Executors.newCachedThreadPool()
 
     private lateinit var bin: RecycleBin
     private lateinit var picker: PickerChanges
@@ -139,6 +157,7 @@ class ProviderWriteTest {
     @After
     fun tearDown() {
         ProviderDeps.override = null
+        calls.shutdownNow()
     }
 
     /** What a documents provider's entry in the manifest says, or it refuses to start. */
@@ -191,11 +210,34 @@ class ProviderWriteTest {
         return ProviderDeps(
             provided, { volumes }, SettingsStore(null), fileOps, bin, journal, mediaScan, thumbnails, MimeResolver(),
             granted = { true }, internalLabel = { "내부 저장소" }, io = Dispatchers.IO, ids = { "id" },
+            openSaves = saves, busy = { running?.uses(it) == true },
         )
     }
 
-    /** Waits until the provider has heard of every file closed so far, and has done what follows. */
-    private fun closed() = shadowOf(provider.closes.looper).idle()
+    /**
+     * Waits until the provider has heard of every file closed so far, and has done what follows: put what was saved in
+     * place, or dropped it.
+     */
+    private fun closed() {
+        shadowOf(provider.closes.looper).idle()
+        shadowOf(provider.saves.looper).idle()
+    }
+
+    /**
+     * Makes [call] as another app's next call comes, on a thread of its own, and gives it a moment: one that waits for
+     * nothing is done by then.
+     */
+    private fun <T> calling(call: () -> T): Future<T> {
+        val future = calls.submit(call)
+        try {
+            future.get(CALL_MOMENT_MS, TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            // Still waiting, for a save to settle.
+        } catch (e: ExecutionException) {
+            // It failed: the future tells.
+        }
+        return future
+    }
 
     /** Writes [text] into what the document [id] opens as in [mode], and closes it. */
     private fun writeThrough(id: String, mode: String, text: String) {
@@ -255,6 +297,110 @@ class ProviderWriteTest {
         // Nothing changed.
         assertEquals(emptyList<Uri>(), picker.take())
         assertEquals(emptyList<Path>(), scanned.toList())
+    }
+
+    @Test
+    fun renameRightAfterSaveRenamesTheSavedFile() {
+        write(primary, "a.txt", "old")
+        // The provider hears of the close later, on a thread of its own, as the system tells it.
+        shadowOf(provider.closes.looper).pause()
+        writeThrough("primary:a.txt", "wt", "new")
+
+        // The other app renames it at once, as an app saving under a temporary name does: what is renamed is the file
+        // saved, not the one it replaces.
+        val renamed = calling { provider.renameDocument("primary:a.txt", "b.txt") }
+        shadowOf(provider.closes.looper).unPause()
+        closed()
+
+        assertEquals("primary:b.txt", renamed.get(10, TimeUnit.SECONDS))
+        assertEquals("new", read(primary.resolve("b.txt")))
+        assertEquals(listOf("b.txt"), names(primary))
+    }
+
+    @Test
+    fun appendRightAfterSaveAppendsToTheSavedFile() {
+        val log = write(primary, "log.txt", "")
+        shadowOf(provider.closes.looper).pause()
+        writeThrough("primary:log.txt", "w", "head ")
+
+        // The other app appends at once: to the file saved.
+        val appended = calling { writeThrough("primary:log.txt", "wa", "tail") }
+        shadowOf(provider.closes.looper).unPause()
+        closed()
+        appended.get(10, TimeUnit.SECONDS)
+        closed()
+
+        assertEquals("head tail", read(log))
+        assertEquals(listOf("log.txt"), names(primary))
+    }
+
+    @Test
+    fun readRightAfterSaveReadsTheSavedFile() {
+        write(primary, "a.txt", "old")
+        shadowOf(provider.closes.looper).pause()
+        writeThrough("primary:a.txt", "wt", "newer")
+
+        // The other app asks what it saved, and reads it back, at once: it finds what it saved.
+        val readBack = calling {
+            val size = provider.queryDocument("primary:a.txt", null).use { row ->
+                row.moveToFirst()
+                row.getLong(row.getColumnIndexOrThrow(Document.COLUMN_SIZE))
+            }
+            val opened = provider.openDocument("primary:a.txt", "r", null)
+            size to ParcelFileDescriptor.AutoCloseInputStream(opened).use { String(it.readBytes()) }
+        }
+        shadowOf(provider.closes.looper).unPause()
+        closed()
+
+        assertEquals(5L to "newer", readBack.get(10, TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun folderOfAnOpenSaveIsNotRenamedOrDeleted() {
+        // A call waits for a save still being written only a moment here.
+        saves = OpenSaves(closeWaitMs = 50)
+        ProviderDeps.override = deps()
+        val a = write(primary, "docs/a.txt", "old")
+
+        ParcelFileDescriptor.AutoCloseOutputStream(provider.openDocument("primary:docs/a.txt", "wt", null)).use {
+            it.write("new".toByteArray())
+            // While the other app writes, neither the file nor a folder holding it is renamed or deleted: the save
+            // would land nowhere.
+            assertThrows(FileNotFoundException::class.java) { provider.renameDocument("primary:docs", "papers") }
+            assertThrows(FileNotFoundException::class.java) { provider.renameDocument("primary:docs/a.txt", "b.txt") }
+            assertThrows(FileNotFoundException::class.java) { provider.deleteDocument("primary:docs") }
+        }
+        closed()
+
+        assertEquals("new", read(a))
+        assertEquals(listOf("docs"), names(primary))
+        assertEquals(listOf("a.txt"), names(primary.resolve("docs")))
+        assertEquals(emptyList<BinItem>(), bin.list(listOf(primary)))
+        // Only the save changed the folder.
+        assertEquals(listOf(childrenOf("primary:docs")), picker.take())
+    }
+
+    @Test
+    fun whatTheRunningOperationUsesIsNotRenamedOrDeleted() {
+        write(primary, "docs/a.txt", "a")
+        // The app is copying into docs: that folder, what is in it and the folders holding it are in use.
+        running = OperationSpec("op", OpKind.COPY, listOf(card.resolve("x.txt").toString()), primary.resolve("docs").toString())
+        val refused = listOf<() -> Any?>(
+            { provider.renameDocument("primary:docs", "x") },
+            { provider.renameDocument("primary:docs/a.txt", "b.txt") },
+            { provider.deleteDocument("primary:docs") },
+            { provider.deleteDocument("primary:docs/a.txt") },
+        )
+
+        for (call in refused) assertThrows(FileNotFoundException::class.java) { call() }
+
+        assertEquals(listOf("docs"), names(primary))
+        assertEquals(listOf("a.txt"), names(primary.resolve("docs")))
+        assertEquals(emptyList<BinItem>(), bin.list(listOf(primary)))
+        assertEquals(emptyList<Uri>(), picker.take())
+        // Once it is over, they are done as asked.
+        running = null
+        assertEquals("primary:x", provider.renameDocument("primary:docs", "x"))
     }
 
     @Test
@@ -629,6 +775,9 @@ class ProviderWriteTest {
 
     private companion object {
         const val CARD = "1A2B-3C4D"
+
+        /** How long a call that waits for nothing may take, at most, in milliseconds. */
+        const val CALL_MOMENT_MS = 300L
 
         const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
         const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION

@@ -23,6 +23,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.NoJournal
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeTraits
@@ -142,6 +143,7 @@ class ProviderReadTest {
         return ProviderDeps(
             NioFsBackend, { volumes }, settings, fileOps, bin, NoJournal, mediaScan, port, MimeResolver(),
             granted = { granted }, internalLabel = { internalLabel }, io = Dispatchers.IO, ids = { "id" },
+            openSaves = OpenSaves(), busy = { false },
         )
     }
 

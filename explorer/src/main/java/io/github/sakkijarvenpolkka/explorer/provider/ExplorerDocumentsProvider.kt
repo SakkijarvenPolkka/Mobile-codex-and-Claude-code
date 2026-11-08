@@ -61,9 +61,17 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /**
      * Where the provider hears that a file it opened for writing was closed (pick spec §3.5): a thread of its own,
-     * started at the first write. Tests wait on its looper.
+     * started at the first write. A save closed is marked so at once there ([SafeSave.Pending.closing]), and put in
+     * place or dropped on [saves]. Tests wait on its looper.
      */
     internal val closes: Handler by lazy { Handler(HandlerThread("explorer-documents").apply { start() }.looper) }
+
+    /**
+     * Where the saves other apps closed are put in place or dropped ([saved]), one after another in the order they
+     * were closed (two saves of a file land as they were made), away from [closes]: a long flush of one never keeps
+     * another from being marked closed. Tests wait on its looper.
+     */
+    internal val saves: Handler by lazy { Handler(HandlerThread("explorer-saves").apply { start() }.looper) }
 
     override fun onCreate(): Boolean = true
 
@@ -90,7 +98,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
             return MatrixCursor(projection ?: DocumentRows.DOCUMENT_COLUMNS).also(::addTop)
         }
         val mounted = Mounted(deps)
-        return mounted.rowsOf(listOf(Found(documentId, mounted.entryOf(documentId))), projection)
+        return mounted.rowsOf(listOf(Found(documentId, mounted.entryOf(documentId, Wait.SAVE))), projection)
     }
 
     /** The items of a folder, in no order (the picker sorts them); the top folder's are the favorites and drives. */
@@ -114,7 +122,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     override fun getDocumentType(documentId: String): String = if (documentId == ROOT_DOC_ID) {
         Document.MIME_TYPE_DIR
     } else {
-        DocumentRows.mimeOf(Mounted(deps).entryOf(documentId))
+        DocumentRows.mimeOf(Mounted(deps).entryOf(documentId, Wait.SAVE))
     }
 
     /**
@@ -157,7 +165,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         }
         val inPlace = IN_PLACE_MODES[mode]
         if (inPlace == null && mode !in SAVE_MODES) throw FileNotFoundException("not supported: $mode, $documentId")
-        val file = mounted.changeable(documentId)
+        val file = mounted.changeable(documentId, Wait.SAVE)
         if (file.kind != EntryKind.FILE) throw notFound("not a file", documentId)
         // The other app hears at once that there is no room, before anything is made.
         if (inPlace == null && !hasRoom(file.path)) throw notFound("no room", documentId)
@@ -178,7 +186,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         sizeHint: Point,
         signal: CancellationSignal?,
     ): AssetFileDescriptor {
-        val entry = Mounted(deps).entryOf(documentId)
+        val entry = Mounted(deps).entryOf(documentId, Wait.SAVE)
         // The files whose rows have the flag (DocumentRows.flagsFor).
         val kind = (if (entry.kind == EntryKind.FILE) pictureOrVideoKind(entry.mime) else null)
             ?: throw notFound("no thumbnail", documentId)
@@ -312,17 +320,20 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * it is closed, unless [saved] drops it.
      */
     private fun openToSave(target: Path): ParcelFileDescriptor {
-        val pending = SafeSave(deps.fs, deps.journal).begin(target, deps.ids())
+        val pending = SafeSave(deps.fs, deps.journal, deps.openSaves).begin(target, deps.ids())
         return try {
-            ParcelFileDescriptor.open(pending.temp.toFile(), SAVE_MODE, closes) { error -> saved(pending, error) }
-        } catch (e: IOException) {
+            ParcelFileDescriptor.open(pending.temp.toFile(), SAVE_MODE, closes) { error ->
+                pending.closing()
+                saves.post { saved(pending, error) }
+            }
+        } catch (e: Exception) {
             drop(pending)
             throw e
         }
     }
 
     /**
-     * What follows the close of a file being saved ([openToSave]), on [closes]: what was written takes the file's
+     * What follows the close of a file being saved ([openToSave]), on [saves]: what was written takes the file's
      * place, unless it was closed with an [error] (the other app gave up or died, or the system closed what it left
      * open), its drive has less than [SAVE_ROOM_MARGIN] free now ([hasRoom]), or putting it in place fails. Then it is
      * dropped, and the file is as it was. The other app was told already: a failure is logged.

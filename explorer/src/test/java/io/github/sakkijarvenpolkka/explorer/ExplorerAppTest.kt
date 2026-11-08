@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MIT
 package io.github.sakkijarvenpolkka.explorer
 
+import android.Manifest
+import android.app.AppOpsManager
 import android.app.ForegroundServiceStartNotAllowedException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ProviderInfo
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
@@ -53,6 +56,7 @@ import io.github.sakkijarvenpolkka.explorer.preview.TextDocument
 import io.github.sakkijarvenpolkka.explorer.preview.TextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
+import io.github.sakkijarvenpolkka.explorer.provider.ExplorerDocumentsProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -60,16 +64,21 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowEnvironment
 import org.robolectric.shadows.StorageVolumeBuilder
 import org.robolectric.util.ReflectionHelpers
 import org.robolectric.util.ReflectionHelpers.ClassParameter
+import java.io.FileNotFoundException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
@@ -341,6 +350,44 @@ class ExplorerAppTest {
         assertEquals(listOf(PickerChanges.childrenOf("1A2B-3C4D:dst")), picker.take(1))
     }
 
+    /** The app's documents provider, as the system starts it for its file picker: with what the app has. */
+    private fun documents(): ExplorerDocumentsProvider {
+        val info = ProviderInfo().apply {
+            authority = PickerChanges.AUTHORITY
+            exported = true
+            grantUriPermissions = true
+            readPermission = Manifest.permission.MANAGE_DOCUMENTS
+            writePermission = Manifest.permission.MANAGE_DOCUMENTS
+        }
+        return Robolectric.buildContentProvider(ExplorerDocumentsProvider::class.java).create(info).get()
+    }
+
+    /** Gives the app all files access, as the user does in the settings. */
+    private fun allowAllFilesAccess() {
+        ShadowEnvironment.addExternalDir("emulated/0")
+        shadowOf(app.getSystemService(AppOpsManager::class.java))
+            .setMode(MANAGE_EXTERNAL_STORAGE_OP, app.applicationInfo.uid, app.packageName, AppOpsManager.MODE_ALLOWED)
+    }
+
+    @Test
+    fun pickerLeavesAloneWhatTheRunningOperationUses() {
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        mount(card)
+        allowAllFilesAccess()
+        val a = write(card, "a.txt", "new")
+        val dst = write(card, "dst/a.txt", "old").parent
+        // A copy into the card's dst, which waits for an answer about dst/a.txt.
+        app.runner.submit(OperationSpec("t1", OpKind.COPY, listOf(a.toString()), dst.toString()))
+        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+
+        // Another app renames that folder through the system file picker: not while the copy uses it.
+        assertThrows(FileNotFoundException::class.java) { documents().renameDocument("1A2B-3C4D:dst", "x") }
+
+        assertTrue(Files.isDirectory(dst))
+        assertEquals("old", String(Files.readAllBytes(dst.resolve("a.txt"))))
+        cancel("t1")
+    }
+
     /** Runs [spec] with the app's runner, and returns what it made. */
     private fun run(spec: OperationSpec): List<Path> = runBlocking {
         app.runner.submit(spec)
@@ -502,5 +549,9 @@ class ExplorerAppTest {
         // The viewers leave with the activity: the file on the phone closes then, those on the card not again.
         shadowOf(Looper.getMainLooper()).idle()
         assertEquals(listOf("a.pdf", "b.pdf", "song.mp3"), closed.sorted())
+    }
+
+    private companion object {
+        const val MANAGE_EXTERNAL_STORAGE_OP = "android:manage_external_storage"
     }
 }

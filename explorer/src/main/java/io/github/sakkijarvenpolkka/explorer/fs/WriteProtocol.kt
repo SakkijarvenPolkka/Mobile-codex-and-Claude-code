@@ -181,16 +181,17 @@ class WriteProtocol(
     }
 
     /**
-     * Deletes [temp] if this write [created] it, then forgets it, unless it is still there: because it
-     * could not be deleted, or because creating it [failed] on a file that already had the name (left by
-     * a crash, whose run may have recorded it). The journal's sweep deletes what is still there.
+     * Deletes [temp] if this write [created] it, then forgets it, unless it may be there still: because it
+     * could not be deleted, because it was not found where its folder is not there either (renamed or moved
+     * away, or on a drive pulled out), or because creating it [failed] on a file that already had the name
+     * (left by a crash, whose run may have recorded it). The journal's sweep deletes what is still there.
      */
     private fun discard(temp: Path, created: Boolean, failed: Exception) {
         if (created) {
             try {
                 fs.delete(temp)
             } catch (e: NoSuchFileException) {
-                // Already gone.
+                if (!isThere(temp.parent)) return // Moved away with its folder, or out with its drive.
             } catch (e: IOException) {
                 return // Still on disk.
             }
@@ -198,6 +199,13 @@ class WriteProtocol(
             return // Not this write's file, so not deleted.
         }
         journal.remove(temp)
+    }
+
+    /** Whether [path] is there, as the journal's sweep tells it ([FsBackend.exists]); not when that cannot be told. */
+    private fun isThere(path: Path?): Boolean = try {
+        path != null && fs.exists(path)
+    } catch (e: IOException) {
+        false
     }
 
     /** [this] as [write] reports it: an IOException as an [FsException] with its [toFsError]. */

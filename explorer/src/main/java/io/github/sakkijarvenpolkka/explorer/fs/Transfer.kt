@@ -36,7 +36,7 @@ internal fun FsBackend.sameFile(a: Path, b: Path): Boolean = try {
  * does once its checks have passed. A restore runs as a move, out of the Recycle Bin, and puts back a
  * link or special file that is an item there by renaming it only ([placeByRename]). [unstorable] are
  * the items not to write, [removable] says whether the target is on removable media; [labels], [time],
- * [resolver], [onProgress] and [onCommitted] are those of [FileOps] and of the run.
+ * [resolver], [onProgress], [onCommitted] and [inUse] are those of [FileOps] and of the run.
  */
 internal class Transfer(
     private val fs: FsBackend,
@@ -50,6 +50,7 @@ internal class Transfer(
     private val resolver: ConflictResolver,
     onProgress: (OpProgress) -> Unit,
     private val onCommitted: (Int) -> Unit,
+    private val inUse: (Path) -> Boolean,
 ) {
     private val restore = spec.kind == OpKind.RESTORE
     private val move = spec.kind == OpKind.MOVE || restore
@@ -74,17 +75,35 @@ internal class Transfer(
             frames.clear()
             frames.addLast(Frame(depth = -1, source = null, target = source.into, mode = Mode.EXISTING))
             createInto = source.createInto
-            for (step in source.steps) {
-                currentCoroutineContext().ensureActive()
-                while (frames.last().depth >= step.depth) close(frames.removeLast())
-                val fatal = take(step, frames.last())
-                if (fatal != null) return OpResult.Failed(fatal, progress.doneItems, plan.totalItems)
+            if (spec.kind == OpKind.MOVE && inUse(source.steps.first().path)) {
+                passOver(source)
+            } else {
+                for (step in source.steps) {
+                    currentCoroutineContext().ensureActive()
+                    while (frames.last().depth >= step.depth) close(frames.removeLast())
+                    val fatal = take(step, frames.last())
+                    if (fatal != null) return OpResult.Failed(fatal, progress.doneItems, plan.totalItems)
+                }
+                while (frames.size > 1) close(frames.removeLast())
             }
-            while (frames.size > 1) close(frames.removeLast())
             onCommitted(index + 1)
         }
         progress.report(force = true)
         return OpResult.Done(created.toList(), failed.toList(), leftInSource)
+    }
+
+    /**
+     * Leaves the move's [source] where it is, with all it holds, as something else uses it ([inUse]: a save another app
+     * has in flight there would land nowhere): it fails as [FsError.Busy], and what it holds counts as done.
+     */
+    private fun passOver(source: Source) {
+        fail(source.steps.first().path, FsError.Busy, frames.last())
+        for (step in source.steps) {
+            if (step !is Item) continue
+            progress.doneItems++
+            progress.doneBytes += step.entry.size
+        }
+        progress.report()
     }
 
     /** Copies or moves [step] into [parent]; returns the error that ends the run, if it is one. */

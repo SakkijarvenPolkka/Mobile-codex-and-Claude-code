@@ -15,6 +15,7 @@ import io.github.sakkijarvenpolkka.explorer.data.ViewSetting
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.VolumeLookup
@@ -46,6 +47,8 @@ import java.nio.file.Path
  * recent files. [usage] is how full the volume at a root is, (total, free) bytes, for the drives on Home:
  * null when that is not known. [restart] starts the app again in a new process ([restartApp]), to read
  * a USB drive this one may not. With [pick], the shell picks files for another app instead ([PickMode]).
+ * [openSaves] are the saves other apps have open through the system file picker: what they use is not
+ * renamed; without them, none is known.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -66,6 +69,7 @@ data class ExplorerDeps(
     val usage: (Path) -> Pair<Long, Long>? = ::storageUsage,
     val restart: (Application) -> Unit = ::restartApp,
     val pick: PickRequest? = null,
+    val openSaves: OpenSaves? = null,
 )
 
 /** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */
