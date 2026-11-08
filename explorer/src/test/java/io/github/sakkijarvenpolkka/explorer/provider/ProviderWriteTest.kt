@@ -2,11 +2,17 @@
 package io.github.sakkijarvenpolkka.explorer.provider
 
 import android.Manifest
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.content.pm.PackageManager.PERMISSION_DENIED
+import android.content.pm.PackageManager.PERMISSION_GRANTED
 import android.content.pm.ProviderInfo
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.PickerChanges
@@ -46,6 +52,7 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadows.ShadowContentResolver
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.nio.file.Files
@@ -89,21 +96,34 @@ class ProviderWriteTest {
         }
     }
 
+    /**
+     * A context that keeps the URI grants of the one app that calls, as the system keeps them: what the app
+     * [held] of each URI, granted and checked as the caller's; a revoke takes a URI and those under it from all.
+     */
+    private class Grants(base: Context) : ContextWrapper(base) {
+        val held = mutableMapOf<Uri, Int>()
+
+        override fun grantUriPermission(toPackage: String, uri: Uri, modeFlags: Int) {
+            // One to neither read nor write grants nothing.
+            if (modeFlags and (READ or WRITE) != 0) held[uri] = (held[uri] ?: 0) or modeFlags
+        }
+
+        override fun revokeUriPermission(uri: Uri, modeFlags: Int) {
+            val segments = uri.pathSegments
+            held.keys.removeIf { it.authority == uri.authority && it.pathSegments.take(segments.size) == segments }
+        }
+
+        override fun checkCallingOrSelfUriPermission(uri: Uri, modeFlags: Int): Int =
+            if (((held[uri] ?: 0) and modeFlags) == modeFlags) PERMISSION_GRANTED else PERMISSION_DENIED
+    }
+
     @Before
     fun setUp() {
         val temp = folder.root.toPath().toRealPath()
         primary = Files.createDirectory(temp.resolve("primary"))
         card = Files.createDirectory(temp.resolve("card"))
         volumes = listOf(primaryVolume(), cardVolume())
-        val info = ProviderInfo().apply {
-            authority = PickerChanges.AUTHORITY
-            // What a documents provider's entry in the manifest says, or it refuses to start.
-            exported = true
-            grantUriPermissions = true
-            readPermission = Manifest.permission.MANAGE_DOCUMENTS
-            writePermission = Manifest.permission.MANAGE_DOCUMENTS
-        }
-        provider = Robolectric.buildContentProvider(ExplorerDocumentsProvider::class.java).create(info).get()
+        provider = Robolectric.buildContentProvider(ExplorerDocumentsProvider::class.java).create(providerInfo()).get()
         ProviderDeps.override = deps()
         picker = PickerChanges(ApplicationProvider.getApplicationContext())
     }
@@ -111,6 +131,21 @@ class ProviderWriteTest {
     @After
     fun tearDown() {
         ProviderDeps.override = null
+    }
+
+    /** What a documents provider's entry in the manifest says, or it refuses to start. */
+    private fun providerInfo() = ProviderInfo().apply {
+        authority = PickerChanges.AUTHORITY
+        exported = true
+        grantUriPermissions = true
+        readPermission = Manifest.permission.MANAGE_DOCUMENTS
+        writePermission = Manifest.permission.MANAGE_DOCUMENTS
+    }
+
+    /** Starts another provider in [context], as the system starts one: other apps' calls go to it then. */
+    private fun startIn(context: Context): ExplorerDocumentsProvider = ExplorerDocumentsProvider().also {
+        it.attachInfo(context, providerInfo())
+        ShadowContentResolver.registerProviderInternal(PickerChanges.AUTHORITY, it)
     }
 
     private fun primaryVolume() = Volume(
@@ -437,6 +472,24 @@ class ProviderWriteTest {
     }
 
     @Test
+    fun renameCarriesTheCallersGrantToTheNewId() {
+        write(primary, "docs/a.txt", "a")
+        val app = ApplicationProvider.getApplicationContext<Context>()
+        val grants = Grants(app)
+        startIn(grants)
+        // What ACTION_OPEN_DOCUMENT gave the app: this file alone, no folder of it.
+        val old = DocumentsContract.buildDocumentUri(PickerChanges.AUTHORITY, "primary:docs/a.txt")
+        grants.grantUriPermission("com.example.editor", old, OPENED)
+
+        // The app renames it through the system, which hands it the new id with what it held of the old one.
+        val renamed = DocumentsContract.renameDocument(app.contentResolver, old, "b.txt")
+
+        assertEquals(DocumentsContract.buildDocumentUri(PickerChanges.AUTHORITY, "primary:docs/b.txt"), renamed)
+        // It can open the file, and keep it, still; the old id is no one's.
+        assertEquals(mapOf(renamed to OPENED), grants.held)
+    }
+
+    @Test
     fun deleteGoesToRecycleBin() {
         val a = write(primary, "docs/a.txt", "a")
 
@@ -493,5 +546,11 @@ class ProviderWriteTest {
 
     private companion object {
         const val CARD = "1A2B-3C4D"
+
+        const val READ = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        const val WRITE = Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+
+        /** What `ACTION_OPEN_DOCUMENT` grants the app that asked of the file it chose: to read, write and keep it. */
+        const val OPENED = READ or WRITE or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
     }
 }

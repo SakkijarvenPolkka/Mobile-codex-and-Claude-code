@@ -261,7 +261,12 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     /**
      * Renames the file or folder [documentId] (no drive) to [displayName] as the app renames ([FileOps.rename]: the
      * naming rules of its volume, and a name that only changes case in two steps), and returns its new id; null
-     * when it keeps its id (the name it has). The old id is no longer granted to any app.
+     * when it keeps its id (the name it has).
+     *
+     * The old id is left for the system to revoke: once this returns, it grants the app that renamed the document
+     * what that app held of the old id on the new one, and only then revokes the old id from every app. Revoked
+     * here, before that, an app that holds the document alone (what `ACTION_OPEN_DOCUMENT` grants) would get back a
+     * new id it may not open.
      */
     override fun renameDocument(documentId: String, displayName: String): String? {
         val mounted = Mounted(deps)
@@ -278,7 +283,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
             throw notFound("withheld", documentId)
         }
         if (id == documentId) return null
-        changed(mounted, renamed, scan = false, revoked = documentId)
+        changed(mounted, renamed, scan = false)
         return id
     }
 
@@ -385,7 +390,8 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     /**
      * What follows a change the picker made at [path] (pick spec §3.5): the picker is told that the folder it is in
      * holds other items now; if [scan], the media store scans [path], where its volume is served through FUSE; and
-     * no app keeps its grant of the document [revoked], gone or with another id now.
+     * no app keeps its grant of [revoked], a document deleted. (The system revokes a renamed document's old id
+     * itself: [renameDocument].)
      */
     private fun changed(mounted: Mounted, path: Path, scan: Boolean, revoked: String? = null) {
         DocumentsNotifier.parentsOf(requireContext(), mounted.ids, listOf(path))
