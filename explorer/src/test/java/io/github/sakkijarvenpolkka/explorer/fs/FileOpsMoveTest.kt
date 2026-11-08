@@ -172,7 +172,9 @@ class FileOpsMoveTest {
                         if (read < 0 && !saved) {
                             saved = true
                             val temp = Files.write(internal.resolve(".edit.prj.id.xpart"), "new".toByteArray())
-                            Files.move(temp, source, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+                            Files.move(
+                                temp, source, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING,
+                            )
                         }
                     }
                 }

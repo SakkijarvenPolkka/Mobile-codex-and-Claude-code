@@ -86,7 +86,8 @@ class PickModeTest {
     ): ExplorerViewModel {
         val request = PickRequest(types.toList(), multiple)
         val deps = ExplorerDeps(
-            fs, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request, finishedOps = finishedOps,
+            fs, settings, volumes, volumes, MimeResolver(), io, clock = clock, pick = request,
+            finishedOps = finishedOps,
         )
         vm = ExplorerViewModel(app, deps).also { made += it }
         settle()

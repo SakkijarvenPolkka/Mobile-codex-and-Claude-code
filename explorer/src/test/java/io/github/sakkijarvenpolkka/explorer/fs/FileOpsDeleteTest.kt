@@ -64,7 +64,9 @@ class FileOpsDeleteTest {
     fun deleteLeavesASourceAnOpenSaveUses() {
         // Another app is saving a file in each folder through the system file picker.
         val saves = OpenSaves()
-        val ops = FileOps(NioFsBackend, volumes, KO_LABELS, MemoryJournal(), ids = { "r1" }, bin = bin(), inUse = saves::uses)
+        val ops = FileOps(
+            NioFsBackend, volumes, KO_LABELS, MemoryJournal(), ids = { "r1" }, bin = bin(), inUse = saves::uses,
+        )
         val left = HashMap<String, String>()
         for (kind in listOf(OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT)) {
             val docs = write(internal, "${kind.name}/a.txt", "a").parent
@@ -74,7 +76,8 @@ class FileOpsDeleteTest {
             val result = ops.runToEnd(delete(kind, docs, x))
 
             // The folder holding it stays; the rest goes.
-            assertEquals(kind.name, listOf(ItemFailure(docs.toString(), FsError.Busy)), (result as OpResult.Done).failed)
+            val failed = (result as OpResult.Done).failed
+            assertEquals(kind.name, listOf(ItemFailure(docs.toString(), FsError.Busy)), failed)
             left += mapOf("${kind.name}/" to "", "${kind.name}/a.txt" to "a")
             assertEquals(kind.name, left, outsideBin(internal))
         }

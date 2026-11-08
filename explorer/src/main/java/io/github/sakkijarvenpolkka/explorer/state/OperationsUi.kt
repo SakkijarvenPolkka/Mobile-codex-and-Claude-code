@@ -233,7 +233,8 @@ internal class OperationsUi(
 
     /**
      * Renames [entry] to [newName] at once ([FileOps.rename]), closes the dialog, selects it under its
-     * new name and tells the system file picker ([ExplorerDeps.foldersChanged]). The name it has, as typed or once trimmed ([NameValidator]), only closes the dialog.
+     * new name and tells the system file picker ([ExplorerDeps.foldersChanged]). The name it has, as typed
+     * or once trimmed ([NameValidator]), only closes the dialog.
      * Changing a file's extension is asked about first ([ConfirmRequest.ExtensionChange]) unless
      * [extensionConfirmed]. An item the operation running uses is not renamed, nor one the rename fails
      * for: the dialog stays open, and says why ([State.renameError]; a message, when it is not open). While

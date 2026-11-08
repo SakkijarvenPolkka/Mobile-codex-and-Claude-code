@@ -221,8 +221,8 @@ internal class Transfer(
 
     /**
      * Deletes a moved file's source, now that its copy has its name, if it is still the file that was copied, as
-     * [copied] stamped it before: another file in its place (a save another app made meanwhile, renamed over it), or one
-     * that cannot be told, stays, listed as [FsError.Busy], with both versions kept. A failure is listed as such.
+     * [copied] stamped it before: another file in its place (a save another app made meanwhile, renamed over it), or
+     * one that cannot be told, stays, listed as [FsError.Busy], with both versions kept. A failure is listed as such.
      */
     private fun deleteSource(source: Path, copied: Stamp?, parent: Frame) {
         if (copied == null || stampOf(source) != copied) {

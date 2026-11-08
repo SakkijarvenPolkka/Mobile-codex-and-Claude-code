@@ -388,7 +388,9 @@ class ProviderWriteTest {
     fun whatTheRunningOperationUsesIsNotRenamedOrDeleted() {
         write(primary, "docs/a.txt", "a")
         // The app is copying into docs: that folder, what is in it and the folders holding it are in use.
-        running = OperationSpec("op", OpKind.COPY, listOf(card.resolve("x.txt").toString()), primary.resolve("docs").toString())
+        running = OperationSpec(
+            "op", OpKind.COPY, listOf(card.resolve("x.txt").toString()), primary.resolve("docs").toString(),
+        )
         val refused = listOf<() -> Any?>(
             { provider.renameDocument("primary:docs", "x") },
             { provider.renameDocument("primary:docs/a.txt", "b.txt") },

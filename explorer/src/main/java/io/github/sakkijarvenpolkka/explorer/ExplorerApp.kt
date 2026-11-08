@@ -351,7 +351,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
         val made = (op.result as? OpResult.Done)?.created.orEmpty()
         val sources = spec.sources.map { Paths.get(it) }
         val target = spec.target?.let { Paths.get(it) }.takeIf { op.result !is OpResult.Done }
-        val into = target?.takeIf { spec.kind == OpKind.COPY || spec.kind == OpKind.MOVE || spec.kind == OpKind.EXTRACT }
+        val into = target?.takeIf { spec.kind in PUTS_INTO }
         val archive = target?.takeIf { spec.kind == OpKind.COMPRESS }
         val gone = sources.takeIf { spec.kind in TAKES_AWAY }.orEmpty()
         tellThePicker(sources + made + listOfNotNull(archive), moved = gone + made, into = into)
@@ -396,5 +396,8 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     private companion object {
         /** The operations whose sources are no longer where they were once done. */
         val TAKES_AWAY = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT)
+
+        /** The operations that put items into their target folder. */
+        val PUTS_INTO = setOf(OpKind.COPY, OpKind.MOVE, OpKind.EXTRACT)
     }
 }

@@ -88,7 +88,9 @@ internal class SearchArgs private constructor(
             DocumentsContract.QUERY_ARG_MIME_TYPES,
         )
 
-        /** The types besides `text/` the media store counts as documents (`MediaFile.isDocumentMimeType`, Android 15). */
+        /**
+         * The types besides `text/` the media store counts as documents (`MediaFile.isDocumentMimeType`, Android 15).
+         */
         private val DOCUMENT_TYPES = setOf(
             "application/epub+zip",
             "application/msword",

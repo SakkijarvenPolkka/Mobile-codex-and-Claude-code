@@ -168,7 +168,9 @@ class WriteProtocolTest {
         }
 
         val e = assertThrows(FsException::class.java) {
-            runBlocking { protocol(journal = journal).write(docs.resolve("out.txt"), OP, false, false, null, source) {} }
+            runBlocking {
+                protocol(journal = journal).write(docs.resolve("out.txt"), OP, false, false, null, source) {}
+            }
         }
 
         assertEquals(FsError.NotFound, e.error)
