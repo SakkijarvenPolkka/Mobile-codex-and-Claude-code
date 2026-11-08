@@ -8,6 +8,7 @@ package io.github.sakkijarvenpolkka.explorer.provider
 
 import android.content.Context
 import android.provider.DocumentsContract
+import java.nio.file.Path
 
 /** Tells the picker of changes to the provider's root and to the folders it lists. */
 object DocumentsNotifier {
@@ -26,5 +27,13 @@ object DocumentsNotifier {
         for (id in docIds) {
             context.contentResolver.notifyChange(DocumentsContract.buildChildDocumentsUri(authority, id), null)
         }
+    }
+
+    /**
+     * The folders [paths] are in hold other items now: each that [ids] names, once (the picker is shown no other).
+     * It reads the file system.
+     */
+    fun parentsOf(context: Context, ids: DocumentIds, paths: Collection<Path>) {
+        children(context, paths.mapNotNullTo(LinkedHashSet()) { path -> path.parent?.let(ids::idOf) })
     }
 }

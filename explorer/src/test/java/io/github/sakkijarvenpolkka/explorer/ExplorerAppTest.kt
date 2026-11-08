@@ -318,9 +318,45 @@ class ExplorerAppTest {
         for (change in listOf(mounted, { eject(card) }, pinned)) {
             change()
             shadowOf(Looper.getMainLooper()).idle()
-            // Its root, and the favorites and the drives in it.
-            assertEquals(listOf(PickerChanges.ROOTS, PickerChanges.childrenOf("root")), picker.take())
+            // Its root, and the favorites and the drives in it: told off the main thread.
+            assertEquals(listOf(PickerChanges.ROOTS, PickerChanges.childrenOf("root")), picker.take(2))
         }
+    }
+
+    @Test
+    fun finishedOperationsTellThePickerOfTheirFolders() {
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        mount(card)
+        val a = write(card, "docs/a.txt", "a")
+        val dst = Files.createDirectory(card.resolve("dst"))
+        val picker = PickerChanges(app)
+
+        // A move: the folder it left and the one it went to are read again.
+        val moved = run(OperationSpec("t1", OpKind.MOVE, listOf(a.toString()), dst.toString()))
+        val folders = listOf("1A2B-3C4D:docs", "1A2B-3C4D:dst").map(PickerChanges::childrenOf)
+        assertEquals(folders.toSet(), picker.take(2).toSet())
+
+        // Into the Recycle Bin: its folder is the app's own, the picker is not shown it.
+        run(OperationSpec("t2", OpKind.DELETE_TO_BIN, listOf(moved.single().toString())))
+        assertEquals(listOf(PickerChanges.childrenOf("1A2B-3C4D:dst")), picker.take(1))
+    }
+
+    /** Runs [spec] with the app's runner, and returns what it made. */
+    private fun run(spec: OperationSpec): List<Path> = runBlocking {
+        app.runner.submit(spec)
+        val finished = withTimeout(10_000) {
+            app.runner.state.first { state -> state.finished.any { it.spec.id == spec.id } }
+        }.finished.single { it.spec.id == spec.id }
+        (finished.result as OpResult.Done).created
+    }
+
+    @Test
+    fun processStartReadsNoSettings() {
+        // A start for the picker's provider or the operations' service alone: the settings, which are read from a
+        // file, are not read on the main thread then.
+        val restarted = startAgain()
+
+        assertFalse(ReflectionHelpers.getField<Lazy<*>>(restarted, "settings\$delegate").isInitialized())
     }
 
     @Test

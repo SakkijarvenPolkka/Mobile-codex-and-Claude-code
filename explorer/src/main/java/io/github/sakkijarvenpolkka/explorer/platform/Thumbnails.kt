@@ -42,11 +42,19 @@ data class ThumbKey(val path: String, val modified: Long, val sizePx: Int)
  */
 fun thumbKindFor(entry: FileEntry): ThumbKind? {
     if (entry.kind != EntryKind.FILE) return null
-    val mime = baseMimeType(entry.mime) ?: return null
+    return pictureOrVideoKind(entry.mime)
+        ?: ThumbKind.AUDIO.takeIf { baseMimeType(entry.mime)?.startsWith("audio/") == true }
+}
+
+/**
+ * The kind of thumbnail a picture or a video of type [mime] has (parameters and case ignored); null for any other
+ * type, a song's too. These are the files the system file picker shows thumbnails of.
+ */
+fun pictureOrVideoKind(mime: String?): ThumbKind? {
+    val base = baseMimeType(mime) ?: return null
     return when {
-        mime.startsWith("image/") -> ThumbKind.IMAGE
-        mime.startsWith("video/") -> ThumbKind.VIDEO
-        mime.startsWith("audio/") -> ThumbKind.AUDIO
+        base.startsWith("image/") -> ThumbKind.IMAGE
+        base.startsWith("video/") -> ThumbKind.VIDEO
         else -> null
     }
 }

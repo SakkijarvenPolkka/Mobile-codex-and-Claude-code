@@ -2,7 +2,8 @@
  * Files — Application: owns the process-wide services of the file manager, and does what the file
  * operations need around them: the foreground service, the media scans, and stopping those on a
  * volume that goes (and forgetting its thumbnails, and closing the files the viewers hold on it). It
- * tells the system file picker when the drives or the favorites it lists change.
+ * tells the system file picker when the drives or the favorites it lists change, and the folders its
+ * operations change.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -16,6 +17,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.RecycleBin
 import io.github.sakkijarvenpolkka.explorer.fs.WriteProtocol
 import io.github.sakkijarvenpolkka.explorer.fs.ZipOps
@@ -43,10 +45,13 @@ import io.github.sakkijarvenpolkka.explorer.preview.FsTextLoader
 import io.github.sakkijarvenpolkka.explorer.preview.OpenFiles
 import io.github.sakkijarvenpolkka.explorer.preview.ViewerDeps
 import io.github.sakkijarvenpolkka.explorer.preview.trackedIn
+import io.github.sakkijarvenpolkka.explorer.provider.DocumentIds
 import io.github.sakkijarvenpolkka.explorer.provider.DocumentsNotifier
 import io.github.sakkijarvenpolkka.explorer.provider.ProviderHost
 import io.github.sakkijarvenpolkka.explorer.provider.ROOT_DOC_ID
+import io.github.sakkijarvenpolkka.explorer.provider.mountedRoots
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -55,10 +60,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.launch
 import java.io.File
 import java.nio.file.Path
+import java.nio.file.Paths
 import java.util.UUID
 
 class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
@@ -69,8 +74,11 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     /** The storage volumes, read on first use; [VolumeRegistry.start] follows their changes. */
     override val volumes: VolumeRegistry by lazy { VolumeRegistry(this) }
 
-    /** Settings, favorites, recent files, folder views and the saved tabs, read on first use. */
-    override val settings: SettingsStore by lazy { SettingsStore(this) }
+    /**
+     * Settings, favorites, recent files, folder views and the saved tabs, read on first use: not at every start of
+     * the process, as they are read from a file. The system file picker hears of the favorites from then on.
+     */
+    override val settings: SettingsStore by lazy { SettingsStore(this).also(::tellThePickerOfFavorites) }
 
     /** The Recycle Bin, one for the whole app: it knows which items are still going in. */
     override val bin: RecycleBin by lazy { RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId) }
@@ -156,7 +164,7 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
         volumes.start()
         stopOperationsOnEject()
         restartServiceForNewWork()
-        tellThePickerOfChanges()
+        tellThePickerOfVolumes()
         // What a crash left behind is cleaned up, and the operations it interrupted are offered again.
         runner.loadInterrupted()
     }
@@ -167,7 +175,10 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     /** No work left: the service stops itself once it sees that, and no work goes on without it. */
     override fun onIdle() = synchronized(serviceLock) { workWithoutService = null }
 
-    override fun onFinished(op: FinishedOp) = mediaScan.scan(scanTargets(op, volumes))
+    override fun onFinished(op: FinishedOp) {
+        mediaScan.scan(scanTargets(op, volumes))
+        tellThePickerOfFolders(op)
+    }
 
     /** The user is told to keep the app open: the operations go on in the process only. */
     override fun onForegroundRefused() {
@@ -259,16 +270,45 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     }
 
     /**
-     * Tells the system file picker whenever a volume comes or goes or the favorites change: the root it lists
-     * the app by, and the favorites and the drives in it, are to be read again (pick spec §3.1).
+     * Tells the system file picker whenever a volume comes or goes ([tellThePickerOfTheRoot]), on the default
+     * dispatcher. It listens from before [onCreate] returns, so that no event is missed.
      */
-    private fun tellThePickerOfChanges() {
-        appScope.launch(Dispatchers.Main.immediate) {
-            merge(volumes.events, settings.favorites.drop(1)).collect {
-                DocumentsNotifier.roots(this@ExplorerApp)
-                DocumentsNotifier.children(this@ExplorerApp, listOf(ROOT_DOC_ID))
-            }
+    private fun tellThePickerOfVolumes() {
+        appScope.launch(start = CoroutineStart.UNDISPATCHED) { volumes.events.collect { tellThePickerOfTheRoot() } }
+    }
+
+    /**
+     * Tells the system file picker whenever the favorites in [store] change ([tellThePickerOfTheRoot]), on the
+     * default dispatcher. It listens from when [store] is made, before anything can change them.
+     */
+    private fun tellThePickerOfFavorites(store: SettingsStore) {
+        appScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            store.favorites.drop(1).collect { tellThePickerOfTheRoot() }
         }
+    }
+
+    /**
+     * Tells the system file picker that the folders [op] changed hold other items now: those its sources were in,
+     * and those of what it made, that the picker is shown (pick spec §3.5). A picker open on one does not go on
+     * showing what was there. Off the runner's lock, which [onFinished] is called with: naming a folder reads the
+     * file system.
+     */
+    private fun tellThePickerOfFolders(op: FinishedOp) {
+        val made = (op.result as? OpResult.Done)?.created.orEmpty()
+        val paths = op.spec.sources.map { Paths.get(it) } + made
+        appScope.launch(Dispatchers.IO) {
+            val ids = DocumentIds(NioFsBackend) { mountedRoots(volumes.volumes.value) }
+            DocumentsNotifier.parentsOf(this@ExplorerApp, ids, paths)
+        }
+    }
+
+    /**
+     * Tells the system file picker that the root it lists the app by, and the favorites and the drives in it, are
+     * to be read again (pick spec §3.1).
+     */
+    private fun tellThePickerOfTheRoot() {
+        DocumentsNotifier.roots(this)
+        DocumentsNotifier.children(this, listOf(ROOT_DOC_ID))
     }
 
     private fun newId(): String = UUID.randomUUID().toString()

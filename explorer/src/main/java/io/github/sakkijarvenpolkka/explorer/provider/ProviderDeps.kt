@@ -41,8 +41,8 @@ interface ProviderHost {
  * What the provider works with: the file system [fs]; the [volumes] there are now, each time it is called;
  * the app's [settings] (favorites, recent files), [fileOps], Recycle Bin [bin], [journal] of temporary files
  * and [mediaScan]; [thumbnails] to make them with; [mime] for the types of files; whether the app has all
- * files access now ([granted]); what the primary volume is called ([internalLabel]); where blocking work
- * runs ([io]); and new ids for temporary names ([ids]).
+ * files access now ([granted]); what the primary volume is called now ([internalLabel]: the language may change
+ * while the process lives); where blocking work runs ([io]); and new ids for temporary names ([ids]).
  */
 class ProviderDeps(
     val fs: FsBackend,
@@ -55,7 +55,7 @@ class ProviderDeps(
     val thumbnails: ThumbnailPort,
     val mime: MimeResolver,
     val granted: () -> Boolean,
-    val internalLabel: String,
+    val internalLabel: () -> String,
     val io: CoroutineDispatcher,
     val ids: () -> String,
 ) {
@@ -82,7 +82,7 @@ class ProviderDeps(
                 thumbnails = AndroidThumbnailPort(),
                 mime = MimeResolver(),
                 granted = PermissionGate::granted,
-                internalLabel = context.getString(R.string.volume_internal),
+                internalLabel = { context.getString(R.string.volume_internal) },
                 io = Dispatchers.IO,
                 ids = { UUID.randomUUID().toString() },
             )

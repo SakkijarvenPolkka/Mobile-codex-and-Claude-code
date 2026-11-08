@@ -260,6 +260,19 @@ class ThumbnailsTest {
     }
 
     @Test
+    fun pictureOrVideoKindLeavesOutSongs() {
+        // What the system file picker shows thumbnails of: what the rows flag, and what is served.
+        assertEquals(ThumbKind.IMAGE, pictureOrVideoKind("image/heic"))
+        assertEquals(ThumbKind.IMAGE, pictureOrVideoKind("IMAGE/PNG; charset=binary"))
+        assertEquals(ThumbKind.VIDEO, pictureOrVideoKind("video/mp4"))
+        // A song's thumbnail is the app's own.
+        assertNull(pictureOrVideoKind("audio/mpeg"))
+        assertNull(pictureOrVideoKind("application/pdf"))
+        assertNull(pictureOrVideoKind("imagex/y"))
+        assertNull(pictureOrVideoKind(null))
+    }
+
+    @Test
     fun noThumbnailWithoutAKind() = runBlocking {
         val port = FakePort()
         assertNull(thumbnails(port).get(entry("/s/a.pdf", mime = "application/pdf"), 96))

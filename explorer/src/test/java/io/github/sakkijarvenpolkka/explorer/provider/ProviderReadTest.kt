@@ -40,6 +40,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -52,6 +53,7 @@ import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.util.concurrent.CopyOnWriteArrayList
@@ -73,6 +75,9 @@ class ProviderReadTest {
 
     /** Whether the app has all files access now. */
     private var granted = true
+
+    /** What the app calls the primary volume now, in its language. */
+    private var internalLabel = INTERNAL
 
     private val settings = SettingsStore(null)
     private val port = FakePort()
@@ -136,7 +141,7 @@ class ProviderReadTest {
         }
         return ProviderDeps(
             NioFsBackend, { volumes }, settings, fileOps, bin, NoJournal, mediaScan, port, MimeResolver(),
-            granted = { granted }, internalLabel = INTERNAL, io = Dispatchers.IO, ids = { "id" },
+            granted = { granted }, internalLabel = { internalLabel }, io = Dispatchers.IO, ids = { "id" },
         )
     }
 
@@ -167,13 +172,14 @@ class ProviderReadTest {
 
     private fun Map<String, Any?>.flags(): Int = (getValue(Document.COLUMN_FLAGS) as Long).toInt()
 
-    /** Makes a pipe, a special file, at [path], where the system has `mkfifo`. */
+    /** Makes a pipe, a special file, at [path]; where the system cannot (no `mkfifo`), the test is skipped. */
     private fun mkfifo(path: Path) {
         try {
             ProcessBuilder("mkfifo", path.toString()).start().waitFor()
         } catch (e: IOException) {
-            // No pipe, then.
+            // No mkfifo: the assumption below skips the test.
         }
+        assumeTrue("no pipe at $path", Files.exists(path, LinkOption.NOFOLLOW_LINKS))
     }
 
     /**
@@ -272,6 +278,16 @@ class ProviderReadTest {
         val pinned = children(ROOT_DOC_ID)
         assertEquals(listOf("Reports", "Download", INTERNAL, "SD"), pinned.column(NAME))
         assertEquals("primary:Documents/Work", pinned.first()[ID])
+    }
+
+    @Test
+    fun driveNameIsReadAtEachCall() {
+        assertEquals(INTERNAL, document("primary:")[NAME])
+
+        // The language changed while the process lives: the drive is called as the app calls it now.
+        internalLabel = "Internal storage"
+        assertEquals("Internal storage", document("primary:")[NAME])
+        assertEquals(listOf("Internal storage", "SD"), children(ROOT_DOC_ID).column(NAME))
     }
 
     @Test
@@ -376,12 +392,8 @@ class ProviderReadTest {
         val opened = provider.openDocument("primary:docs/a.txt", "r", null)
         assertEquals("hello", ParcelFileDescriptor.AutoCloseInputStream(opened).use { String(it.readBytes()) })
 
-        // Nothing is written through the picker yet: every other mode is refused, and the file stays as it was.
-        for (mode in listOf("w", "wt", "wa", "rw", "rwt")) {
-            assertThrows(mode, FileNotFoundException::class.java) {
-                provider.openDocument("primary:docs/a.txt", mode, null)
-            }
-        }
+        // A mode no one knows is refused, and the file stays as it was (writing: ProviderWriteTest).
+        assertThrows(FileNotFoundException::class.java) { provider.openDocument("primary:docs/a.txt", "x", null) }
         assertEquals("hello", String(Files.readAllBytes(a)))
     }
 

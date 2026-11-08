@@ -11,7 +11,7 @@ import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
-import io.github.sakkijarvenpolkka.explorer.util.baseMimeType
+import io.github.sakkijarvenpolkka.explorer.platform.pictureOrVideoKind
 
 /** The columns of the provider's rows, the rows of its documents, and their flags. */
 object DocumentRows {
@@ -52,7 +52,7 @@ object DocumentRows {
                 } else {
                     0
                 }
-                changes or (if (isPictureOrVideo(mime)) Document.FLAG_SUPPORTS_THUMBNAIL else 0)
+                changes or (if (pictureOrVideoKind(mime) != null) Document.FLAG_SUPPORTS_THUMBNAIL else 0)
             }
             EntryKind.SYMLINK, EntryKind.OTHER -> 0
         }
@@ -82,12 +82,6 @@ object DocumentRows {
             .add(Document.COLUMN_FLAGS, flags)
     }
 
-    /** Whether [mime] is a picture's or a video's type (parameters and case ignored). */
-    private fun isPictureOrVideo(mime: String?): Boolean {
-        val base = baseMimeType(mime) ?: return false
-        return base.startsWith("image/") || base.startsWith("video/")
-    }
-
     /** The type of a file whose type is not known. */
-    private const val UNKNOWN_MIME = "application/octet-stream"
+    const val UNKNOWN_MIME = "application/octet-stream"
 }

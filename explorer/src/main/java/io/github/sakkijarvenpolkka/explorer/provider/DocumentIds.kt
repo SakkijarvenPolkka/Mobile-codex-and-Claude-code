@@ -18,6 +18,10 @@ import java.nio.file.Path
 /** The document id of the provider's own top folder, which holds the favorites and the drives. */
 const val ROOT_DOC_ID = "root"
 
+/** The picker's failure for the document [id]: [why], and what the file system said ([cause]), if anything. */
+internal fun notFound(why: String, id: String, cause: IOException? = null): FileNotFoundException =
+    FileNotFoundException("$why: $id").apply { if (cause != null) initCause(cause) }
+
 /**
  * The ids of the files and folders on the [mounted] volumes, and the paths they name. An id is
  * `<uuid>:<rel>`: the volume's [VolumeRoot.uuid], then the path from its root with `/` between the names
@@ -39,21 +43,21 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
      */
     fun resolve(id: String): Path {
         val colon = id.indexOf(':')
-        if (colon < 0) throw notFound(id, "not a document id")
+        if (colon < 0) throw notFound("not a document id", id)
         val uuid = id.substring(0, colon)
         // One reading of the volumes for all the rules.
         val volumes = mounted()
-        val volume = volumes.firstOrNull { it.uuid == uuid } ?: throw notFound(id, "volume not mounted")
+        val volume = volumes.firstOrNull { it.uuid == uuid } ?: throw notFound("volume not mounted", id)
         val rel = id.substring(colon + 1)
         val names = if (rel.isEmpty()) emptyList() else rel.split('/')
-        if (!names.all(::isPlainName)) throw notFound(id, "not a plain path")
+        if (!names.all(::isPlainName)) throw notFound("not a plain path", id)
         val path = try {
             volume.root.resolve(rel)
         } catch (e: InvalidPathException) {
-            throw notFound(id, "not a path")
+            throw notFound("not a path", id)
         }
-        if (volumeOf(path, volumes)?.uuid != uuid) throw notFound(id, "on another volume")
-        refusal(volume, names, path)?.let { throw notFound(id, it.why, it.cause) }
+        if (volumeOf(path, volumes)?.uuid != uuid) throw notFound("on another volume", id)
+        refusal(volume, names, path)?.let { throw notFound(it.why, id, it.cause) }
         return path
     }
 
@@ -91,7 +95,4 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
 
     private fun isPlainName(name: String): Boolean =
         name.isNotEmpty() && name != "." && name != ".." && '\u0000' !in name
-
-    private fun notFound(id: String, why: String, cause: IOException? = null) =
-        FileNotFoundException("$why: $id").apply { if (cause != null) initCause(cause) }
 }

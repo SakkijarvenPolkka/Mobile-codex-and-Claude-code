@@ -49,6 +49,9 @@ interface FsBackend {
     /** Flushes [channel]'s content and metadata to the device. */
     fun force(channel: FileChannel)
 
+    /** Flushes the content and metadata of the file at [path] to the device, whoever wrote it (another app, say). */
+    fun sync(path: Path)
+
     /** Renames [from] to [to] in one step, never by copying (ATOMIC_MOVE only); Linux replaces an existing [to]. */
     fun atomicMove(from: Path, to: Path)
 
@@ -109,6 +112,8 @@ object NioFsBackend : FsBackend {
         FileChannel.open(path, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
 
     override fun force(channel: FileChannel) = channel.force(true)
+
+    override fun sync(path: Path) = FileChannel.open(path, StandardOpenOption.WRITE).use { it.force(true) }
 
     override fun atomicMove(from: Path, to: Path) {
         Files.move(from, to, StandardCopyOption.ATOMIC_MOVE)
