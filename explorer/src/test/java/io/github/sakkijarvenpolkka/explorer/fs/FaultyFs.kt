@@ -35,13 +35,13 @@ class SimulatedCrash : Error()
  * - [crashAtStep]: a [SimulatedCrash] at the k-th change.
  *
  * Every change — [createNew], each write to a channel it made, [force] (or a flush of that channel),
- * [sync], [atomicMove], [delete], [createDirectory], [setModified] — is a step, and is recorded in [calls]
- * before it runs.
+ * [sync], [syncFolder], [atomicMove], [delete], [createDirectory], [setModified] — is a step, and is recorded
+ * in [calls] before it runs.
  */
 class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
 
     /** The changes [FaultyFs] records. */
-    enum class Op { CREATE_NEW, WRITE, FORCE, SYNC, ATOMIC_MOVE, DELETE, CREATE_DIRECTORY, SET_MODIFIED }
+    enum class Op { CREATE_NEW, WRITE, FORCE, SYNC, SYNC_FOLDER, ATOMIC_MOVE, DELETE, CREATE_DIRECTORY, SET_MODIFIED }
 
     /** One change as it was asked for: [path] (for [Op.WRITE] and [Op.FORCE], the file's), and [to] for a move. */
     data class Call(val op: Op, val path: Path, val to: Path? = null)
@@ -173,6 +173,11 @@ class FaultyFs(private val delegate: FsBackend = NioFsBackend) : FsBackend {
         val real = resolve(path)
         checkAccess(real)
         delegate.sync(real)
+    }
+
+    override fun syncFolder(dir: Path) {
+        step(Op.SYNC_FOLDER, dir)
+        delegate.syncFolder(resolve(dir))
     }
 
     override fun atomicMove(from: Path, to: Path) {

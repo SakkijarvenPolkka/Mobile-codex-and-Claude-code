@@ -14,10 +14,12 @@ import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 
 /**
- * Saves over files for other apps on [fs], so that whenever a save fails or the process dies, a file holds what it
+ * Saves over files for other apps on [fs], so that whenever a save is dropped or the process dies, a file holds what it
  * held before or all that was saved, never part of it. What an app writes goes into a temporary file next to the
  * file, recorded in [journal] while it is on disk, which then takes the file's place in one step
- * ([FsBackend.atomicMove]). One that a crash leaves behind is deleted with the others the journal records.
+ * ([FsBackend.atomicMove]). One that a crash leaves behind is deleted with the others the journal records. Whether a
+ * save is put in place or dropped is the caller's to decide: what the other app wrote is whatever it closed the file
+ * on, which a failure of its own may have cut short.
  */
 class SafeSave(private val fs: FsBackend, private val journal: TempJournal) {
 
@@ -48,12 +50,14 @@ class SafeSave(private val fs: FsBackend, private val journal: TempJournal) {
 
         /**
          * Puts what was written in [target]'s place: [temp] is flushed to the device ([FsBackend.sync]), renamed over
-         * [target] in one step, then forgotten. [target] is as it was until that step. If either fails, the failure
-         * is thrown, and [temp] is left for [abort].
+         * [target] in one step, the rename flushed with its folder ([FsBackend.syncFolder]: after a power cut, the file
+         * holds what it held or what was saved), then forgotten. [target] is as it was until that step. If the flush
+         * or the rename fails, the failure is thrown, and [temp] is left for [abort].
          */
         fun commit() {
             fs.sync(temp)
             fs.atomicMove(temp, target)
+            fs.syncFolder(requireNotNull(target.parent) { "$target has no folder" })
             journal.remove(temp)
         }
 

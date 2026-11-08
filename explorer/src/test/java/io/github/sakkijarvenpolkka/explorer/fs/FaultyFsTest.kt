@@ -119,4 +119,16 @@ class FaultyFsTest {
         fs.atomicMove(a, internal.resolve("c.txt"))
         assertEquals(listOf("c.txt"), names(internal))
     }
+
+    @Test
+    fun syncFolderIsAStepThatNeverFails() {
+        val fs = FaultyFs()
+        val gone = dir.resolve("gone")
+
+        fs.syncFolder(dir)
+        // One that is not there (its volume went, say) is passed over: what the flush was for is done already.
+        fs.syncFolder(gone)
+
+        assertEquals(listOf(dir, gone).map { FaultyFs.Call(FaultyFs.Op.SYNC_FOLDER, it) }, fs.calls)
+    }
 }

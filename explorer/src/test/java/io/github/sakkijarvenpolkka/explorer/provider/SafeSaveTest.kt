@@ -106,17 +106,21 @@ class SafeSaveTest {
     }
 
     @Test
-    fun commitSyncsBeforeMove() {
+    fun commitFlushesTheFolderAfterTheMove() {
         val target = write(dir, "a.txt", "old")
         val temp = dir.resolve(".a.txt.op1.xpart")
 
         save(target).commit()
 
-        // Made with nothing else of that name there, flushed to the device, then put in the file's place in one step.
-        assertEquals(
-            listOf(Call(Op.CREATE_NEW, temp), Call(Op.SYNC, temp), Call(Op.ATOMIC_MOVE, temp, target)),
-            fs.calls,
+        // Made with nothing else of that name there, flushed to the device, put in the file's place in one step, and
+        // that step flushed with its folder: after a power cut, the file holds the old content or the new.
+        val calls = listOf(
+            Call(Op.CREATE_NEW, temp),
+            Call(Op.SYNC, temp),
+            Call(Op.ATOMIC_MOVE, temp, target),
+            Call(Op.SYNC_FOLDER, dir),
         )
+        assertEquals(calls, fs.calls)
     }
 
     @Test

@@ -21,6 +21,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.BinItem
 import io.github.sakkijarvenpolkka.explorer.fs.DELETED_AT
 import io.github.sakkijarvenpolkka.explorer.fs.FaultyFs
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
@@ -52,9 +53,12 @@ import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowContentResolver
+import org.robolectric.util.ReflectionHelpers
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.IOException
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.concurrent.CopyOnWriteArrayList
@@ -78,6 +82,10 @@ class ProviderWriteTest {
 
     /** What the media store was asked to scan, in order. */
     private val scanned = CopyOnWriteArrayList<Path>()
+
+    /** The bytes free for apps on every drive, as the provider reads them; null: no telling (the reading fails). */
+    @Volatile
+    private var room: Long? = Long.MAX_VALUE
 
     private lateinit var bin: RecycleBin
     private lateinit var picker: PickerChanges
@@ -176,8 +184,12 @@ class ProviderWriteTest {
         val thumbnails = object : ThumbnailPort {
             override fun load(file: Path, kind: ThumbKind, sizePx: Int, signal: CancellationSignal): Bitmap? = null
         }
+        // The file system as the provider reads it: the room there is is what the test says.
+        val provided = object : FsBackend by fs {
+            override fun availableBytes(path: Path): Long = room ?: throw IOException("statvfs: Input/output error")
+        }
         return ProviderDeps(
-            fs, { volumes }, SettingsStore(null), fileOps, bin, journal, mediaScan, thumbnails, MimeResolver(),
+            provided, { volumes }, SettingsStore(null), fileOps, bin, journal, mediaScan, thumbnails, MimeResolver(),
             granted = { true }, internalLabel = { "내부 저장소" }, io = Dispatchers.IO, ids = { "id" },
         )
     }
@@ -243,6 +255,77 @@ class ProviderWriteTest {
         // Nothing changed.
         assertEquals(emptyList<Uri>(), picker.take())
         assertEquals(emptyList<Path>(), scanned.toList())
+    }
+
+    @Test
+    fun writeClosedWithErrorKeepsOriginal() {
+        val a = write(primary, "docs/a.txt", "old")
+        val pfd = provider.openDocument("primary:docs/a.txt", "w", null)
+        FileOutputStream(pfd.fileDescriptor).write("new".toByteArray())
+
+        // The other app gives up (closeWithError) or dies. Robolectric only ever closes without an error, so the
+        // provider is told as the system would tell it, and the close that follows tells it nothing more.
+        val shadow = Shadow.extract<Any>(pfd)
+        val listener = ReflectionHelpers.getField<ParcelFileDescriptor.OnCloseListener>(shadow, "onCloseListener")
+        listener.onClose(IOException("gave up"))
+        ReflectionHelpers.setField(shadow, "onCloseListener", null)
+        pfd.close()
+        closed()
+
+        assertEquals("old", read(a))
+        assertEquals(listOf("a.txt"), names(primary.resolve("docs")))
+        assertEquals(listOf("add .a.txt.id.xpart", "remove .a.txt.id.xpart"), journal.events.toList())
+        // Nothing changed.
+        assertEquals(emptyList<Uri>(), picker.take())
+        assertEquals(emptyList<Path>(), scanned.toList())
+    }
+
+    @Test
+    fun saveThatRanOutOfRoomKeepsOriginal() {
+        val a = write(primary, "a.txt", "old content")
+
+        // The drive fills up as the other app writes: its writing fails, yet it closes the file as it always does
+        // (use, try-with-resources), as if it had finished. Or how full the drive is cannot be read then.
+        for (free in listOf(0L, null)) {
+            room = Long.MAX_VALUE
+            ParcelFileDescriptor.AutoCloseOutputStream(provider.openDocument("primary:a.txt", "wt", null)).use {
+                it.write("ne".toByteArray())
+                room = free
+            }
+            closed()
+        }
+
+        // On a drive that full, a cut save cannot be told from one that finished: the file is kept as it was.
+        assertEquals("old content", read(a))
+        assertEquals(listOf("a.txt"), names(primary))
+        val oneSave = listOf("add .a.txt.id.xpart", "remove .a.txt.id.xpart")
+        assertEquals(oneSave + oneSave, journal.events.toList())
+        assertEquals(emptyList<Uri>(), picker.take())
+        assertEquals(emptyList<Path>(), scanned.toList())
+    }
+
+    @Test
+    fun saveWithoutRoomIsRefused() {
+        val a = write(primary, "a.txt", "old content")
+
+        // Too little room to tell a cut save from a finished one, or no telling how much there is: refused at once.
+        for (free in listOf(5L, null)) {
+            room = free
+            for (mode in listOf("w", "wt")) {
+                assertThrows("$mode $free", FileNotFoundException::class.java) {
+                    provider.openDocument("primary:a.txt", mode, null)
+                }
+            }
+        }
+
+        assertEquals("old content", read(a))
+        assertEquals(listOf("a.txt"), names(primary))
+        assertEquals(emptyList<String>(), journal.events.toList())
+        // Written in the file itself, nothing needs room for a second copy: those modes open as before.
+        room = 5
+        provider.openDocument("primary:a.txt", "wa", null).close()
+        closed()
+        assertEquals("old content", read(a))
     }
 
     @Test

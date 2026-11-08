@@ -138,7 +138,11 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * A file, opened as [mode] says:
      * - `r`, to be read;
      * - `w` or `wt`, to be written anew: into a temporary file next to it, which takes its place once the other app
-     *   closes it without an error ([SafeSave]). Until then, and if it is closed with one, the file is as it was;
+     *   closes it ([SafeSave], [saved]). Until then the file is as it was, and so it stays if the other app closes it
+     *   with an error, dies, or leaves it to be closed by the system (detached or leaked), or if its drive has less
+     *   than [SAVE_ROOM_MARGIN] free then. A save closed normally counts as finished, even when the other app's own
+     *   writing failed: on a drive with room, nothing tells the two apart. On a drive with less than that free
+     *   already, or whose free space cannot be read, nothing is begun;
      * - `wa`, to be appended to, or `rw` and `rwt` (from empty), to be read and written anywhere: in the file itself,
      *   as no temporary file can stand for what stays of it.
      *
@@ -155,6 +159,8 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         if (inPlace == null && mode !in SAVE_MODES) throw FileNotFoundException("not supported: $mode, $documentId")
         val file = mounted.changeable(documentId)
         if (file.kind != EntryKind.FILE) throw notFound("not a file", documentId)
+        // The other app hears at once that there is no room, before anything is made.
+        if (inPlace == null && !hasRoom(file.path)) throw notFound("no room", documentId)
         return try {
             if (inPlace == null) openToSave(file.path) else openInPlace(file.path, inPlace)
         } catch (e: IOException) {
@@ -303,7 +309,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /**
      * [target] opened to be written anew: into the temporary file of a [SafeSave], which takes the file's place once
-     * it is closed without an error ([saved]).
+     * it is closed, unless [saved] drops it.
      */
     private fun openToSave(target: Path): ParcelFileDescriptor {
         val pending = SafeSave(deps.fs, deps.journal).begin(target, deps.ids())
@@ -317,11 +323,17 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /**
      * What follows the close of a file being saved ([openToSave]), on [closes]: what was written takes the file's
-     * place, unless it was closed with an [error] (the other app gave up, or died) or that fails. Then it is dropped,
-     * and the file is as it was. The other app was told already: a failure is logged.
+     * place, unless it was closed with an [error] (the other app gave up or died, or the system closed what it left
+     * open), its drive has less than [SAVE_ROOM_MARGIN] free now ([hasRoom]), or putting it in place fails. Then it is
+     * dropped, and the file is as it was. The other app was told already: a failure is logged.
      */
     private fun saved(pending: SafeSave.Pending, error: IOException?) {
         if (error != null) {
+            drop(pending)
+            return
+        }
+        if (!hasRoom(pending.temp)) {
+            Log.w(TAG, "Not saving ${pending.target}: its drive is (nearly) full, which may have cut the save short")
             drop(pending)
             return
         }
@@ -333,6 +345,16 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
             return
         }
         changed(Mounted(deps), pending.target, scan = true)
+    }
+
+    /**
+     * Whether the drive [file] is on has [SAVE_ROOM_MARGIN] free for apps; not when that cannot be read. On a drive
+     * with less, a write that the full drive cut short closes as one that finished: a save there is not trusted.
+     */
+    private fun hasRoom(file: Path): Boolean = try {
+        deps.fs.availableBytes(requireNotNull(file.parent) { "$file has no folder" }) >= SAVE_ROOM_MARGIN
+    } catch (e: IOException) {
+        false
     }
 
     /** Drops [pending]: a temporary file that cannot be deleted is logged, and left to the journal's sweep. */
@@ -458,6 +480,13 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
         /** The modes a file is written anew in ([SafeSave]). */
         private val SAVE_MODES = setOf("w", "wt")
+
+        /**
+         * The bytes a drive must have free for apps for a save to begin there, and to be put in place once closed
+         * (1 MiB): more than a cluster of the FAT32 and exFAT volumes SD cards and USB drives are formatted with, and
+         * what Android itself counts as a full drive.
+         */
+        internal const val SAVE_ROOM_MARGIN = 1L shl 20
 
         /** How the temporary file of a save is opened for the other app: to be written, from empty. */
         private const val SAVE_MODE = ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE or

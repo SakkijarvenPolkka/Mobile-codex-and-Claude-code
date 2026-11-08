@@ -52,6 +52,12 @@ interface FsBackend {
     /** Flushes the content and metadata of the file at [path] to the device, whoever wrote it (another app, say). */
     fun sync(path: Path)
 
+    /**
+     * Flushes the names in the folder [dir] to the device (a rename into it, say), as far as its volume does: one that
+     * refuses to flush a folder, or a [dir] that cannot be opened, is passed over, as the change itself is done.
+     */
+    fun syncFolder(dir: Path)
+
     /** Renames [from] to [to] in one step, never by copying (ATOMIC_MOVE only); Linux replaces an existing [to]. */
     fun atomicMove(from: Path, to: Path)
 
@@ -114,6 +120,15 @@ object NioFsBackend : FsBackend {
     override fun force(channel: FileChannel) = channel.force(true)
 
     override fun sync(path: Path) = FileChannel.open(path, StandardOpenOption.WRITE).use { it.force(true) }
+
+    /** A folder opened to be read, then fsync'd: what Linux takes for flushing its entries. */
+    override fun syncFolder(dir: Path) {
+        try {
+            FileChannel.open(dir, StandardOpenOption.READ).use { it.force(true) }
+        } catch (e: IOException) {
+            // A volume that does not flush folders (some FUSE and FAT ones), or one gone meanwhile.
+        }
+    }
 
     override fun atomicMove(from: Path, to: Path) {
         Files.move(from, to, StandardCopyOption.ATOMIC_MOVE)
