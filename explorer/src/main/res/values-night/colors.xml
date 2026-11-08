@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — the window theme's colours at night: the app's dark background. SPDX-License-Identifier: MIT -->
+<resources>
+    <color name="window_background">#202020</color>
+</resources>

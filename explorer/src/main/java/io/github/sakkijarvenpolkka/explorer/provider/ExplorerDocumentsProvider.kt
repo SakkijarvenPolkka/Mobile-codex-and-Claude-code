@@ -171,8 +171,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         }
         val inPlace = IN_PLACE_MODES[mode]
         if (inPlace == null && mode !in SAVE_MODES) throw FileNotFoundException("not supported: $mode, $documentId")
-        val file = mounted.changeable(documentId, Wait.SAVE)
-        if (file.kind != EntryKind.FILE) throw notFound("not a file", documentId)
+        val file = mounted.changeableFile(documentId)
         // The other app hears at once that there is no room, before anything is made.
         if (inPlace == null && !hasRoom(file.path)) throw notFound("no room", documentId)
         return try {

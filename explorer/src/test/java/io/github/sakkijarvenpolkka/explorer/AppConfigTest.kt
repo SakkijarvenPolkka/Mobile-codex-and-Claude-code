@@ -8,6 +8,7 @@ import android.view.ContextThemeWrapper
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -44,6 +45,10 @@ class AppConfigTest {
         assertTrue(isLightTheme(night = false))
         assertEquals(0xFF202020.toInt(), windowBackground(night = true))
         assertFalse(isLightTheme(night = true))
+        // A colour resource, not a literal: a drawable of no resource id is looked up as 0 when it is loaded.
+        for (night in listOf(false, true)) {
+            assertNotEquals(0, attribute(night, android.R.attr.windowBackground).resourceId)
+        }
     }
 
     @Test

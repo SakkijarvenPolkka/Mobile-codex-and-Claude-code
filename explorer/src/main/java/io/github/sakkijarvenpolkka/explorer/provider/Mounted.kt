@@ -133,6 +133,16 @@ internal class Mounted(private val deps: ProviderDeps) {
     }
 
     /**
+     * The file [id] names, to be written once a save of it is settled: as [changeable], and [FileNotFoundException]
+     * for anything but a file.
+     */
+    fun changeableFile(id: String): FileEntry {
+        val entry = changeable(id, Wait.SAVE)
+        if (entry.kind != EntryKind.FILE) throw notFound("not a file", id)
+        return entry
+    }
+
+    /**
      * The file or folder [id] names, to be renamed or deleted once the saves of it and of what is in it are settled:
      * as [changeable], but no drive (pick spec §3.3), and nothing a save still in flight uses ([OpenSaves.uses]: it
      * would land nowhere) or the operation the app is running ([ProviderDeps.busy]: it would lose what it works on).

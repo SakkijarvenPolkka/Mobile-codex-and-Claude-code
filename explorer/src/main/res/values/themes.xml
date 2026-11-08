@@ -4,6 +4,6 @@
      draws, is the app's own. SPDX-License-Identifier: MIT -->
 <resources>
     <style name="Theme.Explorer" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#F3F3F3</item>
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

@@ -82,11 +82,16 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     /** The storage volumes, read on first use; [VolumeRegistry.start] follows their changes. */
     override val volumes: VolumeRegistry by lazy { VolumeRegistry(this) }
 
+    private val settingsLazy = lazy { SettingsStore(this).also(::tellThePickerOfFavorites) }
+
     /**
      * Settings, favorites, recent files, folder views and the saved tabs, read on first use: not at every start of
      * the process, as they are read from a file. The system file picker hears of the favorites from then on.
      */
-    override val settings: SettingsStore by lazy { SettingsStore(this).also(::tellThePickerOfFavorites) }
+    override val settings: SettingsStore by settingsLazy
+
+    /** Whether [settings] were read in this process (tests: not at its start). */
+    internal val settingsRead: Boolean get() = settingsLazy.isInitialized()
 
     /** The Recycle Bin, one for the whole app: it knows which items are still going in. */
     override val bin: RecycleBin by lazy { RecycleBin(NioFsBackend, volumes, System::currentTimeMillis, ::newId) }

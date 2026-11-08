@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files — the colours the window theme takes by name (a literal has no resource id): the app's
+     background by day, and under values-night at night. SPDX-License-Identifier: MIT -->
+<resources>
+    <color name="window_background">#F3F3F3</color>
+</resources>

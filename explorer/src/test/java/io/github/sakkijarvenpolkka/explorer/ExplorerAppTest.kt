@@ -483,7 +483,7 @@ class ExplorerAppTest {
         // file, are not read on the main thread then.
         val restarted = startAgain()
 
-        assertFalse(ReflectionHelpers.getField<Lazy<*>>(restarted, "settings\$delegate").isInitialized())
+        assertFalse(restarted.settingsRead)
     }
 
     @Test
