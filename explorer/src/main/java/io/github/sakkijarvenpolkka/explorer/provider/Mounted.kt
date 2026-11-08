@@ -8,6 +8,7 @@ package io.github.sakkijarvenpolkka.explorer.provider
 
 import android.database.MatrixCursor
 import android.os.Environment
+import io.github.sakkijarvenpolkka.explorer.data.Favorite
 import io.github.sakkijarvenpolkka.explorer.fs.EntryKind
 import io.github.sakkijarvenpolkka.explorer.fs.FileEntry
 import io.github.sakkijarvenpolkka.explorer.fs.HiddenNames
@@ -24,6 +25,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.transformWhile
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 
 /** A document a call found: its [id], [entry] as read, and the [label] it is shown by instead of its name. */
@@ -51,6 +53,23 @@ internal enum class Wait {
 internal fun mountedRoots(volumes: List<Volume>): List<VolumeRoot> = volumes
     .mapNotNull { v -> v.root?.let { VolumeRoot(v.uuid, it, v.traits, v.isRemovable) } }
     .filter { ':' !in it.uuid }
+
+/**
+ * Where the [favorites] are on the mounted [volumes]: those the top folder lists ([Mounted.favoritesAndDrives]); no
+ * volume's root (the drives are there) and none on a volume that is not mounted.
+ */
+internal fun favoritePaths(favorites: List<Favorite>, volumes: List<Volume>): List<Path> = favorites.mapNotNull { f ->
+    val root = volumes.firstOrNull { it.uuid == f.uuid }?.root ?: return@mapNotNull null
+    if (f.rel.isEmpty()) return@mapNotNull null
+    try {
+        root.resolve(f.rel)
+    } catch (e: InvalidPathException) {
+        null
+    }
+}
+
+/** The folders at the top of every volume no app is given as a whole (`ACTION_OPEN_DOCUMENT_TREE`), in any case. */
+private val TREE_BLOCKED_TOP = listOf(Environment.DIRECTORY_DOWNLOADS, "Android")
 
 /**
  * The volumes as a call finds them when it starts, for all it does: the documents on those mounted
@@ -144,10 +163,9 @@ internal class Mounted(private val deps: ProviderDeps) {
             val volume = volumeOf(id)
             val rel = id.substringAfter(':')
             val volumeRoot = rel.isEmpty()
-            // As Android itself since 11: no app is given a whole volume, nor the primary volume's downloads
-            // (in any case: the volume ignores it).
-            val blocksTree = volumeRoot ||
-                (volume.isPrimary && rel.equals(Environment.DIRECTORY_DOWNLOADS, ignoreCase = true))
+            // No app is given the top folder (it is not here), a whole volume (USB drives too), or Download or Android
+            // at the top of one (in any case: the volume may ignore it).
+            val blocksTree = volumeRoot || TREE_BLOCKED_TOP.any { rel.equals(it, ignoreCase = true) }
             val flags = DocumentRows.flagsFor(entry.kind, entry.mime, takesChanges(volume), volumeRoot, blocksTree)
             val name = label ?: if (volumeRoot) driveName(volume) else entry.name
             DocumentRows.addDocument(cursor, id, entry, name, flags)
@@ -174,28 +192,36 @@ internal class Mounted(private val deps: ProviderDeps) {
 
     /**
      * What the folder [id] holds: hidden items too (the picker hides them as its own setting says), but no
-     * link (it may lead off the volume), no special file, and nothing [DocumentIds] refuses.
+     * link (it may lead off the volume), no special file, and nothing [DocumentIds] refuses. The folder's real path
+     * is read once: a listed file or folder is no link, so its own follows from its name ([DocumentIds.childIdOf]).
      */
     fun childrenOf(id: String): List<Found> {
         val folder = entryOf(id)
         if (folder.kind != EntryKind.DIR) throw notFound("not a folder", id)
-        val children = try {
-            Listing.list(deps.fs, folder.path, ListOptions(showHidden = true), deps.mime::mimeOf)
+        val (children, realFolder) = try {
+            Listing.list(deps.fs, folder.path, ListOptions(showHidden = true), deps.mime::mimeOf) to
+                deps.fs.realPath(folder.path)
         } catch (e: IOException) {
             throw notFound("not listed", id, e)
         }
         return children.mapNotNull { child ->
             val shown = child.kind == EntryKind.FILE || child.kind == EntryKind.DIR
-            if (shown) ids.idOf(child.path)?.let { Found(it, child) } else null
+            if (shown) ids.childIdOf(folder.path, realFolder, child.name)?.let { Found(it, child) } else null
         }
     }
 
     /**
-     * Adds what [search] finds of [query] under the volume [root] to [found] (by id, in the order found), and
-     * stops once it holds [limit]: no hidden item nor what is in one, nothing of the app's own nor withheld
+     * Adds what [search] finds of [query] under the volume [root] to [found] (by id, in the order found) that [keeps]
+     * keeps, and stops once it holds [limit]: no hidden item nor what is in one, nothing of the app's own nor withheld
      * (`Android/obb` too), and no link.
      */
-    suspend fun searchUnder(root: Path, query: String, limit: Int, found: MutableMap<String, FileEntry>) {
+    suspend fun searchUnder(
+        root: Path,
+        query: String,
+        limit: Int,
+        found: MutableMap<String, FileEntry>,
+        keeps: (FileEntry) -> Boolean = { true },
+    ) {
         val excluded = { path: Path ->
             val name = path.fileName?.toString().orEmpty()
             HiddenNames.isHidden(name) || HiddenNames.isInternal(name) ||
@@ -206,7 +232,7 @@ internal class Mounted(private val deps: ProviderDeps) {
                 if (event is SearchEvent.Batch) {
                     for (hit in event.hits) {
                         if (found.size == limit) break
-                        if (hit.kind == EntryKind.SYMLINK) continue
+                        if (hit.kind == EntryKind.SYMLINK || !keeps(hit)) continue
                         ids.idOf(hit.path)?.let { found[it] = hit }
                     }
                 }
@@ -214,6 +240,9 @@ internal class Mounted(private val deps: ProviderDeps) {
             }
             .collect()
     }
+
+    /** Where the favorites the top folder lists are ([favoritePaths]). */
+    fun favoritePaths(): List<Path> = favoritePaths(deps.settings.favorites.value, volumes)
 
     /** The bytes free for apps on the primary volume, or null when it is not mounted or cannot tell. */
     fun primaryFreeBytes(): Long? {

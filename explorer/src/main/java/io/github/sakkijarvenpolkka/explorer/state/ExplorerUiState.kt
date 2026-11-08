@@ -48,7 +48,8 @@ import java.nio.file.Path
  * null when that is not known. [restart] starts the app again in a new process ([restartApp]), to read
  * a USB drive this one may not. With [pick], the shell picks files for another app instead ([PickMode]).
  * [openSaves] are the saves other apps have open through the system file picker: what they use is not
- * renamed; without them, none is known.
+ * renamed; without them, none is known. [foldersChanged] is told of the items the shell renamed or made
+ * itself (not through the runner), for the system file picker to read their folders again.
  */
 data class ExplorerDeps(
     val fs: FsBackend,
@@ -70,6 +71,7 @@ data class ExplorerDeps(
     val restart: (Application) -> Unit = ::restartApp,
     val pick: PickRequest? = null,
     val openSaves: OpenSaves? = null,
+    val foldersChanged: (List<Path>) -> Unit = {},
 )
 
 /** How a [UiMessage] is meant: the shell shows each as an info bar of the matching kind. */

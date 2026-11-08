@@ -232,8 +232,8 @@ internal class OperationsUi(
     }
 
     /**
-     * Renames [entry] to [newName] at once ([FileOps.rename]), closes the dialog and selects it under its
-     * new name. The name it has, as typed or once trimmed ([NameValidator]), only closes the dialog.
+     * Renames [entry] to [newName] at once ([FileOps.rename]), closes the dialog, selects it under its
+     * new name and tells the system file picker ([ExplorerDeps.foldersChanged]). The name it has, as typed or once trimmed ([NameValidator]), only closes the dialog.
      * Changing a file's extension is asked about first ([ConfirmRequest.ExtensionChange]) unless
      * [extensionConfirmed]. An item the operation running uses is not renamed, nor one the rename fails
      * for: the dialog stays open, and says why ([State.renameError]; a message, when it is not open). While
@@ -265,6 +265,8 @@ internal class OperationsUi(
             mutableState.update {
                 if (it.renaming?.path == entry.path) it.copy(renaming = null, renameError = null) else it
             }
+            // Not through the runner, whose operations tell the system file picker themselves.
+            deps.foldersChanged(listOf(entry.path, renamed))
             shell.refreshShowing { it == at }
             shell.selectAt(at, listOf(renamed))
         }
@@ -379,7 +381,10 @@ internal class OperationsUi(
     /** What deleting [item] for good deletes: its folder in the bin (or itself, a stray file there). */
     private fun binPathOf(item: BinItem): Path? = deps.bin?.binDir(item.volumeRoot)?.resolve(item.id)
 
-    /** Makes an item in the active tab's folder with [make], selects it and opens the rename dialog for it. */
+    /**
+     * Makes an item in the active tab's folder with [make], selects it and opens the rename dialog for it; the system
+     * file picker is told ([ExplorerDeps.foldersChanged]).
+     */
     private fun create(make: suspend (FileOps, Path) -> Path) {
         val fileOps = deps.fileOps ?: return
         val at = shell.here()
@@ -393,6 +398,7 @@ internal class OperationsUi(
                 shell.showError(at, errorText(e.toFsError()))
                 return@launch
             }
+            deps.foldersChanged(listOf(made.path))
             shell.refreshShowing { it == at }
             shell.selectAt(at, listOf(made.path))
             if (shell.here() == at) mutableState.update { it.copy(renaming = made, renameError = null) }

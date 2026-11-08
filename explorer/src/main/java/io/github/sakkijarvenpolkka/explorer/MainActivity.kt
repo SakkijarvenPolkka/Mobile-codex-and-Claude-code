@@ -57,7 +57,7 @@ class MainActivity : ComponentActivity() {
                     NioFsBackend, app.settings, app.volumes, app.volumes, mime, Dispatchers.IO, OpenWith(app, mime),
                     fileOps = app.fileOps, bin = app.bin, runner = app.runner,
                     opsNotice = app.opsNotice, clearOpsNotice = app::clearOpsNotice, thumbnails = app.thumbnails,
-                    builtInViewers = true, openSaves = app.openSaves,
+                    builtInViewers = true, openSaves = app.openSaves, foldersChanged = app::tellThePickerOf,
                 )
                 ExplorerViewModel(app, deps)
             }

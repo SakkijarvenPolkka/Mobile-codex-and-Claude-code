@@ -17,6 +17,7 @@ import io.github.sakkijarvenpolkka.explorer.fs.FileOps
 import io.github.sakkijarvenpolkka.explorer.fs.FsError
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
+import io.github.sakkijarvenpolkka.explorer.fs.OpKind
 import io.github.sakkijarvenpolkka.explorer.fs.OpResult
 import io.github.sakkijarvenpolkka.explorer.fs.OpenSaves
 import io.github.sakkijarvenpolkka.explorer.fs.OperationSpec
@@ -51,10 +52,12 @@ import io.github.sakkijarvenpolkka.explorer.provider.DocumentIds
 import io.github.sakkijarvenpolkka.explorer.provider.DocumentsNotifier
 import io.github.sakkijarvenpolkka.explorer.provider.ProviderHost
 import io.github.sakkijarvenpolkka.explorer.provider.ROOT_DOC_ID
+import io.github.sakkijarvenpolkka.explorer.provider.favoritePaths
 import io.github.sakkijarvenpolkka.explorer.provider.mountedRoots
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -170,12 +173,22 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     /** Where each volume was last mounted, by uuid: one that ejects has no root any more. Main thread only. */
     private val lastRoots = HashMap<String, Path>()
 
+    /**
+     * Telling the system file picker, as the process starts, to read the root it lists the app by again ([onCreate]);
+     * tests wait for it before they listen.
+     */
+    internal var rootsToldAtStart: Job? = null
+        private set
+
     override fun onCreate() {
         super.onCreate()
         volumes.start()
         stopOperationsOnEject()
         restartServiceForNewWork()
         tellThePickerOfVolumes()
+        // The access may have changed while no process ran: revoking it kills the app without a word, and the picker
+        // keeps the root it read. It reads the roots again, at its next call at the latest. Nothing is read for that.
+        rootsToldAtStart = appScope.launch(Dispatchers.IO) { DocumentsNotifier.roots(this@ExplorerApp) }
         // What a crash left behind is cleaned up, and the operations it interrupted are offered again.
         runner.loadInterrupted()
     }
@@ -284,11 +297,17 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     }
 
     /**
-     * Tells the system file picker whenever a volume comes or goes ([tellThePickerOfTheRoot]), on the default
+     * Tells the system file picker whenever a volume comes or goes ([tellThePickerOfTheRoot]), and that every folder it
+     * shows is to be read again (one on a drive that went says so then: the app's root stays), on the default
      * dispatcher. It listens from before [onCreate] returns, so that no event is missed.
      */
     private fun tellThePickerOfVolumes() {
-        appScope.launch(start = CoroutineStart.UNDISPATCHED) { volumes.events.collect { tellThePickerOfTheRoot() } }
+        appScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            volumes.events.collect {
+                tellThePickerOfTheRoot()
+                DocumentsNotifier.allDocuments(this@ExplorerApp)
+            }
+        }
     }
 
     /**
@@ -303,16 +322,45 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
 
     /**
      * Tells the system file picker that the folders [op] changed hold other items now: those its sources were in,
-     * and those of what it made, that the picker is shown (pick spec §3.5). A picker open on one does not go on
-     * showing what was there. Off the runner's lock, which [onFinished] is called with: naming a folder reads the
-     * file system.
+     * and those of what it made, that the picker is shown (pick spec §3.5); for one that stopped partway, also the
+     * folder it was putting items in (a copy, a move or an extraction) or the one its archive was going to (a
+     * compression); and the top folder when what it took away or made is a favorite or holds one. A picker open on
+     * one does not go on showing what was there. Off the runner's lock, which [onFinished] is called with: naming a
+     * folder reads the file system.
      */
     private fun tellThePickerOfFolders(op: FinishedOp) {
+        val spec = op.spec
         val made = (op.result as? OpResult.Done)?.created.orEmpty()
-        val paths = op.spec.sources.map { Paths.get(it) } + made
+        val sources = spec.sources.map { Paths.get(it) }
+        val target = spec.target?.let { Paths.get(it) }.takeIf { op.result !is OpResult.Done }
+        val into = target?.takeIf { spec.kind == OpKind.COPY || spec.kind == OpKind.MOVE || spec.kind == OpKind.EXTRACT }
+        val archive = target?.takeIf { spec.kind == OpKind.COMPRESS }
+        val gone = sources.takeIf { spec.kind in TAKES_AWAY }.orEmpty()
+        tellThePicker(sources + made + listOfNotNull(archive), moved = gone + made, into = into)
+    }
+
+    /**
+     * Tells the system file picker that the folders [paths] are in hold other items now, and its top folder too when
+     * one of them is a favorite or holds one: what the app renamed or made itself, outside its operations (the old
+     * name and the new). Off the main thread.
+     */
+    fun tellThePickerOf(paths: List<Path>) = tellThePicker(paths, moved = paths)
+
+    /**
+     * Tells the system file picker, off the main thread, that the folders [paths] are in hold other items now
+     * ([DocumentsNotifier.parentsOf]), and the folder [into] itself; and its top folder too when one of [moved]
+     * (renamed, moved, deleted or made) is a favorite or holds one ([DocumentsNotifier.favoritesAmong]).
+     */
+    private fun tellThePicker(paths: List<Path>, moved: List<Path>, into: Path? = null) {
         appScope.launch(Dispatchers.IO) {
-            val ids = DocumentIds(NioFsBackend) { mountedRoots(volumes.volumes.value) }
+            val mounted = volumes.volumes.value
+            val ids = DocumentIds(NioFsBackend) { mountedRoots(mounted) }
             DocumentsNotifier.parentsOf(this@ExplorerApp, ids, paths)
+            into?.let(ids::idOf)?.let { DocumentsNotifier.children(this@ExplorerApp, listOf(it)) }
+            if (moved.isNotEmpty()) {
+                val favorites = favoritePaths(settings.favorites.value, mounted)
+                DocumentsNotifier.favoritesAmong(this@ExplorerApp, moved, favorites)
+            }
         }
     }
 
@@ -326,4 +374,9 @@ class ExplorerApp : Application(), RunnerHost, FileOpsHost, ProviderHost {
     }
 
     private fun newId(): String = UUID.randomUUID().toString()
+
+    private companion object {
+        /** The operations whose sources are no longer where they were once done. */
+        val TAKES_AWAY = setOf(OpKind.MOVE, OpKind.DELETE_TO_BIN, OpKind.DELETE_PERMANENT)
+    }
 }

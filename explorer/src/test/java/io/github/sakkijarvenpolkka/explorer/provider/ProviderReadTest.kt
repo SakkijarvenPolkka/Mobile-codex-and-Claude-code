@@ -2,6 +2,7 @@
 package io.github.sakkijarvenpolkka.explorer.provider
 
 import android.Manifest
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ProviderInfo
@@ -9,17 +10,20 @@ import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.graphics.Bitmap
 import android.graphics.Point
+import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import androidx.test.core.app.ApplicationProvider
+import io.github.sakkijarvenpolkka.explorer.PickerChanges
 import io.github.sakkijarvenpolkka.explorer.R
 import io.github.sakkijarvenpolkka.explorer.data.Favorite
 import io.github.sakkijarvenpolkka.explorer.data.Recent
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.FileOps
+import io.github.sakkijarvenpolkka.explorer.fs.FsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.NameLabels
 import io.github.sakkijarvenpolkka.explorer.fs.NioFsBackend
 import io.github.sakkijarvenpolkka.explorer.fs.NoJournal
@@ -59,6 +63,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** What the system file picker reads through the app's documents provider (pick spec §3.1–§3.4). */
 @RunWith(RobolectricTestRunner::class)
@@ -131,7 +136,7 @@ class ProviderReadTest {
         isPrimary = false, isRemovable = true, fuseBacked = true, traits = VolumeTraits(fatNames = true),
     )
 
-    private fun deps(): ProviderDeps {
+    private fun deps(fs: FsBackend = NioFsBackend): ProviderDeps {
         // What only writing uses.
         val lookup = VolumeLookup { null }
         val bin = RecycleBin(NioFsBackend, lookup, clock = { 0L }, ids = { "id" })
@@ -141,7 +146,7 @@ class ProviderReadTest {
             override fun scan(paths: List<Path>) = Unit
         }
         return ProviderDeps(
-            NioFsBackend, { volumes }, settings, fileOps, bin, NoJournal, mediaScan, port, MimeResolver(),
+            fs, { volumes }, settings, fileOps, bin, NoJournal, mediaScan, port, MimeResolver(),
             granted = { granted }, internalLabel = { internalLabel }, io = Dispatchers.IO, ids = { "id" },
             openSaves = OpenSaves(), busy = { false },
         )
@@ -346,7 +351,9 @@ class ProviderReadTest {
     fun downloadAndVolumeRootsBlockTree() {
         Files.createDirectories(primary.resolve("Download"))
         Files.createDirectories(primary.resolve("Documents"))
+        Files.createDirectories(primary.resolve("Android/media"))
         Files.createDirectories(card.resolve("Download"))
+        Files.createDirectories(card.resolve("Android"))
         val folder = CREATE or DELETE or RENAME
 
         assertEquals(BLOCKS_TREE, document(ROOT_DOC_ID).flags())
@@ -357,8 +364,11 @@ class ProviderReadTest {
         // In any case: on the volume, which ignores it, that is the same folder.
         Files.createDirectories(primary.resolve("download"))
         assertEquals(folder or BLOCKS_TREE, document("primary:download").flags())
-        // Only the primary volume's Download.
-        assertEquals(folder, document("$CARD:Download").flags())
+        // At the top of every drive, Download and Android; not what is in them.
+        assertEquals(folder or BLOCKS_TREE, document("$CARD:Download").flags())
+        assertEquals(folder or BLOCKS_TREE, document("primary:Android").flags())
+        assertEquals(folder or BLOCKS_TREE, document("$CARD:Android").flags())
+        assertEquals(folder, document("primary:Android/media").flags())
 
         // As the folder of the favorites and the drives lists them, and the primary volume's root.
         settings.setFavorites(listOf(Favorite("primary", "Download", "Download")))
@@ -453,6 +463,132 @@ class ProviderReadTest {
         // Of no other root.
         assertThrows(FileNotFoundException::class.java) { provider.queryRecentDocuments("other", null) }
         assertThrows(FileNotFoundException::class.java) { provider.querySearchDocuments("other", "a", null) }
+    }
+
+    @Test
+    fun thumbnailSizeIsBounded() {
+        write(primary, "a.jpg")
+        // (The fake makes none here: only the size it is asked for matters.)
+        port.makes = false
+
+        // A huge size asked for is made at most 2048 px wide: a whole picture decoded on a binder thread could
+        // take all the memory there is.
+        assertThrows(FileNotFoundException::class.java) {
+            provider.openDocumentThumbnail("primary:a.jpg", Point(10_000, 10_000), null)
+        }
+        assertEquals(listOf(primary.resolve("a.jpg") to 2048), port.asked.toList())
+        // No size at all: no thumbnail, and the port is not asked.
+        for (hint in listOf(Point(0, 0), Point(-5, -1))) {
+            assertThrows("$hint", FileNotFoundException::class.java) {
+                provider.openDocumentThumbnail("primary:a.jpg", hint, null)
+            }
+        }
+        assertEquals(1, port.asked.size)
+    }
+
+    @Test
+    fun childrenAreNamedWithoutWalkingEachOne() {
+        for (i in 1..50) write(primary, "many/f$i.txt")
+        Files.createDirectories(primary.resolve("many/sub"))
+        val walks = AtomicInteger()
+        val counting = object : FsBackend by NioFsBackend {
+            override fun realPath(path: Path): Path = NioFsBackend.realPath(path).also { walks.incrementAndGet() }
+        }
+        ProviderDeps.override = deps(counting)
+
+        assertEquals(51, children("primary:many").size)
+        // The folder's own walk, and its volume's root once: a listed file or folder is no link, so where it really
+        // is follows from its name.
+        assertTrue("${walks.get()} walks", walks.get() <= 4)
+    }
+
+    @Test
+    fun documentsRefusedWithoutPermission() {
+        write(primary, "a.jpg")
+        Files.createDirectories(primary.resolve("dir"))
+        settings.addRecent(Recent("primary", "a.jpg", openedAt = 1))
+        val picker = PickerChanges(ApplicationProvider.getApplicationContext())
+        // Revoked in the settings: the system kills the app, and keeps the root it had listed.
+        granted = false
+
+        val calls = listOf<Pair<String, () -> Any?>>(
+            "document" to { provider.queryDocument("primary:a.jpg", null) },
+            "top" to { provider.queryDocument(ROOT_DOC_ID, null) },
+            "favorites and drives" to { provider.queryChildDocuments(ROOT_DOC_ID, null, null as String?) },
+            "children" to { provider.queryChildDocuments("primary:", null, null as String?) },
+            "type" to { provider.getDocumentType("primary:a.jpg") },
+            "read" to { provider.openDocument("primary:a.jpg", "r", null) },
+            "thumbnail" to { provider.openDocumentThumbnail("primary:a.jpg", Point(64, 64), null) },
+            "recents" to { provider.queryRecentDocuments(ROOT_ID, null) },
+            "search" to { provider.querySearchDocuments(ROOT_ID, "a", null) },
+            "search with arguments" to { provider.querySearchDocuments(ROOT_ID, null, nameQuery("a")) },
+            "create" to { provider.createDocument("primary:", "text/plain", "b") },
+            "rename" to { provider.renameDocument("primary:dir", "x") },
+            "delete" to { provider.deleteDocument("primary:dir") },
+        )
+        for ((call, run) in calls) {
+            assertThrows(call, FileNotFoundException::class.java) { run() }
+            // The picker is told to read the roots again, and finds none.
+            assertEquals(call, listOf(PickerChanges.ROOTS), picker.take())
+        }
+        assertFalse(provider.isChildDocument("primary:", "primary:a.jpg"))
+        assertEquals(listOf(PickerChanges.ROOTS), picker.take())
+
+        assertEquals(listOf("a.jpg", "dir"), NioFsBackend.list(primary).map { it.fileName.toString() }.sorted())
+        assertEquals(emptyList<Map<String, Any?>>(), rowsOf(provider.queryRoots(null)))
+    }
+
+    @Test
+    fun searchHonoursThePickersArguments() {
+        write(primary, "report.jpg", "j")
+        write(primary, "report.pdf", "p")
+        write(primary, "report.zip", "z")
+        Files.write(primary.resolve("report.bin"), ByteArray(2048))
+        Files.createDirectories(primary.resolve("reports"))
+        // A USB drive Android mounts as it is: the media store does not index it, so its media is the app's to show.
+        val usb = Files.createDirectory(folder.root.toPath().toRealPath().resolve("usb"))
+        write(usb, "report.png", "u")
+        volumes = volumes + Volume(
+            "0000-USB1", "USB", usb, VolumeState.MOUNTED,
+            isPrimary = false, isRemovable = true, fuseBacked = false, traits = VolumeTraits(fatNames = true),
+        )
+        for (path in listOf("report.jpg", "report.pdf", "report.bin", "reports")) {
+            Files.setLastModifiedTime(primary.resolve(path), FileTime.fromMillis(SUB_TIME))
+        }
+        Files.setLastModifiedTime(primary.resolve("report.zip"), FileTime.fromMillis(A_TIME))
+        Files.setLastModifiedTime(usb.resolve("report.png"), FileTime.fromMillis(SUB_TIME))
+
+        // The picker's combined Recent view: what the media store's own roots list there (pictures, videos, music,
+        // documents) is left out, on the drives it indexes.
+        val (withoutMedia, honored) = searched(nameQuery("report").apply { putBoolean(EXCLUDE_MEDIA, true) })
+        assertEquals(setOf("report.zip", "report.bin", "reports", "report.png"), withoutMedia)
+        assertEquals(setOf(DISPLAY_NAME, EXCLUDE_MEDIA), honored)
+        // Its chips: types (no folder then), a size, a time.
+        val images = searched(nameQuery("report").apply { putStringArray(MIME_TYPES, arrayOf("image/*")) })
+        assertEquals(setOf("report.jpg", "report.png") to setOf(DISPLAY_NAME, MIME_TYPES), images)
+        val large = searched(nameQuery("report").apply { putLong(SIZE_OVER, 1024) })
+        assertEquals(setOf("report.bin") to setOf(DISPLAY_NAME, SIZE_OVER), large)
+        val recent = searched(nameQuery("report").apply { putLong(MODIFIED_AFTER, (SUB_TIME + A_TIME) / 2) })
+        assertEquals(setOf("report.zip") to setOf(DISPLAY_NAME, MODIFIED_AFTER), recent)
+        // A hit they leave out does not count toward the cap: 200 of those they keep come.
+        for (i in 1..250) {
+            write(primary, "many/report-$i.jpg", "")
+            write(primary, "many/report-$i.txt", "")
+        }
+        val texts = searched(nameQuery("report").apply { putStringArray(MIME_TYPES, arrayOf("text/plain")) }).first
+        assertEquals(200, texts.size)
+        assertTrue(texts.all { it.toString().endsWith(".txt") })
+    }
+
+    /** A search for files named like [name], with no other argument. */
+    private fun nameQuery(name: String) = Bundle().apply { putString(DISPLAY_NAME, name) }
+
+    /** The names a search with [args] finds, as the picker asks (the provider's query), and the arguments honoured. */
+    private fun searched(args: Bundle): Pair<Set<Any?>, Set<String>> {
+        val uri = DocumentsContract.buildSearchDocumentsUri(AUTHORITY, ROOT_ID, "")
+        val cursor = checkNotNull(provider.query(uri, null, args, null))
+        val honored = cursor.extras.getStringArray(ContentResolver.EXTRA_HONORED_ARGS).orEmpty().toSet()
+        return rowsOf(cursor).column(NAME).toSet() to honored
     }
 
     @Test
@@ -560,6 +696,12 @@ class ProviderReadTest {
         const val INTERNAL = "내부 저장소"
         const val A_TIME = 1_700_000_000_000L
         const val SUB_TIME = 1_600_000_000_000L
+
+        const val DISPLAY_NAME = DocumentsContract.QUERY_ARG_DISPLAY_NAME
+        const val EXCLUDE_MEDIA = DocumentsContract.QUERY_ARG_EXCLUDE_MEDIA
+        const val MIME_TYPES = DocumentsContract.QUERY_ARG_MIME_TYPES
+        const val SIZE_OVER = DocumentsContract.QUERY_ARG_FILE_SIZE_OVER
+        const val MODIFIED_AFTER = DocumentsContract.QUERY_ARG_LAST_MODIFIED_AFTER
 
         const val ID = Document.COLUMN_DOCUMENT_ID
         const val NAME = Document.COLUMN_DISPLAY_NAME

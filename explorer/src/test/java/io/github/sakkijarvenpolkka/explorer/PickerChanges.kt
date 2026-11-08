@@ -5,18 +5,21 @@ import android.content.Context
 import android.database.ContentObserver
 import android.net.Uri
 import android.provider.DocumentsContract
+import kotlinx.coroutines.runBlocking
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 
 /**
  * The changes the system file picker hears of from the app (its provider's root and folders), heard as the picker
- * hears them, by observing the provider's authority, from when this is made.
+ * hears them, by observing the provider's authority, from when this is made: once the app has told the picker of its
+ * own start ([ExplorerApp.rootsToldAtStart], off the main thread), so that a test hears only what it does.
  */
 internal class PickerChanges(context: Context) : ContentObserver(null) {
 
     private val heard = CopyOnWriteArrayList<Uri>()
 
     init {
+        (context.applicationContext as? ExplorerApp)?.rootsToldAtStart?.let { runBlocking { it.join() } }
         context.contentResolver.registerContentObserver(Uri.parse("content://$AUTHORITY"), true, this)
     }
 
@@ -45,5 +48,8 @@ internal class PickerChanges(context: Context) : ContentObserver(null) {
 
         /** The folder [documentId] holds other items. */
         fun childrenOf(documentId: String): Uri = DocumentsContract.buildChildDocumentsUri(AUTHORITY, documentId)
+
+        /** Every document may have changed: each folder the picker shows reads itself again. */
+        val DOCUMENTS: Uri = Uri.parse("content://$AUTHORITY/document")
     }
 }

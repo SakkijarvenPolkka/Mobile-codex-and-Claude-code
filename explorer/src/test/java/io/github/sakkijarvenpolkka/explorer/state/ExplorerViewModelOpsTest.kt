@@ -99,7 +99,8 @@ class ExplorerViewModelOpsTest {
      * A view model on [root] as the primary volume and [extra] volumes, with the app's parts over them on
      * [fs], and the app's [notice] of the operations; [beforeViewModel] runs once the runner is there. The
      * Recycle Bin finds the volumes through [binLookup] of them. Starting the app again does [restart]. Other apps
-     * have [openSaves] in flight through the system file picker.
+     * have [openSaves] in flight through the system file picker, which hears of what the shell changes itself through
+     * [foldersChanged].
      */
     private fun start(
         extra: List<Volume> = emptyList(),
@@ -108,6 +109,7 @@ class ExplorerViewModelOpsTest {
         binLookup: (VolumeLookup) -> VolumeLookup = { it },
         restart: (Application) -> Unit = {},
         openSaves: OpenSaves? = null,
+        foldersChanged: (List<Path>) -> Unit = {},
         beforeViewModel: () -> Unit = {},
     ) {
         val volumes = FakeVolumes(FakeVolumes.primary(root), *extra.toTypedArray())
@@ -120,6 +122,7 @@ class ExplorerViewModelOpsTest {
             fs, settings, volumes, volumes, MimeResolver(), io,
             fileOps = fileOps, bin = bin, runner = runner,
             opsNotice = notice, clearOpsNotice = { notice.value = null }, restart = restart, openSaves = openSaves,
+            foldersChanged = foldersChanged,
         )
         beforeViewModel()
         vm = ExplorerViewModel(app, deps)
@@ -344,6 +347,25 @@ class ExplorerViewModelOpsTest {
         assertTrue(Files.isDirectory(root.resolve("docs")))
         vm.startRename(entry("b.txt"))
         assertEquals(entry("b.txt"), ui.renaming)
+    }
+
+    @Test
+    fun renameAndNewItemsTellTheSystemPicker() {
+        file("a.txt")
+        val told = ArrayList<List<Path>>()
+        start(foldersChanged = { told += it })
+
+        // Not through the runner, whose operations tell it themselves: the picker hears of the old name and the new.
+        vm.commitRename(entry("a.txt"), "b.txt")
+        drain()
+        assertEquals(listOf(listOf(root.resolve("a.txt"), root.resolve("b.txt"))), told)
+        told.clear()
+        vm.newFolder()
+        drain()
+        vm.cancelRename()
+        vm.newTextFile()
+        drain()
+        assertEquals(listOf(listOf(root.resolve("New folder")), listOf(root.resolve("New Text Document.txt"))), told)
     }
 
     @Test

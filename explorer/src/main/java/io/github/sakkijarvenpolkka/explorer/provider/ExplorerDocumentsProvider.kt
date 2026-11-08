@@ -9,11 +9,13 @@
  */
 package io.github.sakkijarvenpolkka.explorer.provider
 
+import android.content.ContentResolver
 import android.content.res.AssetFileDescriptor
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.graphics.Bitmap
 import android.graphics.Point
+import android.os.Bundle
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.HandlerThread
@@ -94,6 +96,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     }
 
     override fun queryDocument(documentId: String, projection: Array<String>?): Cursor {
+        requireAccess()
         if (documentId == ROOT_DOC_ID) {
             return MatrixCursor(projection ?: DocumentRows.DOCUMENT_COLUMNS).also(::addTop)
         }
@@ -103,6 +106,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /** The items of a folder, in no order (the picker sorts them); the top folder's are the favorites and drives. */
     override fun queryChildDocuments(parentDocumentId: String, projection: Array<String>?, sortOrder: String?): Cursor {
+        requireAccess()
         val context = requireContext()
         val mounted = Mounted(deps)
         // Read before the cursor is made: a folder that is not there leaves none open.
@@ -119,18 +123,19 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         return cursor
     }
 
-    override fun getDocumentType(documentId: String): String = if (documentId == ROOT_DOC_ID) {
-        Document.MIME_TYPE_DIR
-    } else {
-        DocumentRows.mimeOf(Mounted(deps).entryOf(documentId, Wait.SAVE))
+    override fun getDocumentType(documentId: String): String {
+        requireAccess()
+        if (documentId == ROOT_DOC_ID) return Document.MIME_TYPE_DIR
+        return DocumentRows.mimeOf(Mounted(deps).entryOf(documentId, Wait.SAVE))
     }
 
     /**
      * Whether [documentId] is in the folder [parentDocumentId], or is it: both are documents on the same volume
      * and the one really is under the other, wherever the links on their ways lead. The top folder holds none:
-     * no app is given it.
+     * no app is given it. Nothing is, without all files access ([hasAccess]).
      */
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
+        if (!hasAccess()) return false
         if (parentDocumentId == ROOT_DOC_ID) return false
         if (parentDocumentId.substringBefore(':') != documentId.substringBefore(':')) return false
         val ids = Mounted(deps).ids
@@ -158,6 +163,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * folder again and the media store the file ([changed]).
      */
     override fun openDocument(documentId: String, mode: String, signal: CancellationSignal?): ParcelFileDescriptor {
+        requireAccess()
         val mounted = Mounted(deps)
         if (mode == "r") {
             val file = mounted.fileOf(documentId)
@@ -177,21 +183,26 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
     }
 
     /**
-     * The thumbnail of a picture or a video, as big as the larger side of [sizeHint], made by the app's port and
-     * written as a JPEG into a pipe the picker reads (no temporary file). None of anything else: the picker
-     * shows its icon then.
+     * The thumbnail of a picture or a video, as big as the larger side of [sizeHint] but [MAX_THUMBNAIL_PX] at most,
+     * made by the app's port and written as a JPEG into a pipe the picker reads (no temporary file). None of anything
+     * else, nor for a size of nothing: the picker shows its icon then.
      */
     override fun openDocumentThumbnail(
         documentId: String,
         sizeHint: Point,
         signal: CancellationSignal?,
     ): AssetFileDescriptor {
+        requireAccess()
+        val sizePx = max(sizeHint.x, sizeHint.y)
+        if (sizePx <= 0) throw notFound("no thumbnail of no size", documentId)
         val entry = Mounted(deps).entryOf(documentId, Wait.SAVE)
         // The files whose rows have the flag (DocumentRows.flagsFor).
         val kind = (if (entry.kind == EntryKind.FILE) pictureOrVideoKind(entry.mime) else null)
             ?: throw notFound("no thumbnail", documentId)
         val bitmap = try {
-            deps.thumbnails.load(entry.path, kind, max(sizeHint.x, sizeHint.y), signal ?: CancellationSignal())
+            // A whole picture decoded on a binder thread could take all the memory there is.
+            val size = sizePx.coerceAtMost(MAX_THUMBNAIL_PX)
+            deps.thumbnails.load(entry.path, kind, size, signal ?: CancellationSignal())
         } catch (e: IOException) {
             throw notFound("no thumbnail", documentId, e)
         } ?: throw notFound("no thumbnail", documentId)
@@ -202,6 +213,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /** The files the app opened last that are there now, newest first. */
     override fun queryRecentDocuments(rootId: String, projection: Array<String>?): Cursor {
+        requireAccess()
         requireRoot(rootId)
         val mounted = Mounted(deps)
         val files = deps.settings.recents.value.mapNotNull { recent ->
@@ -211,26 +223,43 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         return mounted.rowsOf(files, projection)
     }
 
-    /**
-     * The items whose names match [query] as the app's search matches them, on every mounted volume: at most
-     * [SEARCH_LIMIT], and what is found in [SEARCH_TIME_MS] if the search takes longer.
-     */
+    /** The items whose names match [query] as the app's search matches them, as the search with arguments finds. */
     override fun querySearchDocuments(rootId: String, query: String, projection: Array<String>?): Cursor {
+        val args = Bundle().apply { putString(DocumentsContract.QUERY_ARG_DISPLAY_NAME, query) }
+        return querySearchDocuments(rootId, projection, args)
+    }
+
+    /**
+     * The items whose names match the name [queryArgs] give as the app's search matches them, on every mounted volume,
+     * and that the other arguments the picker gives keep ([SearchArgs.keeps]): at most [SEARCH_LIMIT] of those, and
+     * what is found in [SEARCH_TIME_MS] if the search takes longer. The cursor tells the picker which arguments were
+     * applied (`EXTRA_HONORED_ARGS`).
+     */
+    override fun querySearchDocuments(rootId: String, projection: Array<String>?, queryArgs: Bundle): Cursor {
+        requireAccess()
         requireRoot(rootId)
+        val search = SearchArgs.of(queryArgs)
         val mounted = Mounted(deps)
         val found = LinkedHashMap<String, FileEntry>()
         // A blank query would find everything.
-        if (query.isNotBlank()) {
+        if (search.name.isNotBlank()) {
             runBlocking(deps.io) {
                 withTimeoutOrNull(SEARCH_TIME_MS) {
                     for (volume in mounted.roots) {
                         if (found.size == SEARCH_LIMIT) break
-                        mounted.searchUnder(volume.root, query, SEARCH_LIMIT, found)
+                        val indexed = mounted.isFuseBacked(volume.root)
+                        mounted.searchUnder(volume.root, search.name, SEARCH_LIMIT, found) { search.keeps(it, indexed) }
                     }
                 }
             }
         }
-        return mounted.rowsOf(found.map { (id, entry) -> Found(id, entry) }, projection)
+        val cursor = mounted.rowsOf(found.map { (id, entry) -> Found(id, entry) }, projection)
+        if (search.honored.isNotEmpty()) {
+            cursor.extras = Bundle().apply {
+                putStringArray(ContentResolver.EXTRA_HONORED_ARGS, search.honored.toTypedArray())
+            }
+        }
+        return cursor
     }
 
     /**
@@ -241,6 +270,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * claims its name, so it never replaces anything.
      */
     override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
+        requireAccess()
         val mounted = Mounted(deps)
         val parent = mounted.changeable(parentDocumentId)
         if (parent.kind != EntryKind.DIR) throw notFound("not a folder", parentDocumentId)
@@ -283,6 +313,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * new id it may not open.
      */
     override fun renameDocument(documentId: String, displayName: String): String? {
+        requireAccess()
         val mounted = Mounted(deps)
         val item = mounted.changeableItem(documentId)
         val renamed = try {
@@ -297,7 +328,7 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
             throw notFound("withheld", documentId)
         }
         if (id == documentId) return null
-        changed(mounted, renamed, scan = false)
+        changed(mounted, renamed, scan = false, gone = item.path)
         return id
     }
 
@@ -307,11 +338,12 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
      * be asked, so what was asked for is done (pick spec §3.5). It is no longer granted to any app.
      */
     override fun deleteDocument(documentId: String) {
+        requireAccess()
         val mounted = Mounted(deps)
         val path = mounted.changeableItem(documentId).path
         val failure = runBlocking(deps.io) { binOrDelete(path) }
         // Even a deletion that failed partway changed the folder.
-        changed(mounted, path, scan = false, revoked = documentId.takeIf { failure == null })
+        changed(mounted, path, scan = false, revoked = documentId.takeIf { failure == null }, gone = path)
         if (failure != null) throw notFound("not deleted", documentId, failure)
     }
 
@@ -422,12 +454,15 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     /**
      * What follows a change the picker made at [path] (pick spec §3.5): the picker is told that the folder it is in
-     * holds other items now; if [scan], the media store scans [path], where its volume is served through FUSE; and
-     * no app keeps its grant of [revoked], a document deleted. (The system revokes a renamed document's old id
-     * itself: [renameDocument].)
+     * holds other items now, and the top folder too when [path], or what is [gone] from where it was (renamed or
+     * deleted), is a favorite or holds one ([DocumentsNotifier.favoritesAmong]); if [scan], the media store scans
+     * [path], where its volume is served through FUSE; and no app keeps its grant of [revoked], a document deleted.
+     * (The system revokes a renamed document's old id itself: [renameDocument].)
      */
-    private fun changed(mounted: Mounted, path: Path, scan: Boolean, revoked: String? = null) {
-        DocumentsNotifier.parentsOf(requireContext(), mounted.ids, listOf(path))
+    private fun changed(mounted: Mounted, path: Path, scan: Boolean, revoked: String? = null, gone: Path? = null) {
+        val context = requireContext()
+        DocumentsNotifier.parentsOf(context, mounted.ids, listOf(path))
+        DocumentsNotifier.favoritesAmong(context, listOfNotNull(path, gone), mounted.favoritePaths())
         if (scan && mounted.isFuseBacked(path)) deps.mediaScan.scan(listOf(path))
         if (revoked != null) revokeDocumentPermission(revoked)
     }
@@ -453,6 +488,22 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
 
     private fun requireRoot(rootId: String) {
         if (rootId != ROOT_ID) throw FileNotFoundException("no such root: $rootId")
+    }
+
+    /**
+     * Whether the app has all files access now. Without it, the app shows no files, nor does the picker: a picker that
+     * still lists the app's root (it keeps the roots it read, and revoking the access kills the app without a word) is
+     * told to read the roots again, which drops it.
+     */
+    private fun hasAccess(): Boolean {
+        if (deps.granted()) return true
+        DocumentsNotifier.roots(requireContext())
+        return false
+    }
+
+    /** Refuses a call without all files access ([hasAccess]). */
+    private fun requireAccess() {
+        if (!hasAccess()) throw FileNotFoundException("no all files access")
     }
 
     /** Writes [bitmap] into the pipe [sink] as a JPEG and closes it: with an error, if none could be made. */
@@ -486,6 +537,9 @@ class ExplorerDocumentsProvider : DocumentsProvider() {
         private const val SEARCH_TIME_MS = 5_000L
 
         private const val JPEG_QUALITY = 85
+
+        /** The largest thumbnail made, in pixels along its longer side. */
+        private const val MAX_THUMBNAIL_PX = 2048
 
         private const val TAG = "ExplorerDocuments"
 

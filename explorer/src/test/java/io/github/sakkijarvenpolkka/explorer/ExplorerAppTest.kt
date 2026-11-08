@@ -323,13 +323,76 @@ class ExplorerAppTest {
             )
         }
         val pinned = { app.settings.setFavorites(listOf(Favorite("primary", "Download", "Download"))) }
+        // Its root, and the favorites and the drives in it: told off the main thread.
+        val top = listOf(PickerChanges.ROOTS, PickerChanges.childrenOf("root"))
 
-        for (change in listOf(mounted, { eject(card) }, pinned)) {
+        // A drive that comes or goes: every folder the picker shows reads itself again too (one shown on a drive
+        // that went says it is not there).
+        val drive = top + PickerChanges.DOCUMENTS
+        for ((change, heard) in listOf(mounted to drive, { eject(card) } to drive, pinned to top)) {
             change()
             shadowOf(Looper.getMainLooper()).idle()
-            // Its root, and the favorites and the drives in it: told off the main thread.
-            assertEquals(listOf(PickerChanges.ROOTS, PickerChanges.childrenOf("root")), picker.take(2))
+            assertEquals(heard, picker.take(heard.size))
         }
+    }
+
+    @Test
+    fun processStartTellsThePickerOfItsRoot() {
+        val picker = PickerChanges(app)
+
+        // Started for the picker's provider, as after all files access was revoked in the settings (which kills the
+        // app): the picker reads the roots again, and drops the app's at once.
+        val restarted = startAgain()
+        runBlocking { withTimeout(10_000) { restarted.rootsToldAtStart?.join() } }
+
+        assertEquals(listOf(PickerChanges.ROOTS), picker.take())
+    }
+
+    @Test
+    fun deletingAFavoriteTellsTheTopFolder() {
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        mount(card)
+        val docs = write(card, "docs/a.txt", "a").parent
+        val picker = PickerChanges(app)
+        app.settings.setFavorites(listOf(Favorite("1A2B-3C4D", "docs", "Docs")))
+        shadowOf(Looper.getMainLooper()).idle()
+        picker.take(2)
+
+        run(OperationSpec("t1", OpKind.DELETE_TO_BIN, listOf(docs.toString())))
+
+        // Its folder, and the top folder, which listed it.
+        val heard = setOf(PickerChanges.childrenOf("1A2B-3C4D:"), PickerChanges.childrenOf("root"))
+        assertEquals(heard, picker.take(2).toSet())
+    }
+
+    @Test
+    fun stoppedOperationsTellThePickerOfTheirTarget() {
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        mount(card)
+        val a = write(card, "a.txt", "new")
+        val dst = write(card, "dst/a.txt", "old").parent
+        app.runner.submit(OperationSpec("t1", OpKind.COPY, listOf(a.toString()), dst.toString()))
+        runBlocking { withTimeout(10_000) { app.runner.state.first { it.pending != null } } }
+        val picker = PickerChanges(app)
+
+        cancel("t1")
+
+        // What it put there before it stopped is shown: the folder it went into is read again, as its source's.
+        val heard = setOf(PickerChanges.childrenOf("1A2B-3C4D:"), PickerChanges.childrenOf("1A2B-3C4D:dst"))
+        assertEquals(heard, picker.take(2).toSet())
+    }
+
+    @Test
+    fun whatTheAppChangesItselfTellsThePicker() {
+        val card = Files.createDirectory(folder.root.toPath().toRealPath().resolve("card"))
+        mount(card)
+        val docs = write(card, "docs/a.txt", "a").parent
+        val picker = PickerChanges(app)
+
+        // A rename in the app, from a.txt to b.txt: one folder.
+        app.tellThePickerOf(listOf(docs.resolve("a.txt"), docs.resolve("b.txt")))
+
+        assertEquals(listOf(PickerChanges.childrenOf("1A2B-3C4D:docs")), picker.take(1))
     }
 
     @Test

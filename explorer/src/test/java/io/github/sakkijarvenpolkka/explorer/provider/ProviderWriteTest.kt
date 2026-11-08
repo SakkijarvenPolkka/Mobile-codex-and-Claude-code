@@ -16,6 +16,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.explorer.PickerChanges
+import io.github.sakkijarvenpolkka.explorer.data.Favorite
 import io.github.sakkijarvenpolkka.explorer.data.SettingsStore
 import io.github.sakkijarvenpolkka.explorer.fs.BinItem
 import io.github.sakkijarvenpolkka.explorer.fs.DELETED_AT
@@ -97,6 +98,9 @@ class ProviderWriteTest {
 
     /** The saves other apps have in flight, as the app keeps them. */
     private var saves = OpenSaves()
+
+    /** The app's settings: its favorites. */
+    private val settings = SettingsStore(null)
 
     /** The operation the app is running, if any. */
     @Volatile
@@ -208,7 +212,7 @@ class ProviderWriteTest {
             override fun availableBytes(path: Path): Long = room ?: throw IOException("statvfs: Input/output error")
         }
         return ProviderDeps(
-            provided, { volumes }, SettingsStore(null), fileOps, bin, journal, mediaScan, thumbnails, MimeResolver(),
+            provided, { volumes }, settings, fileOps, bin, journal, mediaScan, thumbnails, MimeResolver(),
             granted = { true }, internalLabel = { "내부 저장소" }, io = Dispatchers.IO, ids = { "id" },
             openSaves = saves, busy = { running?.uses(it) == true },
         )
@@ -758,6 +762,24 @@ class ProviderWriteTest {
         assertEquals(listOf("b.txt"), names(primary.resolve("docs")))
         assertEquals("docs/b.txt", read(b))
         assertEquals(listOf(childrenOf("primary:")), picker.take())
+    }
+
+    @Test
+    fun renamingOrDeletingAFavoriteTellsTheTopFolder() {
+        write(card, "docs/sub/a.txt")
+        write(card, "plain/b.txt")
+        settings.setFavorites(listOf(Favorite(CARD, "docs", "Docs")))
+
+        // The top folder lists the favorites: renamed, one is not there any more.
+        assertEquals("$CARD:papers", provider.renameDocument("$CARD:docs", "papers"))
+        assertEquals(setOf(childrenOf("$CARD:"), childrenOf(ROOT_DOC_ID)), picker.take().toSet())
+        // Nor is one that was in a folder deleted.
+        settings.setFavorites(listOf(Favorite(CARD, "papers/sub", "Sub")))
+        provider.deleteDocument("$CARD:papers")
+        assertEquals(setOf(childrenOf("$CARD:"), childrenOf(ROOT_DOC_ID)), picker.take().toSet())
+        // A folder that holds none is only read again where it is.
+        provider.renameDocument("$CARD:plain", "plainer")
+        assertEquals(listOf(childrenOf("$CARD:")), picker.take())
     }
 
     @Test

@@ -25,9 +25,13 @@ internal fun notFound(why: String, id: String, cause: IOException? = null): File
 /**
  * The ids of the files and folders on the [mounted] volumes, and the paths they name. An id is
  * `<uuid>:<rel>`: the volume's [VolumeRoot.uuid], then the path from its root with `/` between the names
- * (empty for the root itself). It is split at its first colon only, since names may have more.
+ * (empty for the root itself). It is split at its first colon only, since names may have more. An instance
+ * serves one call, on one thread: it reads each volume root's real path once.
  */
 class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<VolumeRoot>) {
+
+    /** The real path of each volume's root, by its root, as first read. */
+    private val realRoots = HashMap<Path, Path>()
 
     /**
      * The path [id] names: its volume's root, then its names. Throws [FileNotFoundException] unless, in order:
@@ -61,12 +65,36 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
         return path
     }
 
-    /** The id [resolve] gives [path] back for, or null if there is none: on no mounted volume, or against a rule. */
+    /**
+     * The id [resolve] gives [path] back for, or null if there is none: on no mounted volume, or against a rule. What
+     * its names alone break is told before the file system is asked where it leads.
+     */
     fun idOf(path: Path): String? {
         val volume = volumeOf(path) ?: return null
         val names = path.drop(volume.root.nameCount).map { it.toString() }
-        if (!names.all(::isPlainName) || refusal(volume, names, path) != null) return null
-        return volume.uuid + ":" + names.joinToString("/")
+        if (!names.all(::isPlainName) || withheldByName(volume, names, path)) return null
+        if (refusal(volume, names, path) != null) return null
+        return idFor(volume, names)
+    }
+
+    /**
+     * The id of [name] in the folder [parent], which [resolve] gave and whose real path is [realParent], for an item
+     * listed there that is itself a file or a folder (not a link: a listing reads kinds without following links), or
+     * null: [resolve]'s rules hold for it as for [idOf], but where it leads follows from its name, unasked.
+     */
+    fun childIdOf(parent: Path, realParent: Path, name: String): String? {
+        val path = parent.resolve(name)
+        val volume = volumeOf(path) ?: return null
+        val names = path.drop(volume.root.nameCount).map { it.toString() }
+        if (!names.all(::isPlainName) || withheldByName(volume, names, path)) return null
+        val realRoot = try {
+            realRootOf(volume)
+        } catch (e: IOException) {
+            return null
+        }
+        val real = realParent.resolve(name)
+        if (!real.startsWith(realRoot) || isRestrictedAppDataPath(realRoot, real, obbAllowed = false)) return null
+        return idFor(volume, names)
     }
 
     /** The mounted volume whose root is the longest start of [path] (by whole names, as written), or null. */
@@ -75,10 +103,19 @@ class DocumentIds(private val fs: FsBackend, private val mounted: () -> List<Vol
     private fun volumeOf(path: Path, volumes: List<VolumeRoot>): VolumeRoot? =
         volumes.filter { path.startsWith(it.root) }.maxByOrNull { it.root.nameCount }
 
+    private fun idFor(volume: VolumeRoot, names: List<String>): String = volume.uuid + ":" + names.joinToString("/")
+
+    /** Whether [path], the [names] under [volume]'s root, breaks rule 4 or 5 of [resolve] by those names alone. */
+    private fun withheldByName(volume: VolumeRoot, names: List<String>, path: Path): Boolean =
+        names.any(HiddenNames::isInternal) || isRestrictedAppDataPath(volume.root, path, obbAllowed = false)
+
+    /** The real path of [volume]'s root, read once. */
+    private fun realRootOf(volume: VolumeRoot): Path = realRoots.getOrPut(volume.root) { fs.realPath(volume.root) }
+
     /** Why [path], the [names] under [volume]'s root, breaks rule 3, 4 or 5 of [resolve]; null if it keeps them. */
     private fun refusal(volume: VolumeRoot, names: List<String>, path: Path): Refusal? {
         val (realRoot, real) = try {
-            fs.realPath(volume.root) to fs.realPath(path)
+            realRootOf(volume) to fs.realPath(path)
         } catch (e: IOException) {
             return Refusal("not found", e)
         }
