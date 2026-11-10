@@ -1,0 +1,5713 @@
+{
+ "about": "Reference values for the chaos-graph tests. Computed on 2026-11-10 by research scripts (Python, numba, mpmath). Each value was checked by the script that produced it; the planned second, independent recomputation did not run, so the TypeScript implementation's tests are the independent check. Lyapunov exponents use natural logarithms. Some systems here are outside the first release.",
+ "flows": {
+  "lorenz": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "sigma": 10.0,
+    "rho": 28.0,
+    "beta": 2.6666666666666665
+   },
+   "rhs": [
+    "sigma*(y - x)",
+    "x*(rho - z) - y",
+    "x*y - beta*z"
+   ],
+   "ic": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "dt": 0.005,
+   "measured": {
+    "dt": 0.005,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.9056425531494556,
+     3.900786236266773e-06,
+     -14.572306919241123
+    ],
+    "lyapunovSum": -13.666660465305432,
+    "meanDivergence": -13.66666666312025,
+    "kaplanYorke": 2.0621484613901377,
+    "mins": [
+     -19.556030114648582,
+     -27.142720887804014,
+     0.7516138357304385
+    ],
+    "maxs": [
+     19.628441221217308,
+     27.31011761836084,
+     47.967933362054325
+    ],
+    "mean": [
+     -0.036724844184411,
+     -0.03670795767592109,
+     23.549694873813817
+    ],
+    "le1ShortRuns": {
+     "min": 0.9024044205180769,
+     "max": 0.9073867644724308,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 78.66059605752537,
+    "vmax": 396.9593800813083,
+    "vrms": 111.6635341806125,
+    "period": 3.4364261168384878,
+    "dt_smooth": 0.003963155930030599
+   }
+  },
+  "rossler": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 0.2,
+    "b": 0.2,
+    "c": 5.7
+   },
+   "rhs": [
+    "-y - z",
+    "x + a*y",
+    "b + z*(x - c)"
+   ],
+   "ic": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.07056429423939607,
+     7.610507896013314e-07,
+     -5.393691549997159
+    ],
+    "lyapunovSum": -5.323126494706973,
+    "meanDivergence": -5.3231337678617745,
+    "kaplanYorke": 2.0130828866716013,
+    "mins": [
+     -9.10567826463904,
+     -10.79068840942095,
+     0.013527458821483176
+    ],
+    "maxs": [
+     11.43318792109875,
+     7.840379933960009,
+     22.85132707057983
+    ],
+    "mean": [
+     0.17686654181686565,
+     -0.8843270641270115,
+     0.8842961202479312
+    ],
+    "le1ShortRuns": {
+     "min": 0.06838205365056207,
+     "max": 0.07522103029320525,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 35.92180031705358,
+    "vmax": 64.246724641353,
+    "vrms": 11.536671157753764,
+    "period": 5.859375,
+    "dt_smooth": 0.01118245343014177
+   }
+  },
+  "chua": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "alpha": 15.6,
+    "beta": 28.0,
+    "m0": -1.143,
+    "m1": -0.714
+   },
+   "rhs": [
+    "alpha*(y - x - (m1*x + (m0 - m1)*(Abs(x + 1) - Abs(x - 1))/2))",
+    "x - y + z",
+    "-beta*y"
+   ],
+   "ic": [
+    0.7,
+    0.0,
+    0.0
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.4343590717317403,
+     -0.0033703810449451452,
+     -4.244101760626727
+    ],
+    "lyapunovSum": -3.8131130699399316,
+    "meanDivergence": -3.8130068988525516,
+    "kaplanYorke": 2.1015500369678106,
+    "mins": [
+     -2.2631100092575234,
+     -0.38860955338348235,
+     -3.6375598730668535
+    ],
+    "maxs": [
+     2.263114807539458,
+     0.3886079866553157,
+     3.6375566130398234
+    ],
+    "mean": [
+     0.00033411837860366106,
+     3.9707526340329354e-07,
+     -0.00033152244656273335
+    ],
+    "le1ShortRuns": {
+     "min": 0.43059554952865764,
+     "max": 0.4407178174208432,
+     "runs": 7,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 8.603313736049987,
+    "vmax": 11.810721975017728,
+    "vrms": 5.446166974292411,
+    "period": 6.8807339449541285,
+    "dt_smooth": 0.014568650001664397
+   }
+  },
+  "chen": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 35.0,
+    "b": 3.0,
+    "c": 28.0
+   },
+   "rhs": [
+    "a*(y - x)",
+    "(c - a)*x - x*z + c*y",
+    "x*y - b*z"
+   ],
+   "ic": [
+    -10.0,
+    0.0,
+    37.0
+   ],
+   "dt": 0.002,
+   "measured": {
+    "dt": 0.002,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     2.027517966589029,
+     -3.124007053599975e-06,
+     -12.027515261363165
+    ],
+    "lyapunovSum": -10.00000041878119,
+    "meanDivergence": -10.0,
+    "kaplanYorke": 2.1685730426046606,
+    "mins": [
+     -27.56865139433663,
+     -32.22371166803504,
+     3.3495714971856225
+    ],
+    "maxs": [
+     27.834816944817785,
+     32.613648647927796,
+     54.478957552261996
+    ],
+    "mean": [
+     0.012287572102063424,
+     0.012303503011568127,
+     23.826376659419015
+    ],
+    "le1ShortRuns": {
+     "min": 2.018781048766929,
+     "max": 2.0438951480151415,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 95.99840698198157,
+    "vmax": 1132.36899756716,
+    "vrms": 200.5537144048523,
+    "period": 0.5895067793279622,
+    "dt_smooth": 0.001695532237075185
+   }
+  },
+  "lu": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 36.0,
+    "b": 3.0,
+    "c": 20.0
+   },
+   "rhs": [
+    "a*(y - x)",
+    "-x*z + c*y",
+    "x*y - b*z"
+   ],
+   "ic": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "dt": 0.002,
+   "measured": {
+    "dt": 0.002,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     1.3345448308671868,
+     -2.50644933459941e-05,
+     -20.334518812888813
+    ],
+    "lyapunovSum": -18.999999046514972,
+    "meanDivergence": -19.0,
+    "kaplanYorke": 2.065628293379038,
+    "mins": [
+     -23.710565571256833,
+     -26.65809843849175,
+     2.729001976562391
+    ],
+    "maxs": [
+     23.350184362707687,
+     26.191824287390716,
+     41.446020334831424
+    ],
+    "mean": [
+     -0.011968145451302191,
+     -0.011976374968428625,
+     19.738307185951694
+    ],
+    "le1ShortRuns": {
+     "min": 1.3150092205058515,
+     "max": 1.3642387507925782,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 79.02784245756492,
+    "vmax": 653.6090122958661,
+    "vrms": 129.4944583889933,
+    "period": 1.6501650165016502,
+    "dt_smooth": 0.002418199289510156
+   }
+  },
+  "aizawa": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 0.95,
+    "b": 0.7,
+    "c": 0.6,
+    "d": 3.5,
+    "e": 0.25,
+    "f": 0.1
+   },
+   "rhs": [
+    "(z - b)*x - d*y",
+    "d*x + (z - b)*y",
+    "c + a*z - z**3/3 - (x**2 + y**2)*(1 + e*z) + f*z*x**3"
+   ],
+   "ic": [
+    0.1,
+    0.0,
+    0.0
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.0950428650930397,
+     6.9716262117140934e-06,
+     -0.33213110669582785
+    ],
+    "lyapunovSum": -0.23708126997657641,
+    "meanDivergence": -0.23708125607053065,
+    "kaplanYorke": 2.2861816758594067,
+    "mins": [
+     -1.5004421162073518,
+     -1.4535736064990328,
+     -0.3671132446122824
+    ],
+    "maxs": [
+     1.487950033306095,
+     1.528578388923777,
+     1.84880046225405
+    ],
+    "mean": [
+     0.002282428315691628,
+     -9.264302658363694e-05,
+     0.7000072365432077
+    ],
+    "le1ShortRuns": {
+     "min": 0.08975620595734592,
+     "max": 0.09981102328242361,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 4.764939179215976,
+    "vmax": 5.587601472622299,
+    "vrms": 2.9717239953946013,
+    "period": 1.7953321364452424,
+    "dt_smooth": 0.017055400971464626
+   }
+  },
+  "thomas": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "b": 0.208186
+   },
+   "rhs": [
+    "sin(y) - b*x",
+    "sin(z) - b*y",
+    "sin(x) - b*z"
+   ],
+   "ic": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "dt": 0.05,
+   "measured": {
+    "dt": 0.05,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.0066803299122622445,
+     -3.947302745935709e-06,
+     -0.6312343843331035
+    ],
+    "lyapunovSum": -0.6245580017235872,
+    "meanDivergence": -0.6245579999036719,
+    "kaplanYorke": 2.010576709341602,
+    "mins": [
+     -1.1126146631681488,
+     -1.1126143159154245,
+     -1.1126157727186319
+    ],
+    "maxs": [
+     3.8177475846699283,
+     3.8177484749190027,
+     3.817748127564729
+    ],
+    "mean": [
+     1.8935927274374682,
+     1.8944344734053966,
+     1.8943975773491912
+    ],
+    "le1ShortRuns": {
+     "min": 0.0059751899744361495,
+     "max": 0.007510377409886557,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 8.53869345221701,
+    "vmax": 1.5793263377314606,
+    "vrms": 0.7923469526580185,
+    "period": 15.873015873015873,
+    "dt_smooth": 0.10813083082603389
+   }
+  },
+  "halvorsen": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 1.27
+   },
+   "rhs": [
+    "-a*x - 4*y - 4*z - y**2",
+    "-a*y - 4*z - 4*x - z**2",
+    "-a*z - 4*x - 4*y - x**2"
+   ],
+   "ic": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "dt": 0.005,
+   "measured": {
+    "dt": 0.005,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.7897994757469993,
+     -5.914055588013078e-06,
+     -4.599793843148514
+    ],
+    "lyapunovSum": -3.8100002814571026,
+    "meanDivergence": -3.8100000010765767,
+    "kaplanYorke": 2.171701947657464,
+    "mins": [
+     -13.345006219424969,
+     -13.344946689914128,
+     -13.345012914278378
+    ],
+    "maxs": [
+     6.264900926984658,
+     6.26490466927871,
+     6.2649034477477645
+    ],
+    "mean": [
+     -3.1272574956042822,
+     -3.1261934857358735,
+     -3.1259343242467432
+    ],
+    "le1ShortRuns": {
+     "min": 0.7833630350626671,
+     "max": 0.8000354678035354,
+     "runs": 7,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 33.96455627196102,
+    "vmax": 117.42908128165757,
+    "vrms": 43.818146789148436,
+    "period": 1.3562386980108498,
+    "dt_smooth": 0.005784692497167018
+   }
+  },
+  "dadras": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 3.0,
+    "b": 2.7,
+    "c": 1.7,
+    "d": 2.0,
+    "e": 9.0
+   },
+   "rhs": [
+    "y - a*x + b*y*z",
+    "c*y - x*z + z",
+    "d*x*y - e*z"
+   ],
+   "ic": [
+    1.1,
+    2.1,
+    -2.0
+   ],
+   "dt": 0.002,
+   "measured": {
+    "dt": 0.002,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.3693758772559317,
+     -8.149363116287315e-05,
+     -10.669294319788126
+    ],
+    "lyapunovSum": -10.299999936163356,
+    "meanDivergence": -10.300000002783294,
+    "kaplanYorke": 2.034612821856441,
+    "mins": [
+     -23.419944707483218,
+     -14.473124424229185,
+     -16.22290383415024
+    ],
+    "maxs": [
+     21.941879013469272,
+     10.166953950379321,
+     17.007822491913238
+    ],
+    "mean": [
+     0.9124623586911517,
+     -0.1821220142683178,
+     0.3351931644503402
+    ],
+    "le1ShortRuns": {
+     "min": 0.35248754582961767,
+     "max": 0.40016470349859845,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 56.44786436297301,
+    "vmax": 405.0850757699312,
+    "vrms": 22.614217633006046,
+    "period": 4.672897196261682,
+    "dt_smooth": 0.0027869634177800553
+   }
+  },
+  "sprott_b": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 1.0,
+    "b": 1.0,
+    "c": 1.0
+   },
+   "rhs": [
+    "a*y*z",
+    "x - b*y",
+    "c - x*y"
+   ],
+   "ic": [
+    0.05,
+    0.05,
+    0.05
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.2101565315984719,
+     -1.1472791094316968e-05,
+     -1.210145058321052
+    ],
+    "lyapunovSum": -0.9999999995136745,
+    "meanDivergence": -1.0,
+    "kaplanYorke": 2.17365278431904,
+    "mins": [
+     -7.968410200281557,
+     -3.9310079158533147,
+     -8.863020747574462
+    ],
+    "maxs": [
+     9.095006251208622,
+     4.442962668102201,
+     8.290867193428017
+    ],
+    "mean": [
+     -0.0025294415833959707,
+     -0.0025315337952166134,
+     7.77498258012388e-07
+    ],
+    "le1ShortRuns": {
+     "min": 0.20817460670135843,
+     "max": 0.2106449181015525,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 19.53057404255721,
+    "vmax": 25.42743621586005,
+    "vrms": 2.5565285780235105,
+    "period": 12.820512820512821,
+    "dt_smooth": 0.015361811451816957
+   }
+  },
+  "rabinovich_fabrikant": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "alpha": 1.1,
+    "gamma": 0.87
+   },
+   "rhs": [
+    "y*(z - 1 + x**2) + gamma*x",
+    "x*(3*z + 1 - x**2) + gamma*y",
+    "-2*z*(alpha + x*y)"
+   ],
+   "ic": [
+    -1.0,
+    0.0,
+    0.5
+   ],
+   "dt": 0.005,
+   "measured": {
+    "dt": 0.005,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.19761400085825503,
+     -7.037200081114543e-06,
+     -0.6576069631818903
+    ],
+    "lyapunovSum": -0.45999999952371634,
+    "meanDivergence": -0.460000000047529,
+    "kaplanYorke": 2.3004940256441855,
+    "mins": [
+     -1.8732115324356657,
+     -0.26680559652228564,
+     0.08676631739834531
+    ],
+    "maxs": [
+     -0.3699684422092589,
+     2.402066658722303,
+     1.3549111607165056
+    ],
+    "mean": [
+     -1.1688573513400664,
+     1.0124129815488478,
+     0.5914381565080095
+    ],
+    "le1ShortRuns": {
+     "min": 0.19417303819081055,
+     "max": 0.2042559223443539,
+     "runs": 7,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 3.3149698118101623,
+    "vmax": 4.64901592083286,
+    "vrms": 2.0258488960273464,
+    "period": 2.697841726618705,
+    "dt_smooth": 0.014260952718855364
+   }
+  },
+  "nose_hoover": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 1.0
+   },
+   "rhs": [
+    "y",
+    "-x + y*z",
+    "a - y**2"
+   ],
+   "ic": [
+    0.0,
+    5.0,
+    0.0
+   ],
+   "dt": 0.005
+  },
+  "arneodo": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 5.5,
+    "b": 3.5,
+    "c": 1.0
+   },
+   "rhs": [
+    "y",
+    "z",
+    "a*x - b*y - c*z - x**3"
+   ],
+   "ic": [
+    0.2,
+    0.2,
+    -0.75
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.23682379954371666,
+     1.886032510338018e-06,
+     -1.2368256869632346
+    ],
+    "lyapunovSum": -1.0000000013870076,
+    "meanDivergence": -1.0,
+    "kaplanYorke": 2.19147862796875,
+    "mins": [
+     -3.5472480346334634,
+     -6.010213191975187,
+     -11.414758140743446
+    ],
+    "maxs": [
+     3.547171201176639,
+     6.01020469973142,
+     11.414836877340928
+    ],
+    "mean": [
+     -0.005495008314964778,
+     -3.0451680216695365e-05,
+     -5.9898279533810165e-06
+    ],
+    "le1ShortRuns": {
+     "min": 0.22841677356743395,
+     "max": 0.24478960991918897,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 26.658764015046216,
+    "vmax": 29.45081066151215,
+    "vrms": 9.968687411135107,
+    "period": 9.74025974025974,
+    "dt_smooth": 0.018103925437872766
+   }
+  },
+  "burke_shaw": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "s": 10.0,
+    "v": 4.272
+   },
+   "rhs": [
+    "-s*(x + y)",
+    "-y - s*x*z",
+    "s*x*y + v"
+   ],
+   "ic": [
+    0.6,
+    0.0,
+    0.0
+   ],
+   "dt": 0.002,
+   "measured": {
+    "dt": 0.002,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.6967697078532896,
+     -8.023774914168941e-05,
+     -11.696689376704214
+    ],
+    "lyapunovSum": -10.999999906600065,
+    "meanDivergence": -11.0,
+    "kaplanYorke": 2.0595629624474525,
+    "mins": [
+     -2.0866671812354123,
+     -2.9821994871677506,
+     -2.6602387402364216
+    ],
+    "maxs": [
+     2.080258545550144,
+     2.995775898256926,
+     2.6502970322858874
+    ],
+    "mean": [
+     -0.0008052711549245879,
+     0.0008042322108585986,
+     0.13965758631074365
+    ],
+    "le1ShortRuns": {
+     "min": 0.6908800073514556,
+     "max": 0.6997156331740692,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 8.405597789460435,
+    "vmax": 55.87645381179549,
+    "vrms": 10.365563077329206,
+    "period": 1.9697964543663822,
+    "dt_smooth": 0.0030086368106939593
+   }
+  },
+  "rucklidge": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "kappa": 2.0,
+    "lam": 6.7
+   },
+   "rhs": [
+    "-kappa*x + lam*y - y*z",
+    "x",
+    "-z + y**2"
+   ],
+   "ic": [
+    1.0,
+    0.0,
+    4.5
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.19170113125089847,
+     -4.922499328480056e-06,
+     -3.1916961647679605
+    ],
+    "lyapunovSum": -2.9999999560163904,
+    "meanDivergence": -3.0,
+    "kaplanYorke": 2.0600609202303275,
+    "mins": [
+     -10.146508284553649,
+     -5.564554748129131,
+     0.07280896706768282
+    ],
+    "maxs": [
+     10.144266069247168,
+     5.564826149195944,
+     15.370679988614805
+    ],
+    "mean": [
+     -1.8556973614739225e-05,
+     0.0005292060811119152,
+     6.452657236803238
+    ],
+    "le1ShortRuns": {
+     "min": 0.1903932362612651,
+     "max": 0.19303102648086862,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 27.408112615077926,
+    "vmax": 33.95627908331839,
+    "vrms": 8.413932083614313,
+    "period": 5.016722408026756,
+    "dt_smooth": 0.016143177848095044
+   }
+  },
+  "four_wing": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "a": 0.2,
+    "b": 0.01,
+    "c": -0.4
+   },
+   "rhs": [
+    "a*x + y*z",
+    "b*x + c*y - x*z",
+    "-z - x*y"
+   ],
+   "ic": [
+    1.3,
+    -0.18,
+    0.01
+   ],
+   "dt": 0.02,
+   "measured": {
+    "dt": 0.02,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.06522800681452197,
+     -4.165736341298952e-06,
+     -1.2652238243072091
+    ],
+    "lyapunovSum": -1.1999999832290285,
+    "meanDivergence": -1.1999999995613144,
+    "kaplanYorke": 2.051551227399543,
+    "mins": [
+     -4.022747315724267,
+     -4.135233076199493,
+     -3.5022948922722974
+    ],
+    "maxs": [
+     4.179553307903231,
+     3.745506893314681,
+     3.657850024450634
+    ],
+    "mean": [
+     -0.0010608154643583537,
+     0.0055416122387977745,
+     -0.012760058652487367
+    ],
+    "le1ShortRuns": {
+     "min": 0.06267455932657601,
+     "max": 0.06616271898861222,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 7.604990963753234,
+    "vmax": 4.455712387277618,
+    "vrms": 0.5426371002238357,
+    "period": 39.473684210526315,
+    "dt_smooth": 0.03413591499068809
+   }
+  },
+  "rikitake": {
+   "vars": [
+    "x",
+    "y",
+    "z"
+   ],
+   "params": {
+    "mu": 2.0,
+    "a": 5.0
+   },
+   "rhs": [
+    "-mu*x + z*y",
+    "-mu*y + (z - a)*x",
+    "1 - x*y"
+   ],
+   "ic": [
+    1.0,
+    0.0,
+    1.0
+   ],
+   "dt": 0.01,
+   "measured": {
+    "dt": 0.01,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.12816679373987433,
+     -5.978585630832903e-06,
+     -4.1281605044675915
+    ],
+    "lyapunovSum": -3.999999689313348,
+    "meanDivergence": -4.0,
+    "kaplanYorke": 2.0310455019894564,
+    "mins": [
+     -7.128105499711122,
+     -4.0063948334706065,
+     1.747925875893223
+    ],
+    "maxs": [
+     7.510976279817512,
+     4.30825652606613,
+     10.289659076221247
+    ],
+    "mean": [
+     0.0005712716390206989,
+     0.00022354372513780918,
+     5.970552731440845
+    ],
+    "le1ShortRuns": {
+     "min": 0.12712370773437562,
+     "max": 0.12870930882628018,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 15.343309395255153,
+    "vmax": 20.14355619277361,
+    "vrms": 3.789808995431259,
+    "period": 14.285714285714286,
+    "dt_smooth": 0.015233962909448414
+   }
+  },
+  "hyper_rossler": {
+   "vars": [
+    "x",
+    "y",
+    "z",
+    "w"
+   ],
+   "params": {
+    "a": 0.25,
+    "b": 3.0,
+    "c": 0.5,
+    "d": 0.05
+   },
+   "rhs": [
+    "-y - z",
+    "x + a*y + w",
+    "b + x*z",
+    "-c*z + d*w"
+   ],
+   "ic": [
+    -10.0,
+    -6.0,
+    0.0,
+    10.0
+   ],
+   "dt": 0.002,
+   "measured": {
+    "dt": 0.002,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.11462655540548772,
+     0.02140129473694262,
+     -9.122036652400023e-05,
+     -24.981942067962695
+    ],
+    "lyapunovSum": -24.84600543818679,
+    "meanDivergence": -24.84605214828924,
+    "kaplanYorke": 3.0054413956051174,
+    "mins": [
+     -153.91325409163582,
+     -103.09809361334077,
+     0.01949173424321181,
+     10.981065857637752
+    ],
+    "maxs": [
+     23.454379875101406,
+     74.96658501910193,
+     467.7806278970285,
+     75.2795827318665
+    ],
+    "mean": [
+     -25.146050341444187,
+     -2.5804436116273832,
+     2.5795411357553224,
+     25.79210593338383
+    ],
+    "le1ShortRuns": {
+     "min": 0.11241750554191206,
+     "max": 0.12095096564883251,
+     "runs": 4,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 411.3438055186593,
+    "vmax": 3292.8833078506673,
+    "vrms": 89.52254258776824,
+    "period": 7.142857142857143,
+    "dt_smooth": 0.002498380702030719
+   }
+  },
+  "duffing": {
+   "vars": [
+    "x",
+    "v"
+   ],
+   "params": {
+    "delta": 0.3,
+    "alpha": -1.0,
+    "beta": 1.0,
+    "gamma": 0.5,
+    "omega": 1.2
+   },
+   "rhs": [
+    "v",
+    "-delta*v - alpha*x - beta*x**3 + gamma*cos(omega*t)"
+   ],
+   "ic": [
+    1.0,
+    0.0
+   ],
+   "dt": 0.01,
+   "driven": "omega",
+   "spp": 200,
+   "measured": {
+    "dt": 0.026179938779914945,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.1035905650722763,
+     -0.40359053873317124
+    ],
+    "lyapunovSum": -0.2999999736608949,
+    "meanDivergence": -0.2999999998903286,
+    "kaplanYorke": 2.2566724319094207,
+    "mins": [
+     -1.536456829513199,
+     -1.0511579979004098
+    ],
+    "maxs": [
+     1.5364579746400844,
+     1.0511608331695868
+    ],
+    "mean": [
+     9.297407775880129e-05,
+     2.2102321855127465e-06
+    ],
+    "le1ShortRuns": {
+     "min": 0.09637294650626518,
+     "max": 0.10840591216744647,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 3.7181057313200885,
+    "vmax": 1.7142296008768678,
+    "vrms": 0.7237468066829035,
+    "period": 14.77832512315271,
+    "dt_smooth": 0.04337932012629104
+   }
+  },
+  "ueda": {
+   "vars": [
+    "x",
+    "v"
+   ],
+   "params": {
+    "delta": 0.05,
+    "alpha": 0.0,
+    "beta": 1.0,
+    "gamma": 7.5,
+    "omega": 1.0
+   },
+   "rhs": [
+    "v",
+    "-delta*v - alpha*x - beta*x**3 + gamma*cos(omega*t)"
+   ],
+   "ic": [
+    2.5,
+    0.0
+   ],
+   "dt": 0.01,
+   "driven": "omega",
+   "spp": 800,
+   "measured": {
+    "dt": 0.007853981633974483,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.10486608156252843,
+     -0.15486608178616476
+    ],
+    "lyapunovSum": -0.050000000223636334,
+    "meanDivergence": -0.0500000000178437,
+    "kaplanYorke": 2.677140406427567,
+    "mins": [
+     -3.385132631167727,
+     -6.155481840355215
+    ],
+    "maxs": [
+     3.385260149190912,
+     6.156597756328299
+    ],
+    "mean": [
+     -0.007830914501771959,
+     5.399719647287646e-06
+    ],
+    "le1ShortRuns": {
+     "min": 0.09802544585083013,
+     "max": 0.11159227127269233,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 14.032952305223276,
+    "vmax": 39.88060292247738,
+    "vrms": 11.025884213251956,
+    "period": 6.085192697768763,
+    "dt_smooth": 0.007037482523773013
+   }
+  },
+  "vanderpol": {
+   "vars": [
+    "x",
+    "v"
+   ],
+   "params": {
+    "mu": 3.0,
+    "A": 5.0,
+    "omega": 1.788
+   },
+   "rhs": [
+    "v",
+    "mu*(1 - x**2)*v - x + A*cos(omega*t)"
+   ],
+   "ic": [
+    1.0,
+    0.0
+   ],
+   "dt": 0.005,
+   "driven": "omega",
+   "spp": 400,
+   "measured": {
+    "dt": 0.008785214355676155,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.19253685389180777,
+     -2.0627904472582146
+    ],
+    "lyapunovSum": -1.8702535933664068,
+    "meanDivergence": -1.8702544322391685,
+    "kaplanYorke": 2.0933380577497442,
+    "mins": [
+     -2.3119583978584437,
+     -7.927278822319151
+    ],
+    "maxs": [
+     2.311958394890792,
+     7.927278811814555
+    ],
+    "mean": [
+     4.1800142560386555e-09,
+     -7.273255023269581e-06
+    ],
+    "le1ShortRuns": {
+     "min": 0.18876138079736623,
+     "max": 0.1982010054852534,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 16.514488636398703,
+    "vmax": 37.51251715307999,
+    "vrms": 8.179282306787718,
+    "period": 4.580152671755725,
+    "dt_smooth": 0.008804788315861
+   }
+  },
+  "pendulum": {
+   "vars": [
+    "theta",
+    "w"
+   ],
+   "params": {
+    "q": 2.0,
+    "g": 1.5,
+    "omega": 0.6666666666666666
+   },
+   "rhs": [
+    "w",
+    "-w/q - sin(theta) + g*cos(omega*t)"
+   ],
+   "ic": [
+    0.0,
+    0.0
+   ],
+   "dt": 0.01,
+   "driven": "omega",
+   "spp": 300,
+   "measured": {
+    "dt": 0.031415926535897934,
+    "steps": 20000000,
+    "transientSteps": 100000,
+    "lyapunov": [
+     0.11213039770818808,
+     -0.6121303859402913
+    ],
+    "lyapunovSum": -0.49999998823210323,
+    "meanDivergence": -0.5,
+    "kaplanYorke": 2.183180577673734,
+    "mins": [
+     -782.2794255855974,
+     -2.633670218152513
+    ],
+    "maxs": [
+     1483.838881708523,
+     2.6336265461940513
+    ],
+    "mean": [
+     564.0200188753008,
+     0.002436736797794773
+    ],
+    "le1ShortRuns": {
+     "min": 0.1103811956410527,
+     "max": 0.11548839445959677,
+     "runs": 8,
+     "steps": 1000000,
+     "transientSteps": 20000
+    }
+   },
+   "speed": {
+    "diag": 8.193078863861258,
+    "vmax": 3.5887988703132283,
+    "vrms": 2.1239958498864797,
+    "period": 9.404388714733543,
+    "dt_smooth": 0.04565916987789383
+   }
+  },
+  "double_pendulum": {
+   "vars": [
+    "th1",
+    "th2",
+    "w1",
+    "w2"
+   ],
+   "params": {
+    "m1": 1.0,
+    "m2": 1.0,
+    "l1": 1.0,
+    "l2": 1.0,
+    "g": 9.81
+   },
+   "rhs": [
+    "w1",
+    "w2",
+    "(-g*(2*m1 + m2)*sin(th1) - m2*g*sin(th1 - 2*th2) - 2*sin(th1 - th2)*m2*(w2**2*l2 + w1**2*l1*cos(th1 - th2)))/(l1*(2*m1 + m2 - m2*cos(2*th1 - 2*th2)))",
+    "(2*sin(th1 - th2)*(w1**2*l1*(m1 + m2) + g*(m1 + m2)*cos(th1) + w2**2*l2*m2*cos(th1 - th2)))/(l2*(2*m1 + m2 - m2*cos(2*th1 - 2*th2)))"
+   ],
+   "ic": [
+    1.5707963267948966,
+    1.5707963267948966,
+    0.0,
+    0.0
+   ],
+   "dt": 0.002
+  },
+  "henon_heiles": {
+   "vars": [
+    "x",
+    "y",
+    "px",
+    "py"
+   ],
+   "params": {
+    "lam": 1.0
+   },
+   "rhs": [
+    "px",
+    "py",
+    "-x - 2*lam*x*y",
+    "-y - lam*(x**2 - y**2)"
+   ],
+   "ic": [
+    0.0,
+    -0.15,
+    0.47460509900337144,
+    0.0
+   ],
+   "dt": 0.01
+  },
+  "magnetic_pendulum": {
+   "vars": [
+    "x",
+    "y",
+    "vx",
+    "vy"
+   ],
+   "params": {
+    "b": 0.2,
+    "c": 0.5,
+    "d": 0.25,
+    "s3h": 0.8660254037844386
+   },
+   "rhs": [
+    "vx",
+    "vy",
+    "-b*vx - c*x - (x - (1.0))/((x - (1.0))**2 + (y - (0))**2 + d**2)**(3/2) - (x - (-0.5))/((x - (-0.5))**2 + (y - (s3h))**2 + d**2)**(3/2) - (x - (-0.5))/((x - (-0.5))**2 + (y - (-s3h))**2 + d**2)**(3/2)",
+    "-b*vy - c*y - (y - (0))/((x - (1.0))**2 + (y - (0))**2 + d**2)**(3/2) - (y - (s3h))/((x - (-0.5))**2 + (y - (s3h))**2 + d**2)**(3/2) - (y - (-s3h))/((x - (-0.5))**2 + (y - (-s3h))**2 + d**2)**(3/2)"
+   ],
+   "ic": [
+    0.2,
+    1.7,
+    0.0,
+    0.0
+   ],
+   "dt": 0.01
+  },
+  "three_body": {
+   "vars": [
+    "x1",
+    "y1",
+    "x2",
+    "y2",
+    "x3",
+    "y3",
+    "vx1",
+    "vy1",
+    "vx2",
+    "vy2",
+    "vx3",
+    "vy3"
+   ],
+   "params": {
+    "G": 1.0,
+    "m1": 1.0,
+    "m2": 1.0,
+    "m3": 1.0,
+    "soft": 0.0
+   },
+   "rhs": [
+    "vx1",
+    "vy1",
+    "vx2",
+    "vy2",
+    "vx3",
+    "vy3",
+    "G*m2*(x2 - x1)/((x2 - x1)**2 + (y2 - y1)**2 + soft**2)**(3/2) + G*m3*(x3 - x1)/((x3 - x1)**2 + (y3 - y1)**2 + soft**2)**(3/2)",
+    "G*m2*(y2 - y1)/((x2 - x1)**2 + (y2 - y1)**2 + soft**2)**(3/2) + G*m3*(y3 - y1)/((x3 - x1)**2 + (y3 - y1)**2 + soft**2)**(3/2)",
+    "G*m1*(x1 - x2)/((x1 - x2)**2 + (y1 - y2)**2 + soft**2)**(3/2) + G*m3*(x3 - x2)/((x3 - x2)**2 + (y3 - y2)**2 + soft**2)**(3/2)",
+    "G*m1*(y1 - y2)/((x1 - x2)**2 + (y1 - y2)**2 + soft**2)**(3/2) + G*m3*(y3 - y2)/((x3 - x2)**2 + (y3 - y2)**2 + soft**2)**(3/2)",
+    "G*m1*(x1 - x3)/((x1 - x3)**2 + (y1 - y3)**2 + soft**2)**(3/2) + G*m2*(x2 - x3)/((x2 - x3)**2 + (y2 - y3)**2 + soft**2)**(3/2)",
+    "G*m1*(y1 - y3)/((x1 - x3)**2 + (y1 - y3)**2 + soft**2)**(3/2) + G*m2*(y2 - y3)/((x2 - x3)**2 + (y2 - y3)**2 + soft**2)**(3/2)"
+   ],
+   "ic": [
+    0.97000436,
+    -0.24308753,
+    -0.97000436,
+    0.24308753,
+    0.0,
+    0.0,
+    0.466203685,
+    0.43236573,
+    0.466203685,
+    0.43236573,
+    -0.93240737,
+    -0.86473146
+   ],
+   "dt": 0.001
+  },
+  "nose_hoover_aug": {
+   "vars": [
+    "x",
+    "y",
+    "z",
+    "s"
+   ],
+   "params": {
+    "a": 1.0
+   },
+   "rhs": [
+    "y",
+    "-x + y*z",
+    "a - y**2",
+    "z"
+   ],
+   "ic": [
+    0.0,
+    5.0,
+    0.0,
+    0.0
+   ],
+   "dt": 0.005
+  }
+ },
+ "maps": {
+  "circle": {
+   "oracles": [
+    {
+     "id": "golden-mean-critical-omega",
+     "kind": "exact",
+     "description": "At K=1 the winding number equals the inverse golden mean (sqrt(5)-1)/2 at exactly one Omega. Computed: superstable cycles through theta=0 with winding numbers F_(n-1)/F_n (Newton on the lift F^q(0)=p at 240-bit precision, q up to 46368) extrapolated by iterated Aitken; the Fibonacci parameter differences shrink by the universal ratio delta = -2.83361 (literature -2.83361).",
+     "value": 0.6066610634702,
+     "tolerance": 1e-10,
+     "computedValue": 0.6066610634701121,
+     "verifiedNumerically": true,
+     "source": "Shenker, Physica D 5 (1982) 405: Omega = 0.6066610634702; delta = -2.83361, alpha = -1.28857"
+    },
+    {
+     "id": "winding-number-golden",
+     "kind": "statistical",
+     "description": "Winding number W = mean of (Omega - K/(2 pi) sin(2 pi theta_n)) over N=1e6 steps (1000 transient) at K=1, Omega=0.6066610634702 equals (sqrt(5)-1)/2. Observed over 5 initial phases: max |dev| 1.6e-08 (bounded-deviation rotation, error O(1/N)).",
+     "value": 0.6180339887498949,
+     "tolerance": 5e-06,
+     "computedValue": 0.6180339853777566,
+     "verifiedNumerically": true,
+     "source": "exact by construction of Omega"
+    },
+    {
+     "id": "tongue-0-1-edge-K1",
+     "kind": "exact",
+     "description": "The 0/1 mode-locking tongue is |Omega| <= K/(2 pi) (fixed point sin(2 pi theta*) = 2 pi Omega/K exists); edge at K=1. Computed: bisection on Omega for the winding number (N=20000) changing from 0 to positive.",
+     "value": 0.15915494309189535,
+     "tolerance": 1e-06,
+     "computedValue": 0.15915494399464486,
+     "verifiedNumerically": true,
+     "source": "closed form K/(2 pi)"
+    },
+    {
+     "id": "tongue-1-2-left-edge-K1",
+     "kind": "exact",
+     "description": "Left edge of the 1/2 mode-locking tongue at K=1 (saddle-node of the 2-cycle: F^2(theta)=theta+1, (F^2)'(theta)=1 on the lift); the right edge is 1 minus this value by symmetry, so W=1/2 exactly for Omega in [0.463017223, 0.536982777]. Value: mpmath Newton; computed: bisection on Omega for the measured winding number (N=20000 after 40000 transient) reaching 1/2.",
+     "value": 0.46301722338218515,
+     "tolerance": 1e-06,
+     "computedValue": 0.46301722290677405,
+     "verifiedNumerically": true,
+     "source": "computed (lowest-order perturbation theory gives 1/2 - K^2/(8 pi) = 0.460211)"
+    },
+    {
+     "id": "winding-number-K0",
+     "kind": "exact",
+     "description": "For K=0 the map is a rigid rotation and the winding number equals Omega; value for Omega=0.3. Computed: mean phase advance over 1e5 steps.",
+     "value": 0.3,
+     "tolerance": 1e-12,
+     "computedValue": 0.29999999999950616,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "lyapunov-default",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at Omega=1/3, K=4: mean of ln|1 - K cos(2 pi theta_n)| over N=1e6 steps after 1000 transient (theta kept mod 1). Value = mean over 32 initial phases; observed sd 5.8e-04, max |dev| 1.4e-03.",
+     "value": 0.875,
+     "tolerance": 0.005,
+     "computedValue": 0.8749596247730306,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-default-theta6",
+     "kind": "golden",
+     "description": "theta_6 from theta_0=0.1 at Omega=1/3, K=4; each step theta <- (theta + Omega - K/(2 pi) sin(2 pi theta)) mod 1 with mod = x - floor(x). Reference from 50-digit arithmetic; amplification bound 493.",
+     "value": 0.5715485985881201,
+     "tolerance": 1e-09,
+     "computedValue": 0.571548598588119,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-critical-theta20",
+     "kind": "golden",
+     "description": "theta_20 from theta_0=0.1 at K=1, Omega=0.6066610634702 (quasi-periodic, no error growth). Reference from 50-digit arithmetic; amplification bound 59.",
+     "value": 0.47026836066879424,
+     "tolerance": 1e-09,
+     "computedValue": 0.4702683606687956,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "clifford": {
+   "oracles": [
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=-1.4, b=1.6, c=1, d=0.7 (per-step QR with the analytic Jacobian, N=1e6 after 1000 transient). Value: mean of 12 runs of 5e7 steps. Scatter at N=1e6 over 32 initial conditions spread over [-2,2]^2: sd 2.9e-04, max |dev| 6.4e-04.",
+     "value": 0.2912,
+     "tolerance": 0.002,
+     "computedValue": 0.29115171827784164,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 6.2e-04, max |dev| 1.4e-03.",
+     "value": -0.1274,
+     "tolerance": 0.005,
+     "computedValue": -0.12745831970604465,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "bound-x",
+     "kind": "exact",
+     "description": "Every iterate satisfies |x| <= 1+|c| and |y| <= 1+|d|, so the picture always fits in [-(1+|c|),1+|c|] x [-(1+|d|),1+|d|]. Value: 1+|c| at the default; computed: max |x| over 5e7 iterates (max |y| = 1.5352 vs bound 1.7), which must not exceed it.",
+     "value": 2.0,
+     "tolerance": 0.05,
+     "computedValue": 1.9793396320654137,
+     "verifiedNumerically": true,
+     "source": "exact bound (the attractor nearly reaches it)"
+    },
+    {
+     "id": "golden-x10",
+     "kind": "golden",
+     "description": "x_10 from (x_0,y_0)=(0.1,0.1) at a=-1.4, b=1.6, c=1, d=0.7; simultaneous update (x,y) <- (sin(a*y)+c*cos(a*x), sin(b*x)+d*cos(b*y)). Reference from 50-digit arithmetic; amplification bound 80.",
+     "value": 1.1986770523269485,
+     "tolerance": 1e-09,
+     "computedValue": 1.1986770523269494,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y10",
+     "kind": "golden",
+     "description": "y_10 of the same orbit.",
+     "value": -1.1750792746655498,
+     "tolerance": 1e-09,
+     "computedValue": -1.1750792746655498,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -1.4199740760148547,
+    1.9793396320654137,
+    -1.3046768583419976,
+    1.5352436446586415
+   ]
+  },
+  "dejong": {
+   "oracles": [
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=1.4, b=-2.3, c=2.4, d=-2.1 (per-step QR with the analytic Jacobian, N=1e6 after 1000 transient). Value: mean of 12 runs of 5e7 steps. Scatter at N=1e6 over 32 initial conditions spread over [-2,2]^2: sd 4.6e-04, max |dev| 1.1e-03.",
+     "value": 0.491,
+     "tolerance": 0.005,
+     "computedValue": 0.49102662036846023,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 9.0e-04, max |dev| 1.9e-03.",
+     "value": 0.0768,
+     "tolerance": 0.005,
+     "computedValue": 0.07691021128160817,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "bound-xy",
+     "kind": "exact",
+     "description": "Every iterate satisfies |x| <= 2 and |y| <= 2 (difference of a sine and a cosine), for all parameters. Computed: max(|x|,|y|) over 5e7 iterates at the default, which must not exceed 2.",
+     "value": 2.0,
+     "tolerance": 0.01,
+     "computedValue": 1.9999999477210888,
+     "verifiedNumerically": true,
+     "source": "exact bound"
+    },
+    {
+     "id": "golden-x6",
+     "kind": "golden",
+     "description": "x_6 from (x_0,y_0)=(0.1,0.1) at a=1.4, b=-2.3, c=2.4, d=-2.1; simultaneous update (x,y) <- (sin(a*y)-cos(b*x), sin(c*x)-cos(d*y)). Reference from 50-digit arithmetic; amplification bound 140.",
+     "value": 0.6223206439282651,
+     "tolerance": 1e-09,
+     "computedValue": 0.6223206439282608,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y6",
+     "kind": "golden",
+     "description": "y_6 of the same orbit.",
+     "value": -1.118049901081265,
+     "tolerance": 1e-09,
+     "computedValue": -1.1180499010812661,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -1.9999996886320703,
+    1.999999661257775,
+    -1.9999999477210888,
+    1.9999997693717217
+   ]
+  },
+  "duffing": {
+   "oracles": [
+    {
+     "id": "fixed-point-x",
+     "kind": "exact",
+     "description": "Nonzero fixed points are x = y = +-sqrt(a-b-1); value of the positive one at a=2.75, b=0.2 (the origin is the third fixed point; all three are unstable). Computed: scipy fsolve on the map equations.",
+     "value": 1.2449899597988732,
+     "tolerance": 1e-10,
+     "computedValue": 1.2449899597988732,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "jacobian-determinant",
+     "kind": "invariant",
+     "description": "det J = b at every point (J = [[0,1],[-b, a-3y^2]]). Computed: central finite differences (h=1e-6) of the map at 4 points; allowed deviation 1e-8.",
+     "value": 0.2,
+     "tolerance": 1e-08,
+     "computedValue": 0.1999999999163894,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=2.75, b=0.2 (per-step QR, N=1e6 after 1000 transient). Value: mean of 12 runs of 5e7 steps. Scatter at N=1e6 over 32 initial conditions: sd 3.9e-04, max |dev| 1.0e-03.",
+     "value": 0.4768,
+     "tolerance": 0.002,
+     "computedValue": 0.47682053008044223,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 3.9e-04, max |dev| 1.1e-03.",
+     "value": -2.0862,
+     "tolerance": 0.002,
+     "computedValue": -2.086258442514536,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-sum",
+     "kind": "invariant",
+     "description": "lam1 + lam2 = ln(det J) = ln(b) = ln 0.2 for any orbit. Computed from a 1e6-step QR run; allowed deviation 1e-9.",
+     "value": -1.6094379124341003,
+     "tolerance": 1e-09,
+     "computedValue": -1.6094379124341067,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "golden-x8",
+     "kind": "golden",
+     "description": "x_8 from (x_0,y_0)=(0.1,0.1) at a=2.75, b=0.2, simultaneous update (x,y) <- (y, -b*x + a*y - y^3). Reference from 50-digit arithmetic; amplification bound 643.",
+     "value": 1.1677606872671362,
+     "tolerance": 1e-09,
+     "computedValue": 1.1677606872671364,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y8",
+     "kind": "golden",
+     "description": "y_8 of the same orbit.",
+     "value": 1.3630267136977783,
+     "tolerance": 1e-09,
+     "computedValue": 1.3630267136977778,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -1.7095549488800867,
+    1.709554871573623,
+    -1.7095549488800867,
+    1.709554871573623
+   ]
+  },
+  "dyadic": {
+   "oracles": [
+    {
+     "id": "integer-orbit-k1000",
+     "kind": "exact",
+     "description": "Exact-arithmetic form for beta=2: x = k/M with the safe prime M = 2^52 - 2933 = 4503599627367563 (2 is a primitive root, so every k in 1..M-1 has period M-1), k <- 2k mod M. Value: k_1000 from k_0 = round(0.1*M) = 450359962736756 (all values < 2^53, exact in doubles). Computed by 1000 doublings; value from modular exponentiation 2^1000*k_0 mod M.",
+     "value": 737458175395892.0,
+     "tolerance": 0.0,
+     "computedValue": 737458175395892.0,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "mean-x-beta2",
+     "kind": "statistical",
+     "description": "Time average of x for beta=2 is 1/2 (variance 1/12, measured 0.08340) using the exact integer form k <- 2k mod M, x=k/M, N=1e6 steps; over 32 initial k: sd 4.7e-04, max |dev| 8.6e-04. (A naive double orbit is identically 0 after at most 54 steps.)",
+     "value": 0.5,
+     "tolerance": 0.005,
+     "computedValue": 0.49997739372072814,
+     "verifiedNumerically": true,
+     "source": "exact: Lebesgue measure is invariant"
+    },
+    {
+     "id": "lyapunov-beta2",
+     "kind": "exact",
+     "description": "Lyapunov exponent is ln(beta) for every orbit (slope beta everywhere): ln 2 for the dyadic map. Computed: growth rate (1/40) ln(|delta_40|/|delta_0|) of the separation of two exact rational orbits started 2^-60 apart (x0 = 1/3 and 1/3 + 2^-60, no wrap-around mismatch for 40 steps).",
+     "value": 0.6931471805599453,
+     "tolerance": 1e-12,
+     "computedValue": 0.6931471805599453,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "golden-beta2-x8",
+     "kind": "golden",
+     "description": "x_8 from x_0=0.3 at beta=2 with plain doubles, x <- (beta*x) mod 1 (exact rational orbit: 0.3,0.6,0.2,0.4,0.8,0.6,0.2,0.4,0.8). Amplification bound 511; safe because 8 steps are far from the collapse at step ~53.",
+     "value": 0.8,
+     "tolerance": 1e-09,
+     "computedValue": 0.7999999999999972,
+     "verifiedNumerically": true,
+     "source": "exact rational arithmetic"
+    },
+    {
+     "id": "golden-beta2.5-x6",
+     "kind": "golden",
+     "description": "x_6 from x_0=0.3 at beta=2.5 (beta-transformation), plain doubles. Reference from exact rational arithmetic; amplification bound 406.",
+     "value": 0.4296875,
+     "tolerance": 1e-09,
+     "computedValue": 0.4296875,
+     "verifiedNumerically": true,
+     "source": "exact rational arithmetic"
+    },
+    {
+     "id": "period3-point-1-7",
+     "kind": "exact",
+     "description": "In exact arithmetic x0=1/7 is 3-periodic under beta=2: 1/7 -> 2/7 -> 4/7 -> 1/7 (binary expansion 0.001001...). Value: third iterate. Computed with Python Fractions.",
+     "value": 0.14285714285714285,
+     "tolerance": 1e-15,
+     "computedValue": 0.14285714285714285,
+     "verifiedNumerically": true,
+     "source": "exact"
+    }
+   ]
+  },
+  "gauss": {
+   "oracles": [
+    {
+     "id": "pd-first-beta-alpha4.9",
+     "kind": "exact",
+     "description": "At alpha=4.9 the fixed point loses stability by period doubling at this beta (fixed point x with 2*alpha*x*exp(-alpha x^2)=1, smaller root x=0.108048212, beta = x - exp(-alpha x^2)); period 1 just below, 2 just above. Value: mpmath root; computed: independent Newton solve of f(x)=x, f'(x)=-1 (gmpy2, analytic derivatives).",
+     "value": -0.8363525770314046,
+     "tolerance": 1e-09,
+     "computedValue": -0.8363525770314046,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "pd-last-beta-alpha4.9",
+     "kind": "exact",
+     "description": "At alpha=4.9 the period-doubling 'bubble' closes: the fixed point regains stability by a reverse period doubling at this beta (larger root x=0.601788761 of 2*alpha*x*exp(-alpha x^2)=1); period 2 just below, 1 just above. Same method as pd-first-beta-alpha4.9.",
+     "value": 0.43222624576339747,
+     "tolerance": 1e-09,
+     "computedValue": 0.43222624576339747,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "period-at-alpha4.9-beta-0.58",
+     "kind": "exact",
+     "description": "Period of the attractor at alpha=4.9, beta=-0.58 (the Wikipedia cobweb example). Computed: 400000 transient steps from x0=0.1, then smallest p<=64 with |x_(n+p)-x_n| < 1e-9.",
+     "value": 8.0,
+     "tolerance": 0.0,
+     "computedValue": 8.0,
+     "verifiedNumerically": true,
+     "source": "Wikipedia 'Gauss iterated map' figure caption: 8-cycle"
+    },
+    {
+     "id": "fixed-point-default",
+     "kind": "exact",
+     "description": "The unique fixed point at alpha=6.2, beta=-0.5 (root of exp(-alpha x^2)+beta-x; multiplier -2.0445, repelling). Value: mpmath root; computed: double-precision bisection on [0,1].",
+     "value": 0.22684461185358257,
+     "tolerance": 1e-12,
+     "computedValue": 0.22684461185358262,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-default",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at alpha=6.2, beta=-0.5: mean of ln|2*alpha*x_n*exp(-alpha x_n^2)| over N=1e6 steps after 1000 transient. Value = mean over 32 initial conditions in [-0.5,0.5]; observed sd 3.8e-04, max |dev| 8.1e-04.",
+     "value": 0.3837,
+     "tolerance": 0.002,
+     "computedValue": 0.3836874725976779,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "attractor-min-default",
+     "kind": "exact",
+     "description": "Every iterate satisfies beta < x <= 1+beta (f(0)=1+beta is the maximum of the map); on the attractor at alpha=6.2, beta=-0.5 the range is [f(1+beta), 1+beta] = [exp(-alpha/4)-0.5, 0.5]. Value: lower edge. Computed: minimum of a 2e6-step orbit from x0=0.1 (measured max 0.500000000).",
+     "value": -0.28775202617325696,
+     "tolerance": 1e-05,
+     "computedValue": -0.2877520261729003,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "golden-default-x10",
+     "kind": "golden",
+     "description": "x_10 from x_0=0.1 at alpha=6.2, beta=-0.5, plain iteration x <- exp(-alpha*x*x)+beta. Reference from 50-digit arithmetic; amplification bound 121.",
+     "value": -0.27669091381284544,
+     "tolerance": 1e-09,
+     "computedValue": -0.2766909138128455,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "henon": {
+   "oracles": [
+    {
+     "id": "fixed-point-plus-x",
+     "kind": "exact",
+     "description": "x of the saddle fixed point on the attractor: x = (-(1-b)+sqrt((1-b)^2+4a))/(2a), y = b*x = 0.189406343126851, at a=1.4, b=0.3. Computed: 2-D Newton (mpmath) on the map equations.",
+     "value": 0.6313544770895047,
+     "tolerance": 1e-12,
+     "computedValue": 0.6313544770895048,
+     "verifiedNumerically": true,
+     "source": "closed form (Henon 1976 quotes 0.63135448, 0.18940634)"
+    },
+    {
+     "id": "fixed-point-minus-x",
+     "kind": "exact",
+     "description": "x of the second fixed point: x = (-(1-b)-sqrt((1-b)^2+4a))/(2a), y = b*x = -0.339406343126851 (outside the attractor, on the basin boundary).",
+     "value": -1.1313544770895048,
+     "tolerance": 1e-12,
+     "computedValue": -1.1313544770895048,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "jacobian-determinant",
+     "kind": "invariant",
+     "description": "det J = -b at every point (J = [[-2a x, 1],[b, 0]]): constant area contraction by |b| per step with orientation reversal. Computed: central finite differences (h=1e-6) of the map at 4 points; allowed deviation 1e-8.",
+     "value": -0.3,
+     "tolerance": 1e-08,
+     "computedValue": -0.29999999998117116,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=1.4, b=0.3 (per-step Gram-Schmidt/QR on the Jacobian, natural log, N=1e6 steps after 1000 transient). Value: mean of 12 runs of 1e8 steps. Scatter at N=1e6 over 32 initial conditions: sd 2.5e-04, max |dev| 5.4e-04.",
+     "value": 0.4192,
+     "tolerance": 0.002,
+     "computedValue": 0.4192907173065659,
+     "verifiedNumerically": true,
+     "source": "computed; literature 0.41922 (Sprott 2003), 0.42 (Wikipedia)"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method as lyapunov-1. Scatter at N=1e6: sd 2.5e-04, max |dev| 5.4e-04.",
+     "value": -1.62318,
+     "tolerance": 0.002,
+     "computedValue": -1.6232635216325142,
+     "verifiedNumerically": true,
+     "source": "computed; literature -1.62319"
+    },
+    {
+     "id": "lyapunov-sum",
+     "kind": "invariant",
+     "description": "lam1 + lam2 = ln|det J| = ln(b) = ln 0.3 for any orbit and any run length (QR method). Computed: lam1+lam2 from a 1e6-step run; allowed deviation 1e-9.",
+     "value": -1.2039728043259361,
+     "tolerance": 1e-09,
+     "computedValue": -1.2039728043259978,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "kaplan-yorke-dimension",
+     "kind": "statistical",
+     "description": "Kaplan-Yorke (Lyapunov) dimension 1 + lam1/|lam2| from the N=1e6 exponents. Scatter over 32 initial conditions: sd 1.2e-04.",
+     "value": 1.2583,
+     "tolerance": 0.001,
+     "computedValue": 1.258301060455838,
+     "verifiedNumerically": true,
+     "source": "computed; literature 1.258-1.26"
+    },
+    {
+     "id": "golden-x10",
+     "kind": "golden",
+     "description": "x_10 from (x_0,y_0)=(0,0) at a=1.4, b=0.3, simultaneous update (x,y) <- (1-a*x*x+y, b*x); first steps (1,0), (-0.4,0.3). Reference from 50-digit arithmetic; amplification bound 542.",
+     "value": -1.0461049983101594,
+     "tolerance": 1e-09,
+     "computedValue": -1.0461049983101596,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y10",
+     "kind": "golden",
+     "description": "y_10 of the same orbit (equals b*x_9).",
+     "value": 0.35494157286082045,
+     "tolerance": 1e-09,
+     "computedValue": 0.35494157286082045,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "pd-a1",
+     "kind": "exact",
+     "description": "First period doubling at b=0.3: the fixed point gets eigenvalue -1 at a = 3(1-b)^2/4. Computed: Brent root of det(DT(x*)+I) with the cycle found by Newton (double precision).",
+     "value": 0.36749999999999994,
+     "tolerance": 1e-09,
+     "computedValue": 0.36749999999999994,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "pd-a2",
+     "kind": "exact",
+     "description": "Second period doubling (2-cycle -> 4-cycle) at b=0.3: a = (1-b)^2 + (1+b)^2/4. Computed as pd-a1 for the 2-cycle.",
+     "value": 0.9125,
+     "tolerance": 1e-09,
+     "computedValue": 0.9125000000000001,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "pd-a3",
+     "kind": "exact",
+     "description": "Third period doubling (4-cycle -> 8-cycle) at b=0.3; later ones: a4=1.051125662, a5=1.056563758, a6=1.057730840, ratios (a_(k-1)-a_(k-2))/(a_k-a_(k-1)) = 4.808, 4.486, 4.647, 4.660 (-> Feigenbaum delta), accumulation about 1.058049. Value: 40-digit mpmath Newton on T^4(x,y)=(x,y), det(DT^4+I)=0; computed: independent double-precision Brent root with scipy.",
+     "value": 1.0258554050737811,
+     "tolerance": 1e-09,
+     "computedValue": 1.0258554050737814,
+     "verifiedNumerically": true,
+     "source": "computed; literature accumulation 1.058048 (Derrida, Gervois, Pomeau 1979)"
+    },
+    {
+     "id": "pd-accumulation",
+     "kind": "exact",
+     "description": "Accumulation point of the period-doubling cascade at b=0.3 (onset of chaos). Computed: a6 + (a6-a5)/(delta-1) from the 40-digit bifurcation values up to period 32->64 (Aitken on a3..a6 gives 1.0580498).",
+     "value": 1.058048,
+     "tolerance": 5e-06,
+     "computedValue": 1.0580489146303846,
+     "verifiedNumerically": true,
+     "source": "Derrida, Gervois, Pomeau, J. Phys. A 12 (1979) 269: a_inf = 1.058048..."
+    }
+   ],
+   "bbox": [
+    -1.2846637911792804,
+    1.272973612708726,
+    -0.3853991373537841,
+    0.3818920838126178
+   ]
+  },
+  "ikeda": {
+   "oracles": [
+    {
+     "id": "jacobian-determinant",
+     "kind": "invariant",
+     "description": "det J = u^2 at every point (rotation by t(x,y) composed with scaling by u; the t-dependence cancels), u=0.9. Computed: central finite differences (h=1e-6) of the map at 4 points; allowed deviation 1e-8.",
+     "value": 0.81,
+     "tolerance": 1e-08,
+     "computedValue": 0.8099999998699686,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "fixed-point-x",
+     "kind": "exact",
+     "description": "x of the saddle fixed point embedded in the attractor at u=0.9 (y = 0.246896772711013, eigenvalues -2.3897 and -0.3390). Value: 40-digit mpmath Newton on the map equations; computed: scipy fsolve in double precision.",
+     "value": 0.5327546229407902,
+     "tolerance": 1e-10,
+     "computedValue": 0.5327546229407902,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "fixed-point-y",
+     "kind": "exact",
+     "description": "y of the same fixed point.",
+     "value": 0.24689677271101318,
+     "tolerance": 1e-10,
+     "computedValue": 0.24689677271101315,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at u=0.9 (per-step QR with the analytic Jacobian, N=1e6 after 1000 transient). Value: mean of 12 runs of 5e7 steps. Scatter at N=1e6 over 32 initial conditions: sd 4.4e-04, max |dev| 1.2e-03.",
+     "value": 0.5076,
+     "tolerance": 0.005,
+     "computedValue": 0.5075522349014315,
+     "verifiedNumerically": true,
+     "source": "computed; literature approx. 0.507"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 4.4e-04, max |dev| 1.2e-03.",
+     "value": -0.7183,
+     "tolerance": 0.005,
+     "computedValue": -0.7182732662170727,
+     "verifiedNumerically": true,
+     "source": "computed; literature approx. -0.718"
+    },
+    {
+     "id": "lyapunov-sum",
+     "kind": "invariant",
+     "description": "lam1 + lam2 = ln(det J) = 2 ln(u) = 2 ln 0.9 for any orbit. Computed from a 1e6-step QR run; allowed deviation 1e-9.",
+     "value": -0.21072103131565256,
+     "tolerance": 1e-09,
+     "computedValue": -0.21072103131564168,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "golden-x8",
+     "kind": "golden",
+     "description": "x_8 from (x_0,y_0)=(0.1,0.1) at u=0.9; each step t = 0.4 - 6/(1+x^2+y^2), (x,y) <- (1+u(x cos t - y sin t), u(x sin t + y cos t)) simultaneously. Reference from 50-digit arithmetic; amplification bound 80.",
+     "value": 0.22033468618230184,
+     "tolerance": 1e-09,
+     "computedValue": 0.220334686182301,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y8",
+     "kind": "golden",
+     "description": "y_8 of the same orbit.",
+     "value": -0.0306319263631725,
+     "tolerance": 1e-09,
+     "computedValue": -0.030631926363173502,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "coexisting-fixed-point-x",
+     "kind": "exact",
+     "description": "At u=0.9 the chaotic attractor coexists with an attracting spiral fixed point at (x,y) = (2.972131617911, 4.145946421396) (eigenvalue modulus 0.9); initial conditions far from the origin converge to it instead of the strange attractor. Value: 40-digit mpmath Newton; computed: 5000 plain iterations from (10,10).",
+     "value": 2.9721316179105557,
+     "tolerance": 1e-09,
+     "computedValue": 2.972131617910554,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -0.35431139896164,
+    1.708768248793074,
+    -2.214003189131885,
+    0.8657789216040866
+   ]
+  },
+  "logistic": {
+   "oracles": [
+    {
+     "id": "pd-r1",
+     "kind": "exact",
+     "description": "First period doubling (fixed point x*=1-1/r has multiplier 2-r = -1): r1 = 3. Computed: Newton continuation of the fixed point to multiplier -1 at 240-bit precision.",
+     "value": 3.0,
+     "tolerance": 1e-09,
+     "computedValue": 3.0,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "pd-r2",
+     "kind": "exact",
+     "description": "Second period doubling (2-cycle multiplier 4+2r-r^2 = -1): r2 = 1+sqrt(6). Computed: Newton solve of f^2(x)=x, (f^2)'(x)=-1.",
+     "value": 3.449489742783178,
+     "tolerance": 1e-09,
+     "computedValue": 3.449489742783178,
+     "verifiedNumerically": true,
+     "source": "closed form 1+sqrt(6)"
+    },
+    {
+     "id": "pd-r3",
+     "kind": "exact",
+     "description": "Third period doubling (4-cycle multiplier = -1; algebraic number, no simple closed form). Value: Newton solve (analytic derivatives, 240-bit) of f^4(x)=x, (f^4)'(x)=-1 at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 3.5440903595519226,
+     "tolerance": 1e-09,
+     "computedValue": 3.5440903595519226,
+     "verifiedNumerically": true,
+     "source": "literature 3.544090359 (e.g. Strogatz, Nonlinear Dynamics and Chaos, sec. 10.2: 3.54409)"
+    },
+    {
+     "id": "pd-r4",
+     "kind": "exact",
+     "description": "Fourth period doubling (8-cycle multiplier = -1). Value: Newton solve (analytic derivatives, 240-bit) of f^8(x)=x, (f^8)'(x)=-1 at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 3.5644072660954325,
+     "tolerance": 1e-09,
+     "computedValue": 3.5644072660954325,
+     "verifiedNumerically": true,
+     "source": "literature 3.5644 (Strogatz sec. 10.2)"
+    },
+    {
+     "id": "pd-accumulation",
+     "kind": "exact",
+     "description": "Accumulation point r_inf of the period-doubling cascade (onset of chaos). Computed: superstable parameters R_k (f^(2^k)(1/2)=1/2) for k<=18 at 240-bit precision, iterated Aitken extrapolation; the same limit from the bifurcation values r_k agrees to 1e-28.",
+     "value": 3.569945671870945,
+     "tolerance": 1e-09,
+     "computedValue": 3.569945671870945,
+     "verifiedNumerically": true,
+     "source": "OEIS A098587: 3.5699456718709449018..."
+    },
+    {
+     "id": "feigenbaum-delta-from-r2-r3-r4",
+     "kind": "exact",
+     "description": "Finite Feigenbaum estimate (r3-r2)/(r4-r3) from the bifurcation values above (the previous ratio (r2-r1)/(r3-r2) is 4.751446).",
+     "value": 4.656251017651357,
+     "tolerance": 1e-08,
+     "computedValue": 4.656251017651357,
+     "verifiedNumerically": true,
+     "source": "follows from pd-r2, pd-r3, pd-r4"
+    },
+    {
+     "id": "feigenbaum-delta",
+     "kind": "exact",
+     "description": "Feigenbaum constant delta = lim (R_(k-1)-R_(k-2))/(R_k-R_(k-1)). Computed: ratios of superstable parameters up to period 2^18, iterated Aitken extrapolation.",
+     "value": 4.66920160910299,
+     "tolerance": 1e-09,
+     "computedValue": 4.66920160910299,
+     "verifiedNumerically": true,
+     "source": "OEIS A006890: 4.669201609102990671853..."
+    },
+    {
+     "id": "feigenbaum-alpha",
+     "kind": "exact",
+     "description": "Feigenbaum constant alpha = lim -d_k/d_(k+1), d_k = f_(R_k)^(2^(k-1))(1/2) - 1/2 (signed distance from the critical point to the nearest point of the superstable 2^k-cycle). Computed up to k=18 with Aitken extrapolation.",
+     "value": 2.5029078750958926,
+     "tolerance": 1e-09,
+     "computedValue": 2.5029078750958935,
+     "verifiedNumerically": true,
+     "source": "OEIS A006891: 2.502907875095892822283..."
+    },
+    {
+     "id": "superstable-2cycle",
+     "kind": "exact",
+     "description": "Parameter where the 2-cycle is superstable (contains x=1/2): R1 = 1+sqrt(5). Computed: Newton solve of f^2(1/2)=1/2.",
+     "value": 3.23606797749979,
+     "tolerance": 1e-09,
+     "computedValue": 3.23606797749979,
+     "verifiedNumerically": true,
+     "source": "closed form 1+sqrt(5)"
+    },
+    {
+     "id": "period3-window-onset",
+     "kind": "exact",
+     "description": "Tangent (saddle-node) bifurcation creating the period-3 window: r = 1+sqrt(8). Computed: Newton solve of f^3(x)=x, (f^3)'(x)=+1 from (x,r)=(0.5144,3.8284).",
+     "value": 3.8284271247461903,
+     "tolerance": 1e-09,
+     "computedValue": 3.8284271247461903,
+     "verifiedNumerically": true,
+     "source": "closed form 1+2*sqrt(2)"
+    },
+    {
+     "id": "period3-doubling",
+     "kind": "exact",
+     "description": "End of the stable 3-cycle (period doubling 3->6, multiplier of the 3-cycle = -1). Value: Newton continuation with analytic derivatives at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 3.841499007543508,
+     "tolerance": 1e-09,
+     "computedValue": 3.841499007543508,
+     "verifiedNumerically": true,
+     "source": "literature 3.8415 (e.g. Strogatz)"
+    },
+    {
+     "id": "period3-cycle-min-r3.83",
+     "kind": "exact",
+     "description": "Smallest point of the attracting 3-cycle at r=3.83 (the other two are 0.504666487408 and 0.957416597519; multiplier 0.329882). Reference: mp Newton on f^3(x)=x. Computed: plain double iteration from x0=0.5, 100000 steps, then minimum of the next 3 iterates.",
+     "value": 0.15614931568360543,
+     "tolerance": 1e-09,
+     "computedValue": 0.15614931568360532,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "band-merging-point",
+     "kind": "exact",
+     "description": "Parameter where the two chaotic bands merge into one (Misiurewicz point: f^3(1/2) equals the fixed point 1-1/r); real root of r^3-2r^2-4r-8=0. Computed: Newton solve of f^3(1/2) = 1-1/r.",
+     "value": 3.6785735104283224,
+     "tolerance": 1e-09,
+     "computedValue": 3.6785735104283224,
+     "verifiedNumerically": true,
+     "source": "root of r^3-2r^2-4r-8 (literature 3.67857351)"
+    },
+    {
+     "id": "two-cycle-low-r3.2",
+     "kind": "exact",
+     "description": "Lower point of the attracting 2-cycle at r=3.2: (r+1-sqrt((r-3)(r+1)))/(2r); upper point is 0.799455490467370. Computed: iterate x0=0.2 for 2000 steps, take min of next two iterates.",
+     "value": 0.5130445095326299,
+     "tolerance": 1e-09,
+     "computedValue": 0.5130445095326298,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "lyapunov-r3.2",
+     "kind": "exact",
+     "description": "Lyapunov exponent on the stable 2-cycle at r=3.2: (1/2) ln|4+2r-r^2| = (1/2) ln 0.16. Computed: mean of ln|r(1-2x_n)| over 100000 steps after 1000 transient from x0=0.2.",
+     "value": -0.9162907318741602,
+     "tolerance": 1e-09,
+     "computedValue": -0.9162907318745688,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "lyapunov-r4",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at r=4 is ln 2. Method: mean of ln|r(1-2x_n)| over N=1e6 steps after 1000 transient. Observed over 32 initial conditions in (0.05,0.95): sd 1.7e-06, max |dev| 4.5e-06 (the sum telescopes at r=4, so convergence is O(1/N)).",
+     "value": 0.6931471805599453,
+     "tolerance": 1e-05,
+     "computedValue": 0.6931467095488228,
+     "verifiedNumerically": true,
+     "source": "exact: ln 2 (conjugacy with the tent map)"
+    },
+    {
+     "id": "lyapunov-r3.9",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at r=3.9. Method as lyapunov-r4 (N=1e6 after 1000 transient). Value = mean over 32 initial conditions; observed sd 4.4e-04, max |dev| 9.6e-04.",
+     "value": 0.49603,
+     "tolerance": 0.005,
+     "computedValue": 0.49602685186661566,
+     "verifiedNumerically": true,
+     "source": "computed (literature approx. 0.4945-0.4950)"
+    },
+    {
+     "id": "mean-x-r4",
+     "kind": "statistical",
+     "description": "Time average of x at r=4 is 1/2 (invariant density 1/(pi sqrt(x(1-x)))); the variance is 1/8 (measured 0.12498). N=1e6 after 1000 transient; over 32 initial conditions sd 3.5e-04, max |dev| 1.2e-03.",
+     "value": 0.5,
+     "tolerance": 0.002,
+     "computedValue": 0.5000667250814699,
+     "verifiedNumerically": true,
+     "source": "exact: arcsine law"
+    },
+    {
+     "id": "golden-r4-x8",
+     "kind": "golden",
+     "description": "x_8 from x_0=0.2 at r=4, plain iteration x <- r*x*(1-x) (x_1=0.64, x_2=0.9216). Reference value from 50-digit arithmetic; rounding-error amplification bound 640.",
+     "value": 0.401973849297517,
+     "tolerance": 1e-09,
+     "computedValue": 0.40197384929750063,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-r3.9-x10",
+     "kind": "golden",
+     "description": "x_10 from x_0=0.5 at r=3.9, plain iteration (x_1=0.975). Reference from 50-digit arithmetic; amplification bound 216.",
+     "value": 0.10400971326747192,
+     "tolerance": 1e-09,
+     "computedValue": 0.1040097132674683,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "lozi": {
+   "oracles": [
+    {
+     "id": "fixed-point-plus-x",
+     "kind": "exact",
+     "description": "Fixed point in x>0: x = 1/(1+a-b), y = b*x = 0.227272727272727, at a=1.7, b=0.5 (saddle inside the attractor). Computed: numerical root of the map equations.",
+     "value": 0.45454545454545453,
+     "tolerance": 1e-12,
+     "computedValue": 0.45454545454545453,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "fixed-point-minus-x",
+     "kind": "exact",
+     "description": "Fixed point in x<0: x = 1/(1-a-b), y = b*x = -0.416666666666667 (exists when a+b>1).",
+     "value": -0.8333333333333334,
+     "tolerance": 1e-12,
+     "computedValue": -0.8333333333333334,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=1.7, b=0.5 (per-step QR with J = [[-a*sign(x), 1],[b, 0]], N=1e6 after 1000 transient). Value: mean of 12 runs of 1e8 steps. Scatter at N=1e6 over 32 initial conditions: sd 3.5e-04, max |dev| 6.5e-04.",
+     "value": 0.47023,
+     "tolerance": 0.002,
+     "computedValue": 0.47027685962328636,
+     "verifiedNumerically": true,
+     "source": "computed; literature approx. 0.47"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 3.5e-04, max |dev| 6.5e-04.",
+     "value": -1.16338,
+     "tolerance": 0.002,
+     "computedValue": -1.1634240401832239,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "lyapunov-sum",
+     "kind": "invariant",
+     "description": "lam1 + lam2 = ln|det J| = ln(b) = ln 0.5 for any orbit (det J = -b). Computed from a 1e6-step QR run; allowed deviation 1e-9.",
+     "value": -0.6931471805599453,
+     "tolerance": 1e-09,
+     "computedValue": -0.693147180559958,
+     "verifiedNumerically": true,
+     "source": "exact"
+    },
+    {
+     "id": "golden-x10",
+     "kind": "golden",
+     "description": "x_10 from (0,0) at a=1.7, b=0.5, simultaneous update (x,y) <- (1-a*|x|+y, b*x); first steps (1,0), (-0.7,0.5). Reference from 50-digit arithmetic; amplification bound 246.",
+     "value": -0.689509813,
+     "tolerance": 1e-09,
+     "computedValue": -0.6895098129999997,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y10",
+     "kind": "golden",
+     "description": "y_10 of the same orbit (equals b*x_9).",
+     "value": 0.467825195,
+     "tolerance": 1e-09,
+     "computedValue": 0.4678251949999999,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -1.2838856148474176,
+    1.3434649344174663,
+    -0.6419428074237088,
+    0.6717324672087331
+   ]
+  },
+  "ricker": {
+   "oracles": [
+    {
+     "id": "pd-r1",
+     "kind": "exact",
+     "description": "First period doubling: the fixed point x*=1 has multiplier 1-r, equal to -1 at r=2. Computed: independent mpmath solve of f(x)=x, f'(x)=-1.",
+     "value": 2.0,
+     "tolerance": 1e-09,
+     "computedValue": 2.0,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "pd-r2",
+     "kind": "exact",
+     "description": "Second period doubling (2-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 2.526467725853819,
+     "tolerance": 1e-09,
+     "computedValue": 2.526467725853819,
+     "verifiedNumerically": true,
+     "source": "literature r2 = 2.5265 (May & Oster 1976)"
+    },
+    {
+     "id": "pd-r3",
+     "kind": "exact",
+     "description": "Third period doubling (4-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 2.6563532651571773,
+     "tolerance": 1e-09,
+     "computedValue": 2.6563532651571773,
+     "verifiedNumerically": true,
+     "source": "literature r2 = 2.5265 (May & Oster 1976)"
+    },
+    {
+     "id": "pd-r4",
+     "kind": "exact",
+     "description": "Fourth period doubling (8-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve with numerical differentiation.",
+     "value": 2.6846233582942234,
+     "tolerance": 1e-09,
+     "computedValue": 2.6846233582942234,
+     "verifiedNumerically": true,
+     "source": "literature r2 = 2.5265 (May & Oster 1976)"
+    },
+    {
+     "id": "pd-accumulation",
+     "kind": "exact",
+     "description": "Accumulation point of the period-doubling cascade (onset of chaos). Value: Aitken-extrapolated superstable parameters (k<=12); computed: independent extrapolation of the bifurcation values r_k.",
+     "value": 2.6923688543905127,
+     "tolerance": 1e-09,
+     "computedValue": 2.6923688543905127,
+     "verifiedNumerically": true,
+     "source": "literature 2.6924 (May & Oster 1976)"
+    },
+    {
+     "id": "period3-window-onset",
+     "kind": "exact",
+     "description": "Tangent bifurcation creating the period-3 window: f^3(x)=x with (f^3)'(x)=+1. Value: Newton continuation at 240-bit precision; computed: independent mpmath solve.",
+     "value": 3.1024399156354265,
+     "tolerance": 1e-08,
+     "computedValue": 3.1024399156354265,
+     "verifiedNumerically": true,
+     "source": "literature 3.1024 (May & Oster 1976)"
+    },
+    {
+     "id": "lyapunov-r3",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at r=3: mean of ln|(1-r x_n) exp(r(1-x_n))| over N=1e6 steps after 1000 transient. Value = mean over 32 initial conditions in (0.05,2.5); observed sd 4.8e-04, max |dev| 9.2e-04.",
+     "value": 0.3859,
+     "tolerance": 0.005,
+     "computedValue": 0.3859274845936598,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "attractor-max-r3",
+     "kind": "exact",
+     "description": "Upper bound of the attractor is the image of the critical point x_c=1/r: f(1/r) = exp(r-1)/r; value for r=3 (lower bound f(f(1/r)) = 0.030572). Computed: maximum of a 2e6-step orbit from x0=0.5.",
+     "value": 2.46301869964355,
+     "tolerance": 1e-05,
+     "computedValue": 2.463018699637131,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "golden-r3-x8",
+     "kind": "golden",
+     "description": "x_8 from x_0=0.5 at r=3, plain iteration x <- x*exp(r*(1-x)). Reference from 50-digit arithmetic; amplification bound 379.",
+     "value": 2.2986838261948583,
+     "tolerance": 1e-09,
+     "computedValue": 2.298683826194863,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "sine": {
+   "oracles": [
+    {
+     "id": "onset-nonzero-fixed-point",
+     "kind": "exact",
+     "description": "x=0 loses stability (f'(0) = r*pi = 1) at r = 1/pi; for larger r a positive fixed point exists. Computed: root of r*pi*cos(0)-1.",
+     "value": 0.3183098861837907,
+     "tolerance": 1e-12,
+     "computedValue": 0.3183098861837907,
+     "verifiedNumerically": true,
+     "source": "closed form 1/pi"
+    },
+    {
+     "id": "pd-r1",
+     "kind": "exact",
+     "description": "First period doubling (1-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve of f^p(x)=x, (f^p)'(x)=-1 using numerical differentiation.",
+     "value": 0.7199616829795352,
+     "tolerance": 1e-09,
+     "computedValue": 0.7199616829795352,
+     "verifiedNumerically": true,
+     "source": "literature r1 = 0.7199616, r2 = 0.8332663 (e.g. Strogatz ex. 10.2.8 style tables)"
+    },
+    {
+     "id": "pd-r2",
+     "kind": "exact",
+     "description": "Second period doubling (2-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve of f^p(x)=x, (f^p)'(x)=-1 using numerical differentiation.",
+     "value": 0.8332663537456857,
+     "tolerance": 1e-09,
+     "computedValue": 0.8332663537456857,
+     "verifiedNumerically": true,
+     "source": "literature r1 = 0.7199616, r2 = 0.8332663 (e.g. Strogatz ex. 10.2.8 style tables)"
+    },
+    {
+     "id": "pd-r3",
+     "kind": "exact",
+     "description": "Third period doubling (4-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve of f^p(x)=x, (f^p)'(x)=-1 using numerical differentiation.",
+     "value": 0.8586090599021182,
+     "tolerance": 1e-09,
+     "computedValue": 0.8586090599021182,
+     "verifiedNumerically": true,
+     "source": "literature r1 = 0.7199616, r2 = 0.8332663 (e.g. Strogatz ex. 10.2.8 style tables)"
+    },
+    {
+     "id": "pd-r4",
+     "kind": "exact",
+     "description": "Fourth period doubling (8-cycle multiplier = -1). Value: Newton solve with analytic derivatives at 240-bit precision; computed: independent mpmath solve of f^p(x)=x, (f^p)'(x)=-1 using numerical differentiation.",
+     "value": 0.864084173708717,
+     "tolerance": 1e-09,
+     "computedValue": 0.864084173708717,
+     "verifiedNumerically": true,
+     "source": "literature r1 = 0.7199616, r2 = 0.8332663 (e.g. Strogatz ex. 10.2.8 style tables)"
+    },
+    {
+     "id": "pd-accumulation",
+     "kind": "exact",
+     "description": "Accumulation point of the period-doubling cascade. Value: Aitken-extrapolated superstable parameters R_k (k<=13); computed: independent extrapolation of the bifurcation values r_k.",
+     "value": 0.8655792688186377,
+     "tolerance": 1e-09,
+     "computedValue": 0.8655792688186377,
+     "verifiedNumerically": true,
+     "source": "literature approx. 0.8655792"
+    },
+    {
+     "id": "feigenbaum-delta-universality",
+     "kind": "exact",
+     "description": "Universality: the ratios (r_(k-1)-r_(k-2))/(r_k-r_(k-1)) of this non-quadratic-polynomial map converge to the same Feigenbaum delta as the logistic map; (r3-r2)/(r4-r3) = 4.628709. Computed: Aitken-extrapolated ratio of superstable parameters up to period 2^13.",
+     "value": 4.66920160910299,
+     "tolerance": 1e-06,
+     "computedValue": 4.669201609102989,
+     "verifiedNumerically": true,
+     "source": "OEIS A006890"
+    },
+    {
+     "id": "lyapunov-r1",
+     "kind": "statistical",
+     "description": "Lyapunov exponent at r=1: mean of ln|r*pi*cos(pi x_n)| over N=1e6 steps after 1000 transient. Value = mean over 32 initial conditions in (0.05,0.95); observed sd 8.0e-05, max |dev| 1.9e-04.",
+     "value": 0.6891,
+     "tolerance": 0.0005,
+     "computedValue": 0.6890675538376608,
+     "verifiedNumerically": true,
+     "source": "computed (literature approx. 0.689)"
+    },
+    {
+     "id": "golden-r1-x7",
+     "kind": "golden",
+     "description": "x_7 from x_0=0.3 at r=1, plain iteration x <- r*sin(pi*x). Reference from 50-digit arithmetic; amplification bound 148.",
+     "value": 0.959452885133876,
+     "tolerance": 1e-09,
+     "computedValue": 0.9594528851338733,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-r0.9-x8",
+     "kind": "golden",
+     "description": "x_8 from x_0=0.3 at r=0.9. Reference from 50-digit arithmetic; amplification bound 105.",
+     "value": 0.3503557709177938,
+     "tolerance": 1e-09,
+     "computedValue": 0.35035577091779374,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "tent": {
+   "oracles": [
+    {
+     "id": "mean-x-mu2",
+     "kind": "statistical",
+     "description": "Time average of x at mu=2 is 1/2 (uniform invariant density; variance 1/12, measured 0.08339). Iterate with mu clamped to 2-1e-12 (exact 2 collapses to 0 in binary floating point), N=1e6 after 1000 transient; over 32 initial conditions sd 3.2e-04, max |dev| 8.2e-04.",
+     "value": 0.5,
+     "tolerance": 0.002,
+     "computedValue": 0.49982924197368583,
+     "verifiedNumerically": true,
+     "source": "exact: Lebesgue measure is invariant"
+    },
+    {
+     "id": "lyapunov-mu1.5",
+     "kind": "exact",
+     "description": "Lyapunov exponent equals ln(mu) for every orbit because |f'(x)| = mu on both branches; here mu=1.5 (at mu=2 it is ln 2 = 0.693147...). Computed: orbit average of ln|central difference of f| (h=1e-7) over 100000 steps after 1000 transient from x0=0.3.",
+     "value": 0.4054651081081644,
+     "tolerance": 1e-07,
+     "computedValue": 0.4054651077165782,
+     "verifiedNumerically": true,
+     "source": "closed form ln(mu)"
+    },
+    {
+     "id": "fixed-point-mu1.5",
+     "kind": "exact",
+     "description": "Nonzero fixed point x* = mu/(1+mu) (exists for mu>1, always repelling); value for mu=1.5. Computed: bisection root of f(x)-x on [0.55,0.65].",
+     "value": 0.6,
+     "tolerance": 1e-12,
+     "computedValue": 0.6,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "two-band-gap-lower-edge-mu1.3",
+     "kind": "exact",
+     "description": "For 1<mu<sqrt(2) the attractor is two bands [c2,c4] and [c3,c1] with c1=mu/2, c2=mu(1-mu/2), c3=mu*c2, c4=mu(1-c3); the gap (c4,c3) closes at mu=sqrt(2). Value: c4 at mu=1.3 (c3=0.591500, c2=0.455000, c1=0.650000). Computed: largest orbit point below x*=mu/(1+mu) over 2e6 steps from x0=0.3.",
+     "value": 0.5310500000000001,
+     "tolerance": 1e-05,
+     "computedValue": 0.53104958952188,
+     "verifiedNumerically": true,
+     "source": "closed form"
+    },
+    {
+     "id": "band-merging-mu",
+     "kind": "exact",
+     "description": "Band-merging parameter: the two-band attractor becomes a single interval [mu(1-mu/2), mu/2] at mu = sqrt(2). Computed: root of the gap width c3-c4 as a function of mu.",
+     "value": 1.4142135623730951,
+     "tolerance": 1e-09,
+     "computedValue": 1.4142135623730951,
+     "verifiedNumerically": true,
+     "source": "closed form sqrt(2)"
+    },
+    {
+     "id": "golden-mu2-x8",
+     "kind": "golden",
+     "description": "x_8 from x_0=0.1234 at mu=2 (unclamped; 8 steps are far from the 50-step collapse), x <- mu*min(x,1-x). Reference from 50-digit arithmetic; amplification bound 511.",
+     "value": 0.4096,
+     "tolerance": 1e-09,
+     "computedValue": 0.4096000000000011,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-mu1.5-x10",
+     "kind": "golden",
+     "description": "x_10 from x_0=0.3 at mu=1.5. Reference from 50-digit arithmetic; amplification bound 171.",
+     "value": 0.62373046875,
+     "tolerance": 1e-09,
+     "computedValue": 0.623730468749998,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ]
+  },
+  "tinkerbell": {
+   "oracles": [
+    {
+     "id": "lyapunov-1",
+     "kind": "statistical",
+     "description": "Largest Lyapunov exponent at a=0.9, b=-0.6013, c=2, d=0.5 (per-step QR, J = [[2x+a, -2y+b],[2y+c, 2x+d]], N=1e6 after 1000 transient). Value: mean of 12 runs of 5e7 steps. Scatter at N=1e6 over 32 initial conditions on the attractor: sd 2.4e-04, max |dev| 4.5e-04.",
+     "value": 0.1998,
+     "tolerance": 0.002,
+     "computedValue": 0.19980818394017985,
+     "verifiedNumerically": true,
+     "source": "computed; literature approx. 0.19"
+    },
+    {
+     "id": "lyapunov-2",
+     "kind": "statistical",
+     "description": "Second Lyapunov exponent, same method. Scatter at N=1e6: sd 9.0e-04, max |dev| 2.3e-03.",
+     "value": -0.5001,
+     "tolerance": 0.005,
+     "computedValue": -0.4998219568527717,
+     "verifiedNumerically": true,
+     "source": "computed; literature approx. -0.52"
+    },
+    {
+     "id": "lyapunov-sum-identity",
+     "kind": "invariant",
+     "description": "lam1 + lam2 equals the orbit average of ln|det J| = ln|(2x+a)(2x+d) - (b-2y)(2y+c)| accumulated over the same steps (the determinant is not constant). Value 0 = difference; computed from a 1e6-step run; allowed deviation 1e-9.",
+     "value": 0.0,
+     "tolerance": 1e-09,
+     "computedValue": -5.662137425588298e-15,
+     "verifiedNumerically": true,
+     "source": "exact identity"
+    },
+    {
+     "id": "origin-eigenvalue-modulus",
+     "kind": "exact",
+     "description": "(0,0) is a fixed point; DT(0,0) = [[a,b],[c,d]] has complex eigenvalues of modulus sqrt(ad-bc) > 1 (unstable focus), so an orbit started exactly at the origin never leaves it while nearby points spiral out. Computed: numpy eigenvalues of the Jacobian at the origin.",
+     "value": 1.285534908121907,
+     "tolerance": 1e-12,
+     "computedValue": 1.285534908121907,
+     "verifiedNumerically": true,
+     "source": "closed form sqrt(a*d - b*c)"
+    },
+    {
+     "id": "golden-x12",
+     "kind": "golden",
+     "description": "x_12 from (x_0,y_0)=(-0.72,-0.64) at a=0.9, b=-0.6013, c=2, d=0.5, simultaneous update. Reference from 50-digit arithmetic; amplification bound 179.",
+     "value": -0.19285360869980658,
+     "tolerance": 1e-09,
+     "computedValue": -0.1928536086998084,
+     "verifiedNumerically": true,
+     "source": "computed"
+    },
+    {
+     "id": "golden-y12",
+     "kind": "golden",
+     "description": "y_12 of the same orbit.",
+     "value": -0.6410575402484492,
+     "tolerance": 1e-09,
+     "computedValue": -0.6410575402484435,
+     "verifiedNumerically": true,
+     "source": "computed"
+    }
+   ],
+   "bbox": [
+    -1.2332982595017636,
+    0.46131276003043153,
+    -1.5469444976462534,
+    0.5444521716938446
+   ]
+  }
+ },
+ "special": {
+  "double_pendulum": {
+   "eom_check": {
+    "max_rel_diff_accel": 4.490467050214237e-16,
+    "max_rel_diff_energy": 1.6279482588851527e-15
+   },
+   "drift": [
+    {
+     "dt": 0.008333333333333333,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 0.0002901522095193086,
+     "end": -0.00027862511972817844
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 0.0002807187850993046,
+     "end": -0.000262717707674193
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 0.0002746545006939923,
+     "end": -0.0002606363099275851
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 0.0003513488988943197,
+     "end": -0.00032164205854223575
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 0.0026445029489181337,
+     "end": -0.0026237026983224354
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 0.0018294032266317488,
+     "end": -0.001815847471552418
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 0.00204223544331341,
+     "end": -0.002022656526720533
+    },
+    {
+     "dt": 0.008333333333333333,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 0.0025847136461066827,
+     "end": -0.002542947410678174
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 1.0051458991330133e-05,
+     "end": -8.350110498130771e-06
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 9.938937712200893e-06,
+     "end": -8.10589506652948e-06
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 9.591607958790604e-06,
+     "end": -9.337474249158816e-06
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 1.1956890335061324e-05,
+     "end": -9.984071672850995e-06
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 5.308870047923891e-05,
+     "end": -5.079382444070562e-05
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 7.285324749009592e-05,
+     "end": -7.218848891746322e-05
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 5.931878236011673e-05,
+     "end": -5.682205147630032e-05
+    },
+    {
+     "dt": 0.004166666666666667,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 7.395457094572057e-05,
+     "end": -7.242015127217717e-05
+    },
+    {
+     "dt": 0.004,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 8.251143706924193e-06,
+     "end": -6.805019548724413e-06
+    },
+    {
+     "dt": 0.004,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 8.157968914873972e-06,
+     "end": -6.6063564656829744e-06
+    },
+    {
+     "dt": 0.004,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 7.909566960749458e-06,
+     "end": -7.635495646661382e-06
+    },
+    {
+     "dt": 0.004,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 9.844493730757812e-06,
+     "end": -8.13266030818928e-06
+    },
+    {
+     "dt": 0.004,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 5.674904232042182e-05,
+     "end": -5.431318622847941e-05
+    },
+    {
+     "dt": 0.004,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 5.521725846893733e-05,
+     "end": -5.320538945977094e-05
+    },
+    {
+     "dt": 0.004,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 4.89619849297836e-05,
+     "end": -4.805021270939253e-05
+    },
+    {
+     "dt": 0.004,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 7.647809688326836e-05,
+     "end": -7.427794500214181e-05
+    },
+    {
+     "dt": 0.002,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 5.281394841718061e-07,
+     "end": -2.0947342258197573e-07
+    },
+    {
+     "dt": 0.002,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 5.220719445361265e-07,
+     "end": -2.0312946549838853e-07
+    },
+    {
+     "dt": 0.002,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 5.19553485324565e-07,
+     "end": -2.5537968475336436e-07
+    },
+    {
+     "dt": 0.002,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 5.633541239076078e-07,
+     "end": -2.4668354325731233e-07
+    },
+    {
+     "dt": 0.002,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 1.8547088113960905e-06,
+     "end": -1.8009545907658372e-06
+    },
+    {
+     "dt": 0.002,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 1.6661283928357552e-06,
+     "end": -1.2215019096487613e-06
+    },
+    {
+     "dt": 0.002,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 1.4583068151037818e-06,
+     "end": -1.400669982907942e-06
+    },
+    {
+     "dt": 0.002,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 1.4908197559764392e-06,
+     "end": -1.4513997136349633e-06
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 6.144353524008643e-07,
+     "end": -2.572465227244543e-07
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 6.116721953105507e-07,
+     "end": -2.494863429461948e-07
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 6.097166067379763e-07,
+     "end": -3.115866243004742e-07
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 6.547661911566604e-07,
+     "end": -3.0331771083515267e-07
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 1.942789901373356e-06,
+     "end": -1.8076247547425447e-06
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 2.494273850823017e-06,
+     "end": -2.350840752535557e-06
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 1.9933201980333873e-06,
+     "end": -1.8956195184867678e-06
+    },
+    {
+     "dt": 0.0020833333333333333,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 2.7446862457241184e-06,
+     "end": -2.63446390113932e-06
+    },
+    {
+     "dt": 0.001,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 3.846496634891488e-08,
+     "end": -6.3178457763620264e-09
+    },
+    {
+     "dt": 0.001,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 3.754166019686908e-08,
+     "end": -6.108662270800784e-09
+    },
+    {
+     "dt": 0.001,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 3.5794701182368613e-08,
+     "end": -9.004055521898748e-09
+    },
+    {
+     "dt": 0.001,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 4.065404157936538e-08,
+     "end": -7.202558880884486e-09
+    },
+    {
+     "dt": 0.001,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 5.031134617454931e-08,
+     "end": -4.382071414270789e-08
+    },
+    {
+     "dt": 0.001,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 5.5092494372413063e-08,
+     "end": -5.13456781817713e-08
+    },
+    {
+     "dt": 0.001,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 6.87461245914559e-08,
+     "end": -6.119378361663018e-08
+    },
+    {
+     "dt": 0.001,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 8.226809489021779e-08,
+     "end": -7.231302079181777e-08
+    },
+    {
+     "dt": 0.0005,
+     "T": 20.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 2.5725271059577257e-09,
+     "end": -1.8352516933013102e-10
+    },
+    {
+     "dt": 0.0005,
+     "T": 20.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 2.5124682053710723e-09,
+     "end": -1.767370975148941e-10
+    },
+    {
+     "dt": 0.0005,
+     "T": 20.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 2.350769114201854e-09,
+     "end": -3.4518279196015466e-10
+    },
+    {
+     "dt": 0.0005,
+     "T": 20.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 2.71324796140217e-09,
+     "end": -1.9225632021178767e-10
+    },
+    {
+     "dt": 0.0005,
+     "T": 100.0,
+     "k": 0,
+     "E0": -1.8020677649453305e-15,
+     "maxdev": 2.5725271059577257e-09,
+     "end": -1.6392362765423408e-09
+    },
+    {
+     "dt": 0.0005,
+     "T": 100.0,
+     "k": 1,
+     "E0": 1.5039070172557014e-05,
+     "maxdev": 3.079538151926493e-09,
+     "end": -1.6310564291434338e-09
+    },
+    {
+     "dt": 0.0005,
+     "T": 100.0,
+     "k": 2,
+     "E0": 1.4646056637056148e-05,
+     "maxdev": 3.188241427921299e-09,
+     "end": -1.7336898790457544e-09
+    },
+    {
+     "dt": 0.0005,
+     "T": 100.0,
+     "k": 3,
+     "E0": -1.1655735469797243e-05,
+     "maxdev": 2.71324796140217e-09,
+     "end": -1.634323230540564e-09
+    }
+   ],
+   "lyap_long": [
+    {
+     "k": 0,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9300920636097819,
+      0.001018100779275533,
+      -0.0009207457474621583,
+      -0.9302134229663358
+     ],
+     "ok": true,
+     "mins": [
+      -2.093786476782688,
+      -549.5833837363049,
+      -7.671723727569188,
+      -10.848692350194371
+     ],
+     "maxs": [
+      2.0941519245141746,
+      516.4495876220848,
+      7.671370615605092,
+      10.848441286177755
+     ],
+     "dE": -0.0001841360246701305
+    },
+    {
+     "k": 1,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9440112223128674,
+      0.000953805654598532,
+      -0.0009766049416848213,
+      -0.9440055479654146
+     ],
+     "ok": true,
+     "mins": [
+      -2.09277830490096,
+      -386.65221589636064,
+      -7.669417051526582,
+      -10.843965701376785
+     ],
+     "maxs": [
+      2.0929222221047348,
+      417.0875684828674,
+      7.66720256400868,
+      10.84549579016091
+     ],
+     "dE": -0.00019386888420364068
+    },
+    {
+     "k": 2,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9318063946109941,
+      0.0009453370654964333,
+      -0.0008040233426028867,
+      -0.9319477161905274
+     ],
+     "ok": true,
+     "mins": [
+      -2.0950356191474895,
+      -416.8717775345213,
+      -7.673200980268738,
+      -10.851408398098712
+     ],
+     "maxs": [
+      2.094934538911218,
+      210.37633641069064,
+      7.672920452266162,
+      10.850807517774765
+     ],
+     "dE": -0.0001893701485880528
+    },
+    {
+     "k": 3,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9204504614635218,
+      0.0010029008545325666,
+      -0.000961042058611493,
+      -0.9204928907550805
+     ],
+     "ok": true,
+     "mins": [
+      -2.093503102981651,
+      -47.20180552573344,
+      -7.671719437910563,
+      -10.841790139741116
+     ],
+     "maxs": [
+      2.0935980313898,
+      687.8408170400295,
+      7.6710820826453485,
+      10.846270954844913
+     ],
+     "dE": -0.00018000537028928232
+    },
+    {
+     "k": 4,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9429042363401499,
+      0.001172167384629648,
+      -0.0011357577625190722,
+      -0.9429859016228925
+     ],
+     "ok": true,
+     "mins": [
+      -2.094825410708076,
+      -398.5122984360726,
+      -7.672434643407287,
+      -10.850744107843951
+     ],
+     "maxs": [
+      2.0946888661491805,
+      315.93781467775176,
+      7.671973220070167,
+      10.849881710052765
+     ],
+     "dE": -0.00019169732742512803
+    },
+    {
+     "k": 5,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9160863768741545,
+      0.0009594965993439876,
+      -0.0009791719288293561,
+      -0.9160980838311643
+     ],
+     "ok": true,
+     "mins": [
+      -2.093703237750869,
+      -1045.398070318482,
+      -7.672041007850353,
+      -10.848479206757842
+     ],
+     "maxs": [
+      2.0939503176935808,
+      72.24266960423586,
+      7.672661196820664,
+      10.849106586861412
+     ],
+     "dE": -0.0001854074652764704
+    },
+    {
+     "k": 6,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9115132668985497,
+      0.0009191508566856433,
+      -0.0008664377451407788,
+      -0.9116351716272063
+     ],
+     "ok": true,
+     "mins": [
+      -2.0928668801543098,
+      -196.9536862952838,
+      -7.668792744492502,
+      -10.844646379668818
+     ],
+     "maxs": [
+      2.093398731753855,
+      567.4954795306022,
+      7.669908615536342,
+      10.847201958824073
+     ],
+     "dE": -0.0001851433372135041
+    },
+    {
+     "k": 7,
+     "n": 5000000,
+     "dt": 0.002,
+     "le": [
+      0.9385854926408603,
+      0.0005258280873531537,
+      -0.0004465641746048658,
+      -0.9386968158264665
+     ],
+     "ok": true,
+     "mins": [
+      -2.0947738223131793,
+      -77.78766739228973,
+      -7.670481231268705,
+      -10.850546839529468
+     ],
+     "maxs": [
+      2.0951150290114655,
+      497.7861458359523,
+      7.6729361340987685,
+      10.851319063978975
+     ],
+     "dE": -0.00018964039645664316
+    }
+   ],
+   "lyap_recipe": [
+    {
+     "k": 0,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.9291246679686245,
+      0.008620155442776542,
+      -0.007599689615238307,
+      -0.9307816630397543
+     ],
+     "ok": true,
+     "mins": [
+      -2.0833862091562,
+      -78.65387825041205,
+      -7.668723030957166,
+      -10.810940787041986
+     ],
+     "maxs": [
+      2.087576195607223,
+      66.06851764412056,
+      7.659338902711619,
+      10.847449944755263
+     ],
+     "dE": -1.8093446634256205e-05
+    },
+    {
+     "k": 1,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.8755740229571422,
+      0.004329575534391034,
+      -0.003352259141336445,
+      -0.8769379224663837
+     ],
+     "ok": true,
+     "mins": [
+      -2.083073912272451,
+      -185.10459431407617,
+      -7.661447680203066,
+      -10.80409944840506
+     ],
+     "maxs": [
+      2.0867889723187307,
+      3.0451974106476767,
+      7.662695085430642,
+      10.832785444868588
+     ],
+     "dE": -1.9450497663664468e-05
+    },
+    {
+     "k": 2,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.9020504459174455,
+      0.008789346026131746,
+      -0.008118277054700914,
+      -0.9031217133499949
+     ],
+     "ok": true,
+     "mins": [
+      -2.094746826483854,
+      -39.53375189226792,
+      -7.669235390959033,
+      -10.83491690816268
+     ],
+     "maxs": [
+      2.086986366275561,
+      127.62616928424004,
+      7.671590192797206,
+      10.843418114275156
+     ],
+     "dE": -1.8170535154793388e-05
+    },
+    {
+     "k": 3,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.8775707673524172,
+      0.010696404812051108,
+      -0.010236164469736415,
+      -0.878387976133435
+     ],
+     "ok": true,
+     "mins": [
+      -2.093224209709353,
+      -14.461200223464667,
+      -7.671610164537209,
+      -10.804490061575247
+     ],
+     "maxs": [
+      2.0917305968826763,
+      134.0556759655725,
+      7.665925978720718,
+      10.84250654022355
+     ],
+     "dE": -1.6643874585997587e-05
+    },
+    {
+     "k": 4,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.9535193436189852,
+      0.009395545956760594,
+      -0.009669911458599963,
+      -0.9533813718273161
+     ],
+     "ok": true,
+     "mins": [
+      -2.0911893812740363,
+      -234.23276428221047,
+      -7.654985387832234,
+      -10.849066433725419
+     ],
+     "maxs": [
+      2.092291982389964,
+      65.76597478853948,
+      7.6665559994752766,
+      10.84531963814822
+     ],
+     "dE": -1.9324136985627086e-05
+    },
+    {
+     "k": 5,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.9336339173937556,
+      0.006354729265200407,
+      -0.0059888510428441994,
+      -0.9346438057801509
+     ],
+     "ok": true,
+     "mins": [
+      -2.093598956025786,
+      -58.15672641606223,
+      -7.666958860377413,
+      -10.847680579088882
+     ],
+     "maxs": [
+      2.0888263208070224,
+      72.24266960423586,
+      7.672661196820664,
+      10.843300720083588
+     ],
+     "dE": -1.8364056512525442e-05
+    },
+    {
+     "k": 6,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.8848992542679431,
+      0.005902226072241576,
+      -0.005791892568864637,
+      -0.8856324116861388
+     ],
+     "ok": true,
+     "mins": [
+      -2.090403440776871,
+      -189.61178146765369,
+      -7.666704468666102,
+      -10.835949433705178
+     ],
+     "maxs": [
+      2.0855500915261302,
+      3.262364774308469,
+      7.660971924967658,
+      10.843494986863035
+     ],
+     "dE": -1.7057493968601276e-05
+    },
+    {
+     "k": 7,
+     "n": 500000,
+     "dt": 0.002,
+     "le": [
+      0.9596798073900581,
+      0.008978686071160317,
+      -0.0071667909921553155,
+      -0.9619686380969379
+     ],
+     "ok": true,
+     "mins": [
+      -2.0928397103360714,
+      -27.169630907484066,
+      -7.667112209350103,
+      -10.850204670542476
+     ],
+     "maxs": [
+      2.088773865674457,
+      215.9282980318796,
+      7.662711502695367,
+      10.818882789537435
+     ],
+     "dE": -1.830559253990921e-05
+    }
+   ],
+   "normal_modes": {
+    "numeric": [
+     2.397199397864,
+     5.787351298036
+    ],
+    "closed": [
+     2.397199397864086,
+     5.787351298036095
+    ]
+   }
+  },
+  "nose_hoover": {
+   "long": [
+    {
+     "k": 0,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      0.0,
+      5.0,
+      0.0
+     ],
+     "le": [
+      0.012876778452930993,
+      -7.668635393399911e-06,
+      -0.012921008356257192
+     ],
+     "meandiv": -5.1912780892350884e-05,
+     "ok": true,
+     "mins": [
+      -5.513748336010025,
+      -5.516761845449889,
+      -5.079732301774285
+     ],
+     "maxs": [
+      5.052956960009868,
+      5.322260110023993,
+      5.548896155207118
+     ],
+     "mean": [
+      -0.018764470545478015,
+      -5.647391532540888e-06,
+      -5.188377467486202e-05
+     ],
+     "msq": [
+      1.4338351879481972,
+      0.9999939074449893,
+      2.3184402162228577
+     ]
+    },
+    {
+     "k": 1,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      0.0045954310174409875,
+      5.028165204807755,
+      -0.03966827398948395
+     ],
+     "le": [
+      0.015110017775502353,
+      -1.166791868867395e-06,
+      -0.015137552388962267
+     ],
+     "meandiv": -2.868926434461091e-05,
+     "ok": true,
+     "mins": [
+      -5.0311895038557,
+      -5.610527466577866,
+      -5.362951512733761
+     ],
+     "maxs": [
+      5.232303045086977,
+      5.5791247250138385,
+      5.073081692241066
+     ],
+     "mean": [
+      0.052387340851484096,
+      1.0991540956314308e-05,
+      -2.8713147054658003e-05
+     ],
+     "msq": [
+      1.413622758033394,
+      1.000004559454078,
+      2.3532934082342627
+     ]
+    },
+    {
+     "k": 2,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      -0.036518848136215885,
+      4.984079765828303,
+      -0.025938696451360876
+     ],
+     "le": [
+      0.013760912658200137,
+      -1.126074594732823e-05,
+      -0.013811530229137297
+     ],
+     "meandiv": -6.187776054247683e-05,
+     "ok": true,
+     "mins": [
+      -5.069552454400779,
+      -5.707169907425866,
+      -5.589108849820292
+     ],
+     "maxs": [
+      5.3354041705481245,
+      5.8271150146201425,
+      5.398283891669897
+     ],
+     "mean": [
+      -0.06252574580951206,
+      1.4743497766172869e-06,
+      -6.18783207999866e-05
+     ],
+     "msq": [
+      1.408101072369768,
+      0.9999998022643956,
+      2.3192921581156845
+     ]
+    },
+    {
+     "k": 3,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      -0.0032438059142337883,
+      5.048173817798835,
+      -0.030803657393701923
+     ],
+     "le": [
+      0.016077724872353448,
+      -7.705850184152794e-06,
+      -0.016125162067305684
+     ],
+     "meandiv": -5.516380996698473e-05,
+     "ok": true,
+     "mins": [
+      -5.653476865543462,
+      -5.759747825842547,
+      -5.285703191746124
+     ],
+     "maxs": [
+      5.4228805727428915,
+      5.724561743909526,
+      5.510365887362466
+     ],
+     "mean": [
+      0.011801883722552269,
+      -5.233179100018864e-07,
+      -5.512172750083525e-05
+     ],
+     "msq": [
+      1.4218630529596028,
+      0.9999912741208055,
+      2.343996981546406
+     ]
+    },
+    {
+     "k": 4,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      -0.041838775049700794,
+      5.038225049012499,
+      0.03689146211034722
+     ],
+     "le": [
+      0.01412795461720523,
+      -1.1039184970192434e-05,
+      -0.014179868317328374
+     ],
+     "meandiv": -6.294839158624155e-05,
+     "ok": true,
+     "mins": [
+      -5.4256488785478725,
+      -5.3530136904085,
+      -5.056611674294212
+     ],
+     "maxs": [
+      5.286737790125181,
+      5.379970037541909,
+      5.140615379625162
+     ],
+     "mean": [
+      0.052389156707649404,
+      -2.9776444217941826e-07,
+      -6.295681691876516e-05
+     ],
+     "msq": [
+      1.4339542977218045,
+      1.00000136959503,
+      2.312518909838891
+     ]
+    },
+    {
+     "k": 5,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      -0.005787868349925729,
+      4.980542386599367,
+      0.02623594510335845
+     ],
+     "le": [
+      0.01395392961769673,
+      -8.558491186375397e-06,
+      -0.0140025686011843
+     ],
+     "meandiv": -5.7213278870113345e-05,
+     "ok": true,
+     "mins": [
+      -5.3867569043923025,
+      -5.412016256275334,
+      -5.092328520032672
+     ],
+     "maxs": [
+      5.1740744596956505,
+      5.6277412048543685,
+      5.433217686857495
+     ],
+     "mean": [
+      -0.010807538125847027,
+      -1.958559479900612e-06,
+      -5.718111995886829e-05
+     ],
+     "msq": [
+      1.4352944556903786,
+      0.9999932593485409,
+      2.325330919527775
+     ]
+    },
+    {
+     "k": 6,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      0.0495107729566954,
+      4.9627617743176575,
+      -0.009546277757634326
+     ],
+     "le": [
+      0.015399635484142514,
+      -1.2516186813883663e-05,
+      -0.01544303488101661
+     ],
+     "meandiv": -5.589737942378937e-05,
+     "ok": true,
+     "mins": [
+      -5.088167951303487,
+      -5.767404943634795,
+      -5.457477996953822
+     ],
+     "maxs": [
+      5.280139504722509,
+      5.445226090051284,
+      5.4499535004290625
+     ],
+     "mean": [
+      0.01893559393119359,
+      1.6899491261304835e-06,
+      -5.593323845794936e-05
+     ],
+     "msq": [
+      1.4126458624729623,
+      1.000006864730681,
+      2.334374669467877
+     ]
+    },
+    {
+     "k": 7,
+     "n": 40000000,
+     "dt": 0.005,
+     "ic": [
+      0.03979698661492706,
+      5.043282291112982,
+      0.01701773638590076
+     ],
+     "le": [
+      0.0152789314544861,
+      -7.115991794723304e-06,
+      -0.015328912916797938
+     ],
+     "meandiv": -5.711392792548497e-05,
+     "ok": true,
+     "mins": [
+      -5.674888350494912,
+      -5.618440093981984,
+      -5.117422144373534
+     ],
+     "maxs": [
+      5.429969645716691,
+      5.481401054048655,
+      5.002014364635202
+     ],
+     "mean": [
+      -0.029701134885644114,
+      2.470407471370589e-06,
+      -5.708042451255069e-05
+     ],
+     "msq": [
+      1.4194694249322355,
+      0.9999929876394817,
+      2.3369880095085396
+     ]
+    }
+   ],
+   "recipe": [
+    {
+     "k": 0,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      0.0,
+      5.0,
+      0.0
+     ],
+     "le": [
+      0.01513681008022418,
+      -0.00020072053227714517,
+      -0.016082556407675145
+     ],
+     "meandiv": -0.0011468047984258135,
+     "ok": true,
+     "mins": [
+      -4.24320882362361,
+      -4.673826587523199,
+      -4.399861329422933
+     ],
+     "maxs": [
+      4.277405967190663,
+      4.998437900303621,
+      4.41573570529064
+     ],
+     "mean": [
+      0.12462421160030779,
+      4.149406162268204e-05,
+      -0.0011461184721566126
+     ],
+     "msq": [
+      1.445042666659557,
+      0.9998564861698881,
+      2.321357934742133
+     ]
+    },
+    {
+     "k": 1,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      0.0045954310174409875,
+      5.028165204807755,
+      -0.03966827398948395
+     ],
+     "le": [
+      0.009493497377887385,
+      -0.00033660236882375016,
+      -0.010382786286634308
+     ],
+     "meandiv": -0.001226089103828701,
+     "ok": true,
+     "mins": [
+      -4.237054860074335,
+      -4.7203449657581835,
+      -4.4311003328906775
+     ],
+     "maxs": [
+      4.13404135907626,
+      5.0255569239605045,
+      4.426449821334422
+     ],
+     "mean": [
+      0.5658390561455569,
+      -3.6905092456954886e-05,
+      -0.0012256829106575442
+     ],
+     "msq": [
+      1.503907506204566,
+      0.9999124530042388,
+      2.1998934180998275
+     ]
+    },
+    {
+     "k": 2,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      -0.036518848136215885,
+      4.984079765828303,
+      -0.025938696451360876
+     ],
+     "le": [
+      0.018133740600074312,
+      -0.00031255156808394327,
+      -0.018852731184827512
+     ],
+     "meandiv": -0.0010310967621588662,
+     "ok": true,
+     "mins": [
+      -4.660357168743695,
+      -5.6160495749978585,
+      -5.072708049979404
+     ],
+     "maxs": [
+      4.746048298646034,
+      5.138136773052865,
+      5.04183184018572
+     ],
+     "mean": [
+      0.09463272835690134,
+      8.426174386987398e-05,
+      -0.001031977308910846
+     ],
+     "msq": [
+      1.4417454222396788,
+      1.0001699863172073,
+      2.3590674130798073
+     ]
+    },
+    {
+     "k": 3,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      -0.0032438059142337883,
+      5.048173817798835,
+      -0.030803657393701923
+     ],
+     "le": [
+      0.016039225700953133,
+      -0.00032858876515155593,
+      -0.016956981887248587
+     ],
+     "meandiv": -0.0012461609959409164,
+     "ok": true,
+     "mins": [
+      -4.250497049394347,
+      -4.669269307024333,
+      -4.492444651170405
+     ],
+     "maxs": [
+      4.8459839958896636,
+      5.045805307499676,
+      4.551386252526745
+     ],
+     "mean": [
+      0.19037932605210905,
+      1.2922025625776903e-06,
+      -0.0012465182591375947
+     ],
+     "msq": [
+      1.4473668916707845,
+      1.0000650829585958,
+      2.29859293454713
+     ]
+    },
+    {
+     "k": 4,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      -0.041838775049700794,
+      5.038225049012499,
+      0.03689146211034722
+     ],
+     "le": [
+      0.01728915505018541,
+      7.971289354806087e-06,
+      -0.01839990111055362
+     ],
+     "meandiv": -0.001103203125465482,
+     "ok": true,
+     "mins": [
+      -4.760779472508123,
+      -5.125550196244832,
+      -5.056611674294212
+     ],
+     "maxs": [
+      4.8563805579142745,
+      5.08328259282224,
+      4.45897403298281
+     ],
+     "mean": [
+      0.09471424305200976,
+      4.642214223993054e-05,
+      -0.0011023358061323812
+     ],
+     "msq": [
+      1.4036270085883706,
+      0.9998201912449652,
+      2.365846685711651
+     ]
+    },
+    {
+     "k": 5,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      -0.005787868349925729,
+      4.980542386599367,
+      0.02623594510335845
+     ],
+     "le": [
+      0.01800712618342105,
+      -0.0002428549126904572,
+      -0.018831453144069487
+     ],
+     "meandiv": -0.0010667368085918994,
+     "ok": true,
+     "mins": [
+      -5.3867569043923025,
+      -5.313907950400224,
+      -5.092328520032672
+     ],
+     "maxs": [
+      5.1740744596956505,
+      4.979680433343509,
+      4.6880328474441
+     ],
+     "mean": [
+      0.017351931455139854,
+      -2.6094242201325985e-06,
+      -0.001067616760350252
+     ],
+     "msq": [
+      1.4414995091341563,
+      1.0001699030472817,
+      2.3577541546607037
+     ]
+    },
+    {
+     "k": 6,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      0.0495107729566954,
+      4.9627617743176575,
+      -0.009546277757634326
+     ],
+     "le": [
+      0.017596876794944084,
+      -0.00022267273075991115,
+      -0.018556793257274058
+     ],
+     "meandiv": -0.001182798847856052,
+     "ok": true,
+     "mins": [
+      -4.6135719927005505,
+      -5.3070532066918545,
+      -4.714037809884433
+     ],
+     "maxs": [
+      5.249311824048548,
+      5.269136855515556,
+      5.003154413105774
+     ],
+     "mean": [
+      -0.13663814794898035,
+      -1.5629017182677406e-05,
+      -0.001182369345841584
+     ],
+     "msq": [
+      1.4410970971513621,
+      0.9999080055021529,
+      2.319698359695057
+     ]
+    },
+    {
+     "k": 7,
+     "n": 2000000,
+     "dt": 0.005,
+     "ic": [
+      0.03979698661492706,
+      5.043282291112982,
+      0.01701773638590076
+     ],
+     "le": [
+      0.015353277667756779,
+      -4.242644044081878e-05,
+      -0.016430313782368873
+     ],
+     "meandiv": -0.001119807933276635,
+     "ok": true,
+     "mins": [
+      -4.490241034529615,
+      -4.987891697182695,
+      -4.553187086236365
+     ],
+     "maxs": [
+      4.458881516610368,
+      5.087470781138119,
+      4.8210372405061355
+     ],
+     "mean": [
+      0.01682014682918279,
+      -4.6735416932858795e-05,
+      -0.0011191069074535825
+     ],
+     "msq": [
+      1.430822405385496,
+      0.9998536527672169,
+      2.366155221147422
+     ]
+    }
+   ],
+   "half": [
+    {
+     "k": 0,
+     "n": 40000000,
+     "dt": 0.0025,
+     "ic": [
+      0.0,
+      5.0,
+      0.0
+     ],
+     "le": [
+      0.012908845105926726,
+      -8.364265516555042e-06,
+      -0.012992590601317765
+     ],
+     "meandiv": -9.20848606172947e-05,
+     "ok": true,
+     "mins": [
+      -4.852447308457236,
+      -5.4607059575551355,
+      -5.171836332472131
+     ],
+     "maxs": [
+      4.798605568242022,
+      5.2452630564753004,
+      4.99114766040354
+     ],
+     "mean": [
+      -0.02369833060247933,
+      3.1515873608166993e-06,
+      -9.213442630329132e-05
+     ],
+     "msq": [
+      1.4652066163005566,
+      1.0000195455396568,
+      2.2728268791923156
+     ]
+    },
+    {
+     "k": 1,
+     "n": 40000000,
+     "dt": 0.0025,
+     "ic": [
+      0.0045954310174409875,
+      5.028165204807755,
+      -0.03966827398948395
+     ],
+     "le": [
+      0.01466722072615514,
+      -4.061043472454164e-06,
+      -0.014737564475780753
+     ],
+     "meandiv": -7.442822642487467e-05,
+     "ok": true,
+     "mins": [
+      -5.008737713953614,
+      -5.272915615252354,
+      -4.9989181035902055
+     ],
+     "maxs": [
+      5.149099644341958,
+      5.6828256546635805,
+      5.257634173939958
+     ],
+     "mean": [
+      0.014487029943290743,
+      -2.2454778496887796e-05,
+      -7.43811162901554e-05
+     ],
+     "msq": [
+      1.4392086202624226,
+      0.9999808651447814,
+      2.322509104791389
+     ]
+    },
+    {
+     "k": 2,
+     "n": 40000000,
+     "dt": 0.0025,
+     "ic": [
+      -0.036518848136215885,
+      4.984079765828303,
+      -0.025938696451360876
+     ],
+     "le": [
+      0.015495562524705747,
+      -8.089546450893299e-06,
+      -0.01555461600293374
+     ],
+     "meandiv": -6.715781814632907e-05,
+     "ok": true,
+     "mins": [
+      -4.9103501381692505,
+      -5.594056201953267,
+      -5.248497401985803
+     ],
+     "maxs": [
+      5.721807866656254,
+      5.391473876366958,
+      5.039064071260466
+     ],
+     "mean": [
+      0.08742769209956543,
+      2.7587048454435426e-05,
+      -6.71279987588423e-05
+     ],
+     "msq": [
+      1.462823413477564,
+      0.9999877944992743,
+      2.2949666293220363
+     ]
+    },
+    {
+     "k": 3,
+     "n": 40000000,
+     "dt": 0.0025,
+     "ic": [
+      -0.0032438059142337883,
+      5.048173817798835,
+      -0.030803657393701923
+     ],
+     "le": [
+      0.01532539379229461,
+      -2.2712828075905442e-05,
+      -0.015405948214691352
+     ],
+     "meandiv": -0.00010328415711171301,
+     "ok": true,
+     "mins": [
+      -5.7657235447903705,
+      -5.4366255771083285,
+      -5.398943780414855
+     ],
+     "maxs": [
+      5.216274997171315,
+      6.04177482300611,
+      5.616962541895904
+     ],
+     "mean": [
+      -0.025731166417028037,
+      7.285116244107699e-06,
+      -0.00010325010361309018
+     ],
+     "msq": [
+      1.44029057927535,
+      0.9999860916978738,
+      2.327200422499403
+     ]
+    }
+   ],
+   "invariant": [
+    {
+     "dt": 0.02,
+     "T": 100.0,
+     "I0": 12.5,
+     "maxdev": 8.751467788670197e-06,
+     "last": -3.5954043617891784e-06
+    },
+    {
+     "dt": 0.02,
+     "T": 1000.0,
+     "I0": 12.5,
+     "maxdev": 3.66801717497367e-05,
+     "last": -3.621070233350565e-05
+    },
+    {
+     "dt": 0.02,
+     "T": 10000.0,
+     "I0": 12.5,
+     "maxdev": 0.0002956974310173166,
+     "last": -0.0002953169133377287
+    },
+    {
+     "dt": 0.01,
+     "T": 100.0,
+     "I0": 12.5,
+     "maxdev": 4.867100198424623e-07,
+     "last": -1.3162565792868008e-07
+    },
+    {
+     "dt": 0.01,
+     "T": 1000.0,
+     "I0": 12.5,
+     "maxdev": 1.195857533886624e-06,
+     "last": -1.1131462063218578e-06
+    },
+    {
+     "dt": 0.01,
+     "T": 10000.0,
+     "I0": 12.5,
+     "maxdev": 7.78030642578642e-06,
+     "last": -7.777035335720939e-06
+    },
+    {
+     "dt": 0.005,
+     "T": 100.0,
+     "I0": 12.5,
+     "maxdev": 2.849838232066304e-08,
+     "last": -5.278128156760431e-09
+    },
+    {
+     "dt": 0.005,
+     "T": 1000.0,
+     "I0": 12.5,
+     "maxdev": 4.5913967738897554e-08,
+     "last": -3.631838474404958e-08
+    },
+    {
+     "dt": 0.005,
+     "T": 10000.0,
+     "I0": 12.5,
+     "maxdev": 2.852805760511501e-07,
+     "last": -2.778792698165944e-07
+    },
+    {
+     "dt": 0.0025,
+     "T": 100.0,
+     "I0": 12.5,
+     "maxdev": 1.720518838510543e-09,
+     "last": -2.3726443032501265e-10
+    },
+    {
+     "dt": 0.0025,
+     "T": 1000.0,
+     "I0": 12.5,
+     "maxdev": 2.219056938201902e-09,
+     "last": -1.446194275445123e-09
+    },
+    {
+     "dt": 0.0025,
+     "T": 10000.0,
+     "I0": 12.5,
+     "maxdev": 9.421652791274937e-09,
+     "last": -9.421652791274937e-09
+    }
+   ],
+   "ladder": [
+    {
+     "dt": 0.01,
+     "ok": true,
+     "maxabs": 5.435868806024357
+    },
+    {
+     "dt": 0.02,
+     "ok": true,
+     "maxabs": 5.783594290020544
+    },
+    {
+     "dt": 0.05,
+     "ok": true,
+     "maxabs": 5.2431447898400805
+    },
+    {
+     "dt": 0.1,
+     "ok": true,
+     "maxabs": 5.265076160087565
+    },
+    {
+     "dt": 0.15,
+     "ok": true,
+     "maxabs": 4.832115637142946
+    },
+    {
+     "dt": 0.2,
+     "ok": true,
+     "maxabs": 4.360235829486741
+    },
+    {
+     "dt": 0.3,
+     "ok": true,
+     "maxabs": 4.386502817785558
+    },
+    {
+     "dt": 0.4,
+     "ok": false,
+     "maxabs": 29.354793913493168
+    },
+    {
+     "dt": 0.5,
+     "ok": false,
+     "maxabs": 20.748372395833332
+    },
+    {
+     "dt": 0.6,
+     "ok": false,
+     "maxabs": 111.43349999999995
+    },
+    {
+     "dt": 0.8,
+     "ok": false,
+     "maxabs": Infinity
+    }
+   ]
+  },
+  "henon_heiles": {
+   "saddles": [
+    {
+     "x": 8.060349130517819e-20,
+     "y": 1.0,
+     "V": 0.16666666666666669
+    },
+    {
+     "x": 0.8660254037844386,
+     "y": -0.5,
+     "V": 0.16666666666666666
+    },
+    {
+     "x": -0.8660254037844386,
+     "y": -0.5,
+     "V": 0.16666666666666666
+    }
+   ],
+   "ic": [
+    0.0,
+    -0.15,
+    0.47460509900337144,
+    0.0
+   ],
+   "drift": [
+    {
+     "dt": 0.1,
+     "T": 100.0,
+     "maxdev": 3.818073184350124e-06,
+     "end": -3.726861710059981e-06
+    },
+    {
+     "dt": 0.1,
+     "T": 1000.0,
+     "maxdev": 3.8297009003596116e-05,
+     "end": -3.8297009003596116e-05
+    },
+    {
+     "dt": 0.1,
+     "T": 10000.0,
+     "maxdev": 0.00036133386867753803,
+     "end": -0.00036133386867753803
+    },
+    {
+     "dt": 0.05,
+     "T": 100.0,
+     "maxdev": 1.2004597135795159e-07,
+     "end": -1.1361083558647511e-07
+    },
+    {
+     "dt": 0.05,
+     "T": 1000.0,
+     "maxdev": 1.296444327239521e-06,
+     "end": -1.2905377041044774e-06
+    },
+    {
+     "dt": 0.05,
+     "T": 10000.0,
+     "maxdev": 1.2063861473926574e-05,
+     "end": -1.2060378549366702e-05
+    },
+    {
+     "dt": 0.02,
+     "T": 100.0,
+     "maxdev": 1.2432518486926725e-09,
+     "end": -1.0678467277092096e-09
+    },
+    {
+     "dt": 0.02,
+     "T": 1000.0,
+     "maxdev": 1.1936971688886189e-08,
+     "end": -1.193130030885392e-08
+    },
+    {
+     "dt": 0.02,
+     "T": 10000.0,
+     "maxdev": 1.2126426553182856e-07,
+     "end": -1.211821989421935e-07
+    },
+    {
+     "dt": 0.01,
+     "T": 100.0,
+     "maxdev": 3.95397881103321e-11,
+     "end": -2.835648382770728e-11
+    },
+    {
+     "dt": 0.01,
+     "T": 1000.0,
+     "maxdev": 3.9522916883694137e-10,
+     "end": -3.837328649280991e-10
+    },
+    {
+     "dt": 0.01,
+     "T": 10000.0,
+     "maxdev": 3.608432344592849e-09,
+     "end": -3.600741219078607e-09
+    },
+    {
+     "dt": 0.005,
+     "T": 100.0,
+     "maxdev": 1.2774920010727442e-12,
+     "end": -5.716954687429165e-13
+    },
+    {
+     "dt": 0.005,
+     "T": 1000.0,
+     "maxdev": 1.1692591339595992e-11,
+     "end": -1.0593470545217087e-11
+    },
+    {
+     "dt": 0.005,
+     "T": 10000.0,
+     "maxdev": 1.1930660626102707e-10,
+     "end": -1.188472376068006e-10
+    }
+   ],
+   "lyap_long_E0125": [
+    {
+     "E": 0.125,
+     "k": 0,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.15,
+      0.47460509900337144,
+      0.0
+     ],
+     "le": [
+      0.048212185787989074,
+      4.3949479085464194e-05,
+      -3.891027347522491e-05,
+      -0.04821722500264072
+     ],
+     "dE": -7.48032525366149e-08,
+     "mins": [
+      -0.5939159578106193,
+      -0.4388788806164338,
+      -0.49985551808842005,
+      -0.4956091899187188
+     ],
+     "maxs": [
+      0.5940130360902465,
+      0.6584182775563242,
+      0.49982073620038414,
+      0.4956908159860916
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 1,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16359028678500928,
+      0.469373226394154,
+      0.002889179818883356
+     ],
+     "le": [
+      0.05146384170468837,
+      5.196240504330695e-05,
+      -4.8323418966287124e-05,
+      -0.051467480699802615
+     ],
+     "dE": -7.487742025025224e-08,
+     "mins": [
+      -0.5938664079016097,
+      -0.43887449649778815,
+      -0.49985710072157785,
+      -0.49565235694680115
+     ],
+     "maxs": [
+      0.5939835423794186,
+      0.6582666151325931,
+      0.49973674673307494,
+      0.49564617478602185
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 2,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1522543105214933,
+      0.4737701373794127,
+      0.0027396476769822576
+     ],
+     "le": [
+      0.047910293917676074,
+      4.878498298769106e-05,
+      -4.3269111779034334e-05,
+      -0.04791580979792954
+     ],
+     "dE": -7.484030439819378e-08,
+     "mins": [
+      -0.5938381369689499,
+      -0.43886279648392496,
+      -0.49984478602132615,
+      -0.4955759327882295
+     ],
+     "maxs": [
+      0.5938798166630552,
+      0.6582150123870885,
+      0.49982858952083986,
+      0.4956500575055727
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 3,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16983887026027825,
+      0.46654807280809635,
+      0.014887076570821695
+     ],
+     "le": [
+      0.05145990122059041,
+      4.8663381041662346e-05,
+      -4.250716580844064e-05,
+      -0.05146605744484873
+     ],
+     "dE": -7.533572199402983e-08,
+     "mins": [
+      -0.5939510727316949,
+      -0.43888742441668616,
+      -0.49956203926401466,
+      -0.4956614600368584
+     ],
+     "maxs": [
+      0.5939861921488795,
+      0.6582854191832355,
+      0.49983429932728296,
+      0.49563009247736367
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 4,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.156482017644651,
+      0.47218232139272315,
+      -0.0016601777558658836
+     ],
+     "le": [
+      0.04812501306739058,
+      4.454764792362639e-05,
+      -3.692056667248748e-05,
+      -0.04813264015773868
+     ],
+     "dE": -7.320307952862759e-08,
+     "mins": [
+      -0.593921902957478,
+      -0.43887725011498335,
+      -0.4997998068082793,
+      -0.4956098156550071
+     ],
+     "maxs": [
+      0.5940265323237033,
+      0.6584390954884731,
+      0.499758787819959,
+      0.4956931521712945
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 5,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1627746763510332,
+      0.4696941851519845,
+      -0.004070529570573265
+     ],
+     "le": [
+      0.04949124565571882,
+      4.6980182112714625e-05,
+      -4.076329480561011e-05,
+      -0.049497462552065344
+     ],
+     "dE": -7.490960721168172e-08,
+     "mins": [
+      -0.5939156807807554,
+      -0.438880064848294,
+      -0.4998487514115924,
+      -0.49565816559805
+     ],
+     "maxs": [
+      0.5939805836333588,
+      0.6582603707583995,
+      0.49972072306517484,
+      0.4956172174292289
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 6,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.14183387873545722,
+      0.47742974859114323,
+      0.006466748832098963
+     ],
+     "le": [
+      0.04388106432327713,
+      5.2758283785459554e-05,
+      -4.7895427265609484e-05,
+      -0.043885927188777214
+     ],
+     "dE": -7.663132858826138e-08,
+     "mins": [
+      -0.5940198573792649,
+      -0.43886687374430433,
+      -0.4998331221895221,
+      -0.4956475530525932
+     ],
+     "maxs": [
+      0.5938804482065267,
+      0.65818841555946,
+      0.49980200378777034,
+      0.4956037391656208
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 7,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1505695582064853,
+      0.4742919661513265,
+      -0.010010565637396898
+     ],
+     "le": [
+      0.04170817516585425,
+      4.2766806186608794e-05,
+      -3.882727553953944e-05,
+      -0.04171211470559384
+     ],
+     "dE": -7.342912190788642e-08,
+     "mins": [
+      -0.5939312021491588,
+      -0.4388730142554901,
+      -0.4998259050266623,
+      -0.4956893404471965
+     ],
+     "maxs": [
+      0.5939948980196629,
+      0.6584857894311711,
+      0.49983159631883833,
+      0.4956232508274214
+     ]
+    }
+   ],
+   "lyap_recipe_E0125": [
+    {
+     "E": 0.125,
+     "k": 0,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.15,
+      0.47460509900337144,
+      0.0
+     ],
+     "le": [
+      0.05580642044409308,
+      0.00034836585027193863,
+      -0.0002979737414384482,
+      -0.05585681256199994
+     ],
+     "dE": -7.375427574229931e-09,
+     "mins": [
+      -0.5939159578106193,
+      -0.43644097101709123,
+      -0.49615673664596954,
+      -0.4908360410185177
+     ],
+     "maxs": [
+      0.5827197643795738,
+      0.64743461780424,
+      0.4987364486838045,
+      0.491784300107577
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 1,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16359028678500928,
+      0.469373226394154,
+      0.002889179818883356
+     ],
+     "le": [
+      0.05459044031481593,
+      0.000389854242610936,
+      -0.00035346434647472803,
+      -0.054626830220045976
+     ],
+     "dE": -7.3269124517549855e-09,
+     "mins": [
+      -0.5938336138035911,
+      -0.43874829914035196,
+      -0.4958527853951369,
+      -0.49539917546027223
+     ],
+     "maxs": [
+      0.5837614820361852,
+      0.6569538671836093,
+      0.49625420041450397,
+      0.4953519210948614
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 2,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1522543105214933,
+      0.4737701373794127,
+      0.0027396476769822576
+     ],
+     "le": [
+      0.05154718308842891,
+      0.000367241918113299,
+      -0.00031208315644791853,
+      -0.051602341859120784
+     ],
+     "dE": -7.519005321143801e-09,
+     "mins": [
+      -0.5932332586879068,
+      -0.43883579468200684,
+      -0.4924135977061984,
+      -0.4955759327882295
+     ],
+     "maxs": [
+      0.5818793284010554,
+      0.6578770178907983,
+      0.499790408189954,
+      0.49537473331129545
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 3,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16983887026027825,
+      0.46654807280809635,
+      0.014887076570821695
+     ],
+     "le": [
+      0.05133505809524688,
+      0.00035743650355119655,
+      -0.0002958742975628609,
+      -0.05139662031019279
+     ],
+     "dE": -7.724861222913049e-09,
+     "mins": [
+      -0.582162320542182,
+      -0.43697535094305767,
+      -0.4983004060619092,
+      -0.49367797307343647
+     ],
+     "maxs": [
+      0.5817208173957263,
+      0.6542851820857151,
+      0.49976866553907545,
+      0.4936316128610288
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 4,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.156482017644651,
+      0.47218232139272315,
+      -0.0016601777558658836
+     ],
+     "le": [
+      0.03691816733475155,
+      0.00034841979803678866,
+      -0.0002721489289692884,
+      -0.036994438213134806
+     ],
+     "dE": -6.6694820083368356e-09,
+     "mins": [
+      -0.593921902957478,
+      -0.43887326060633824,
+      -0.4938701381336083,
+      -0.4956098156550071
+     ],
+     "maxs": [
+      0.5825101984673869,
+      0.6582061359015788,
+      0.495484743238923,
+      0.4956498306491892
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 5,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1627746763510332,
+      0.4696941851519845,
+      -0.004070529570573265
+     ],
+     "le": [
+      0.057187741508476816,
+      0.00033013904822377346,
+      -0.0002679701189463332,
+      -0.05724991044678269
+     ],
+     "dE": -7.511556474049108e-09,
+     "mins": [
+      -0.5937993031252092,
+      -0.43667704571188964,
+      -0.4966870620995717,
+      -0.4922291069466686
+     ],
+     "maxs": [
+      0.5937596064509771,
+      0.650286819221465,
+      0.49794087675779,
+      0.4922872137426959
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 6,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.14183387873545722,
+      0.47742974859114323,
+      0.006466748832098963
+     ],
+     "le": [
+      0.04857130618408754,
+      0.00028140819490275206,
+      -0.0002327794815696041,
+      -0.04861993490643849
+     ],
+     "dE": -7.55539895924695e-09,
+     "mins": [
+      -0.5830091838787834,
+      -0.4388343959830621,
+      -0.49498244364325766,
+      -0.49544497858926456
+     ],
+     "maxs": [
+      0.5938439327166838,
+      0.6579842582358757,
+      0.4995083510296521,
+      0.4956037391656208
+     ]
+    },
+    {
+     "E": 0.125,
+     "k": 7,
+     "n": 2000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1505695582064853,
+      0.4742919661513265,
+      -0.010010565637396898
+     ],
+     "le": [
+      0.018587611101176897,
+      0.0003507554249399133,
+      -0.00031136006000889667,
+      -0.01862700647547853
+     ],
+     "dE": -6.520876741356041e-09,
+     "mins": [
+      -0.5790619143711477,
+      -0.4387837220271311,
+      -0.4865737550230382,
+      -0.4952806710378102
+     ],
+     "maxs": [
+      0.5936236815483239,
+      0.6573800573533181,
+      0.4945939371665614,
+      0.4954873113574008
+     ]
+    }
+   ],
+   "lyap_long_E0167": [
+    {
+     "E": 0.16666666666666666,
+     "k": 0,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.15,
+      0.5555027752705951,
+      0.0
+     ],
+     "le": [
+      0.12756565209994783,
+      3.492432629219044e-05,
+      -3.158650207331743e-05,
+      -0.12756898993656918
+     ],
+     "dE": -1.2552007355726147e-07,
+     "mins": [
+      -0.8643155299391002,
+      -0.49999993349509814,
+      -0.5773488379390658,
+      -0.577319509050331
+     ],
+     "maxs": [
+      0.8608000916084165,
+      0.9929824917281214,
+      0.5773235194298417,
+      0.5773192138246375
+     ]
+    },
+    {
+     "E": 0.16666666666666666,
+     "k": 1,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16359028678500928,
+      0.5510395257955558,
+      0.002889179818883356
+     ],
+     "le": [
+      0.13025077086706646,
+      5.35027552718392e-05,
+      -4.966520939621871e-05,
+      -0.1302546084254489
+     ],
+     "dE": -1.236358403156057e-07,
+     "mins": [
+      -0.8622338813115318,
+      -0.4999999513638834,
+      -0.5773468670848323,
+      -0.5773072238255164
+     ],
+     "maxs": [
+      0.8607475699796107,
+      0.9914832716363298,
+      0.5773092823132987,
+      0.5773186888672563
+     ]
+    },
+    {
+     "E": 0.16666666666666666,
+     "k": 2,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.1522543105214933,
+      0.554789578494262,
+      0.0027396476769822576
+     ],
+     "le": [
+      0.1253719122006966,
+      5.451638229351632e-05,
+      -5.117265900960565e-05,
+      -0.12537525593630933
+     ],
+     "dE": -1.2662774365179708e-07,
+     "mins": [
+      -0.8596720587918321,
+      -0.499999920530685,
+      -0.5773415669904367,
+      -0.5773187070356349
+     ],
+     "maxs": [
+      0.8575263383838433,
+      0.9912955887922067,
+      0.5773297174757109,
+      0.5773083742068558
+     ]
+    },
+    {
+     "E": 0.16666666666666666,
+     "k": 3,
+     "n": 20000000,
+     "dt": 0.01,
+     "ic": [
+      0.0,
+      -0.16983887026027825,
+      0.5486350677584163,
+      0.014887076570821695
+     ],
+     "le": [
+      0.12621032840285984,
+      5.495369867863365e-05,
+      -4.8045216712649255e-05,
+      -0.1262172368971948
+     ],
+     "dE": -1.2601285934166206e-07,
+     "mins": [
+      -0.8583871283829517,
+      -0.4999997626636231,
+      -0.5772760021516296,
+      -0.5772921445584891
+     ],
+     "maxs": [
+      0.8606914063516323,
+      0.9903401686936735,
+      0.5773234670214217,
+      0.5773090188390634
+     ]
+    }
+   ],
+   "section_ref": [
+    [
+     6.74513296890085,
+     -0.09666296920398619,
+     -0.08844773424699857
+    ],
+    [
+     13.539636442016551,
+     0.16607970466490013,
+     -0.16803598642508086
+    ],
+    [
+     20.539826910790676,
+     0.3109423103644153,
+     -0.24503758122943142
+    ],
+    [
+     27.352840862770634,
+     0.4229031735315712,
+     -0.22424393989867364
+    ],
+    [
+     33.69087048567414,
+     0.623352866833399,
+     -0.019968238550844796
+    ]
+   ],
+   "section_linear_dt0.01": {
+    "pts": [
+     [
+      6.745132969359665,
+      -0.09666164529257079,
+      -0.08844641514029596
+     ],
+     [
+      13.539636436673005,
+      0.16607946179836341,
+      -0.16803578748719122
+     ],
+     [
+      20.53982691134113,
+      0.3109421277335509,
+      -0.24503750182583892
+     ],
+     [
+      27.352840900639222,
+      0.4229006821546651,
+      -0.22424359739941166
+     ],
+     [
+      33.69087055205227,
+      0.6233519311251996,
+      -0.01996827496749034
+     ]
+    ],
+    "maxerr": 2.491376906110787e-06
+   },
+   "section_henon_dt0.01": {
+    "pts": [
+     [
+      6.745132970261909,
+      -0.09666296938714528,
+      -0.08844773408121227
+     ],
+     [
+      13.53963644389452,
+      0.1660797038051334,
+      -0.16803598639894948
+     ],
+     [
+      20.53982691578619,
+      0.31094230911600246,
+      -0.2450375816476927
+     ],
+     [
+      27.35284087364978,
+      0.4229031695425433,
+      -0.22424394237765358
+     ],
+     [
+      33.69087052747543,
+      0.623352864664365,
+      -0.019968248504315705
+     ]
+    ],
+    "maxerr": 9.953470908596884e-09
+   },
+   "section_linear_dt0.02": {
+    "pts": [
+     [
+      6.7451330903204125,
+      -0.09665892328704068,
+      -0.08844376501157108
+     ],
+     [
+      13.539636441234995,
+      0.1660791987788556,
+      -0.16803557554711535
+     ],
+     [
+      20.539826972151687,
+      0.310941925720045,
+      -0.24503742480455123
+     ],
+     [
+      27.352840876390914,
+      0.42289192320709756,
+      -0.22424235114393012
+     ],
+     [
+      33.690871100635476,
+      0.6233411818341466,
+      -0.01996862791259541
+     ]
+    ],
+    "maxerr": 1.168499925241484e-05
+   },
+   "section_henon_dt0.02": {
+    "pts": [
+     [
+      6.745132990637321,
+      -0.0966629720802711,
+      -0.08844773157019707
+     ],
+     [
+      13.539636471854394,
+      0.16607969060067937,
+      -0.1680359860129877
+     ],
+     [
+      20.53982699042859,
+      0.31094228980198013,
+      -0.24503758795677105
+     ],
+     [
+      27.352841037458237,
+      0.42290310806874043,
+      -0.22424398031538134
+     ],
+     [
+      33.690871165346564,
+      0.623352830568225,
+      -0.019968401616593127
+     ]
+    ],
+    "maxerr": 1.6306574833133136e-07
+   },
+   "section_linear_dt0.05": {
+    "pts": [
+     [
+      6.745132617030029,
+      -0.09665149096906372,
+      -0.08843531556722131
+     ],
+     [
+      13.539634896686813,
+      0.16605089194144623,
+      -0.16801205316943274
+     ],
+     [
+      20.53982671576763,
+      0.31089864888901436,
+      -0.2450183198121974
+     ],
+     [
+      27.352849581694233,
+      0.42288365607016115,
+      -0.22424372792622935
+     ],
+     [
+      33.69089385784355,
+      0.6233076495164332,
+      -0.019974724375199197
+     ]
+    ],
+    "maxerr": 4.5217316965717735e-05
+   },
+   "section_henon_dt0.05": {
+    "pts": [
+     [
+      6.745133811862759,
+      -0.09666307519485541,
+      -0.08844762788756423
+     ],
+     [
+      13.539637578900992,
+      0.16607912008229858,
+      -0.16803597050787455
+     ],
+     [
+      20.539829981537423,
+      0.31094143995204243,
+      -0.24503784726545375
+     ],
+     [
+      27.352847760897465,
+      0.4229004256247659,
+      -0.2242456061641109
+     ],
+     [
+      33.69089828658192,
+      0.6233512687365739,
+      -0.019975049041107668
+     ]
+    ],
+    "maxerr": 6.8104902628714215e-06
+   }
+  },
+  "three_body": {
+   "E0": -1.2871419917663258,
+   "L0": 0.0,
+   "P0": [
+    0.0,
+    0.0
+   ],
+   "period_dop853": 6.325914012101627,
+   "return_dist_dop853": 1.5910300615603355e-09,
+   "rk4": [
+    {
+     "dt": 0.01,
+     "nper": 1,
+     "maxdE": 3.3979141722539907e-09,
+     "endE": -3.3821432321445855e-09,
+     "maxdL": 5.232738686800076e-10,
+     "t_return": 6.33,
+     "d_return": 0.009626855969006415
+    },
+    {
+     "dt": 0.01,
+     "nper": 10,
+     "maxdE": 3.3834149926192936e-08,
+     "endE": -3.3818027045384724e-08,
+     "maxdL": 5.232880795347228e-10
+    },
+    {
+     "dt": 0.01,
+     "nper": 100,
+     "maxdE": 3.3819607336837976e-07,
+     "endE": -3.381798130419611e-07,
+     "maxdL": 5.232880795347228e-10
+    },
+    {
+     "dt": 0.005,
+     "nper": 1,
+     "maxdE": 1.1121970011629401e-10,
+     "endE": -1.056976728364134e-10,
+     "maxdL": 2.987787794950236e-11,
+     "t_return": 6.325,
+     "d_return": 0.002153404791920034
+    },
+    {
+     "dt": 0.005,
+     "nper": 10,
+     "maxdE": 1.0584026988169626e-09,
+     "endE": -1.0569953801109477e-09,
+     "maxdL": 2.987787794950236e-11
+    },
+    {
+     "dt": 0.005,
+     "nper": 100,
+     "maxdE": 1.0571244546397907e-08,
+     "endE": -1.0569832342710583e-08,
+     "maxdL": 2.9884983376859964e-11
+    },
+    {
+     "dt": 0.002,
+     "nper": 1,
+     "maxdE": 2.9802826873037702e-12,
+     "endE": -1.0864642518981782e-12,
+     "maxdL": 7.241984789629896e-13,
+     "t_return": 6.3260000000000005,
+     "d_return": 0.00020258745773329433
+    },
+    {
+     "dt": 0.002,
+     "nper": 10,
+     "maxdE": 1.0854206422550305e-11,
+     "endE": -1.081112976919485e-11,
+     "maxdL": 7.30748794808278e-13
+    },
+    {
+     "dt": 0.002,
+     "nper": 100,
+     "maxdE": 1.0835132790987245e-10,
+     "endE": -1.083064748996776e-10,
+     "maxdL": 7.795986078917849e-13
+    },
+    {
+     "dt": 0.001,
+     "nper": 1,
+     "maxdE": 1.871836019518014e-13,
+     "endE": -3.752553823233029e-14,
+     "maxdL": 4.729550084903167e-14,
+     "t_return": 6.3260000000000005,
+     "d_return": 0.00020258733386148702
+    },
+    {
+     "dt": 0.001,
+     "nper": 10,
+     "maxdE": 3.268496584496461e-13,
+     "endE": -3.235189893757706e-13,
+     "maxdL": 6.228351168147128e-14
+    },
+    {
+     "dt": 0.001,
+     "nper": 100,
+     "maxdE": 3.3513192221334975e-12,
+     "endE": -3.347100374639922e-12,
+     "maxdL": 8.759659664292485e-14
+    },
+    {
+     "dt": 0.0005,
+     "nper": 1,
+     "maxdE": 2.353672812205332e-14,
+     "endE": 8.659739592076221e-15,
+     "maxdL": 5.662137425588298e-15,
+     "t_return": 6.3260000000000005,
+     "d_return": 0.000202587326257451
+    },
+    {
+     "dt": 0.0005,
+     "nper": 10,
+     "maxdE": 6.417089082333405e-14,
+     "endE": 4.907185768843192e-14,
+     "maxdL": 3.269606807521086e-14
+    },
+    {
+     "dt": 0.0005,
+     "nper": 100,
+     "maxdE": 1.34781075189494e-13,
+     "endE": -1.2567724638756772e-13,
+     "maxdL": 5.229150445984487e-14
+    }
+   ],
+   "le_fig8": [
+    0.004483901848597378,
+    0.0040515152188308244
+   ]
+  },
+  "magnetic_pendulum": {
+   "params": [
+    0.2,
+    0.5,
+    0.25,
+    0.8660254037844386
+   ],
+   "equilibria": [
+    [
+     0.9833432293529549,
+     0.0
+    ],
+    [
+     -0.49167161467647746,
+     0.8516002172590865
+    ],
+    [
+     -0.49167161467647746,
+     -0.8516002172590865
+    ]
+   ],
+   "origin_stiffness": 0.62791653998584,
+   "frac_dt0.02": [
+    0.0,
+    0.3435,
+    0.32825,
+    0.32825
+   ],
+   "frac_dt0.01": [
+    0.0,
+    0.34355,
+    0.328225,
+    0.328225
+   ],
+   "frac_dt0.005": [
+    0.0,
+    0.34355,
+    0.328225,
+    0.328225
+   ],
+   "diff_002_0005": 5e-05,
+   "diff_001_0005": 0.0
+  }
+ }
+}
