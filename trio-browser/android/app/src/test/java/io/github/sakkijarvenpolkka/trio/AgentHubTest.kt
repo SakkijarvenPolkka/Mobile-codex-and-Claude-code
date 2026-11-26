@@ -104,6 +104,32 @@ class AgentHubTest {
     }
 
     @Test
+    fun otherCookiesDoNotRevalidateAStaleSession() {
+        CookieManager.getInstance().setCookie("https://claude.ai/", "sessionKey=revoked")
+        hub.refreshSessions()
+        navigate("claude", "https://claude.ai/login")
+        assertEquals("signingIn", hub.agent("claude").state)
+        CookieManager.getInstance().setCookie("https://claude.ai/", "_ga=analytics-1")
+        hub.refreshSessions()
+        assertEquals("still stale after an unrelated cookie", "signingIn", hub.agent("claude").state)
+        CookieManager.getInstance().setCookie("https://claude.ai/", "sessionKey=fresh")
+        hub.refreshSessions()
+        assertEquals("signedIn", hub.agent("claude").state)
+    }
+
+    @Test
+    fun signOutLocksAtOnceAndRunsTheLogoutPage() {
+        CookieManager.getInstance().setCookie("https://claude.ai/", "sessionKey=abc")
+        hub.refreshSessions()
+        hub.show("claude")
+        hub.signOut("claude")
+        val claude = hub.agent("claude")
+        assertEquals("signedOut", claude.state)
+        assertFalse(claude.showProvider)
+        assertEquals("https://claude.ai/logout", shadowOf(hub.webViewFor(claude)).lastLoadedUrl)
+    }
+
+    @Test
     fun requestsWaitForSignInThenRun() {
         hub.ask("gemini", "여행 계획")
         idle()

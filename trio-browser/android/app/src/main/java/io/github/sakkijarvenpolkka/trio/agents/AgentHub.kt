@@ -64,6 +64,7 @@ class Agent(val provider: ProviderConfig) {
     var staleSession by mutableStateOf(false)
     var signingIn by mutableStateOf(false)
     var signingOut = false
+    var sessionSignature = ""
     var lockReason by mutableStateOf("signedOut")
     var pendingLabel by mutableStateOf<String?>(null)
     var pending: (() -> Unit)? = null
@@ -116,7 +117,14 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
                 LoginState.parseCookieHeader(domain, cm.getCookie("https://$domain/"))
             }
             val present = LoginState.hasSession(a.provider, cookies, now)
-            if (present != a.sessionPresent) a.staleSession = false
+            // A stale session (the app bounced to sign-in) becomes valid again only when the
+            // session cookie itself changes, e.g. after signing in.
+            val rules = a.provider.anyOf + a.provider.allOf
+            val signature = cookies.filter { c -> rules.any { LoginState.cookieMatches(c, it) } }.map { "${it.name}=${it.value}" }.sorted().joinToString(";")
+            if (signature != a.sessionSignature) {
+                a.sessionSignature = signature
+                a.staleSession = false
+            }
             a.sessionPresent = present
             if (present && !a.staleSession) a.signingIn = false
             afterStateChange(a, before)
@@ -127,7 +135,8 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
         val now = a.state
         if (now != "signedOut") a.lockReason = "signedOut"
         if (now == "signedOut" && before != "signedOut") {
-            a.webView?.loadUrl("about:blank")
+            // While signing out, the hidden view keeps running the provider's logout page.
+            if (!a.signingOut) a.webView?.loadUrl("about:blank")
             if (openId == a.provider.id) {
                 preview = null
                 historyOpen = false
@@ -150,10 +159,7 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
         val before = a.state
         if (before == "signedIn" && kind == "auth") {
             a.staleSession = true
-            if (a.signingOut) {
-                a.signingOut = false
-                a.signingIn = false
-            } else a.signingIn = true
+            a.signingIn = true
             afterStateChange(a, before)
             return
         }
@@ -211,6 +217,7 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
         override fun onPageFinished(view: WebView, url: String) {
             a.loading = false
             loadWaiters.remove(a.provider.id)?.forEach { main.post(it) }
+            if (a.signingOut) main.postDelayed({ finishSignOut(a) }, 2000)
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
@@ -223,6 +230,7 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
     private inner class ProviderChrome(private val a: Agent) : WebChromeClient() {
         override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean, resultMsg: Message): Boolean {
             // Sign-in popups ("Continue with Google") open inside the panel and keep their opener.
+            if (a.state == "signedOut" || !isUserGesture) return false
             val popup = WebView(context)
             Tab.configure(context, popup)
             popup.webViewClient = object : WebViewClient() {
@@ -286,9 +294,22 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
         val a = agent(id)
         val logout = a.provider.logoutUrl
         if (logout != null) {
+            // Lock at once; the logout page runs hidden until it has finished.
+            val before = a.state
             a.signingOut = true
+            a.staleSession = true
+            a.signingIn = false
             loadProvider(a, logout)
+            afterStateChange(a, before)
+            main.postDelayed({ finishSignOut(a) }, 15_000)
         } else notice(a, context.getString(R.string.notice_sign_out_in_app, a.provider.name))
+    }
+
+    private fun finishSignOut(a: Agent) {
+        if (!a.signingOut || a.loading) return
+        a.signingOut = false
+        if (a.state == "signedOut") a.webView?.loadUrl("about:blank")
+        refreshSessions()
     }
 
     fun newChat(id: String) {
