@@ -31,7 +31,8 @@ trio-browser/
 
 두 앱의 핵심 로직(주소창 입력 판별, 검색어 인식, 개인정보 필터, 방문 기록 통계·요약, 프롬프트, 로그인 판정)은
 같은 규칙을 따릅니다. 데스크톱 JavaScript 구현(`desktop/src/core`)이 기준이고, 안드로이드 Kotlin 구현(`android/core`)은
-`shared/test-vectors`의 같은 테스트 벡터와 골든 출력(통계 5종, 요약 20종, 프롬프트 14종)을 **글자 하나까지 똑같이** 재현해야 통과합니다.
+`shared/test-vectors`의 같은 테스트 벡터와 골든 출력(통계 5종, 요약 20종, 프롬프트 14종)을 JVM과 안드로이드 기기 양쪽에서
+**글자 하나까지 똑같이** 재현해야 통과합니다.
 
 설계 문서: [`docs/superpowers/specs/2026-11-26-trio-browser-design.md`](../docs/superpowers/specs/2026-11-26-trio-browser-design.md),
 데스크톱 UI 명세: [`docs/superpowers/specs/2026-11-26-trio-desktop-ui.md`](../docs/superpowers/specs/2026-11-26-trio-desktop-ui.md).
@@ -75,8 +76,8 @@ npm run dist:linux      # dist/ 에 AppImage, tar.gz
 ### 테스트
 
 ```bash
-npm run test:unit   # 핵심 로직·저장소·IPC 계약·문자열 (214개)
-npm run test:e2e    # Playwright로 실제 앱을 띄워 브라우저 기능·에이전트 흐름·보안 회귀를 검사 (34개, 모의 Claude/Gemini/ChatGPT 서버 사용)
+npm run test:unit   # 핵심 로직·저장소·IPC 계약·문자열 (220개)
+npm run test:e2e    # Playwright로 실제 앱을 띄워 브라우저 기능·에이전트 흐름·보안 회귀를 검사 (35개, 모의 Claude/Gemini/ChatGPT 서버 사용)
 npm run typecheck
 ```
 
@@ -89,14 +90,19 @@ Android 9(API 28) 이상. 엔진은 기기의 Android System WebView(크로뮴)�
 ```bash
 cd trio-browser/android
 ./gradlew :core:test :app:testDebugUnitTest   # Kotlin 핵심 로직(벡터·골든), Robolectric 테스트
+./gradlew :app:connectedDebugAndroidTest      # 연결된 기기·에뮬레이터에서 핵심 로직 전체와 묻기 흐름을 다시 검사
 ./gradlew :app:assembleRelease                # app/build/outputs/apk/release/app-release.apk (디버그 키 서명)
 ```
 
 JDK 17 이상, Android SDK(platform 37.1, build-tools 37)가 필요하며 `local.properties`에 `sdk.dir`을 지정합니다.
-Kotlin 핵심 로직 테스트 9개(벡터·골든 전체 포함)와 Robolectric 테스트 16개가 있고, Android 11 에뮬레이터(WebView 83)에
-릴리스 APK를 설치해 실행·검색 인식·버블·에이전트 잠금 화면까지 확인했습니다.
+JVM에서 도는 테스트 34개(Kotlin 핵심 로직 11개, Robolectric 19개, 주소창 선택 규칙 4개)와 기기에서 도는 테스트 12개가 있습니다.
+안드로이드의 정규식 엔진(ICU)은 JVM과 문법이 달라서(예: `(?U)`를 받지 않음) JVM 테스트만으로는 기기에서의 동작을 보장할 수 없으므로,
+벡터·골든 전체를 기기에서도 돌리고, 핵심 로직의 정규식에 JVM 전용 문법이 들어가지 않았는지도 검사합니다.
+Android 11 에뮬레이터(WebView 83)에 릴리스 APK를 설치해 실행·검색 인식·버블·에이전트 잠금 화면, 그리고 주소창·추천 목록·메뉴·
+"이 검색을 AI로"에서 에이전트에게 묻기까지 확인했습니다.
 
-화면 구성: 위쪽 주소창(입력 중 추천 목록과 "○○에게 묻기"), 가운데 웹 페이지, 아래쪽 뒤로·앞으로·새 탭·탭 목록·메뉴.
+화면 구성: 위쪽 주소창(누르면 주소 전체가 선택되어 바로 검색어나 `@claude 질문`을 입력, 입력 중 추천 목록과 "○○에게 묻기"),
+가운데 웹 페이지, 아래쪽 뒤로·앞으로·새 탭·탭 목록·메뉴(메뉴 › 모두에게 묻기는 주소창에 `@all `을 넣습니다).
 오른쪽 아래의 **떠 있는 버블**을 누르면 세 에이전트가 펼쳐지고, 고르면 **떠 있는 패널**이 열립니다. 패널은 머리글을 끌어
 옮기고 오른쪽 아래 손잡이로 크기를 바꿉니다. 로그인 전에는 잠금 화면, 로그인 중에는 공식 로그인 페이지, 로그인 후에는 채팅 화면과
 빠른 작업(페이지 요약, 페이지에 질문, 선택 영역 설명·번역, 이 검색을 AI로, 방문 기록 분석)이 나옵니다.

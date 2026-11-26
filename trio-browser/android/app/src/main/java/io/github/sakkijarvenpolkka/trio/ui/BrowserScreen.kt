@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -62,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import io.github.sakkijarvenpolkka.trio.R
 import io.github.sakkijarvenpolkka.trio.TrioApp
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
@@ -93,6 +95,7 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
     var screen by remember { mutableStateOf<Screen?>(null) }
     var historyQuery by remember { mutableStateOf("") }
     var addressCommand by remember { mutableStateOf<String?>(null) }
+    var addressEditing by remember { mutableStateOf(false) }
     androidx.compose.runtime.DisposableEffect(browser) {
         browser.onShowHistory = { q -> historyQuery = q; screen = Screen.History }
         onDispose { browser.onShowHistory = null }
@@ -108,8 +111,11 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding().imePadding()) {
-        Column(Modifier.fillMaxSize()) {
-            AddressBar(app, browser, hub, addressCommand, onCommandHandled = { addressCommand = null })
+        // While the address bar is being edited, its suggestions (with the "Ask …" rows) come in front of the floating
+        // agent bubble and panel; the panel stays where it is and is back in front when editing ends.
+        val editingInFront = addressEditing && screen == null && browser.fullscreenView == null
+        Column(Modifier.fillMaxSize().zIndex(if (editingInFront) 1f else 0f)) {
+            AddressBar(app, browser, hub, addressCommand, onCommandHandled = { addressCommand = null }, onEditingChange = { addressEditing = it })
             if (browser.findQuery != null) FindBar(browser)
             Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
                 val tab = browser.active
@@ -147,12 +153,20 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
 private data class Suggestion(val title: String, val subtitle: String, val agentId: String?, val locked: Boolean, val action: () -> Unit)
 
 @Composable
-private fun AddressBar(app: TrioApp, browser: BrowserModel, hub: AgentHub, command: String?, onCommandHandled: () -> Unit) {
+private fun AddressBar(
+    app: TrioApp,
+    browser: BrowserModel,
+    hub: AgentHub,
+    command: String?,
+    onCommandHandled: () -> Unit,
+    onEditingChange: (Boolean) -> Unit,
+) {
     val tab = browser.active
     val focus = LocalFocusManager.current
     val requester = remember { FocusRequester() }
     var focused by remember { mutableStateOf(false) }
     var value by remember { mutableStateOf(TextFieldValue("")) }
+    val selection = remember { AddressSelection() }
     val shown = tab?.url?.let { if (it.isEmpty() || it == "about:blank") "" else Hosts.displayUrl(it) } ?: ""
     androidx.compose.runtime.LaunchedEffect(shown, focused) {
         if (!focused && value.text != shown) value = TextFieldValue(shown)
@@ -160,10 +174,20 @@ private fun AddressBar(app: TrioApp, browser: BrowserModel, hub: AgentHub, comma
     androidx.compose.runtime.LaunchedEffect(command) {
         if (command != null) {
             value = TextFieldValue(command, TextRange(command.length))
-            requester.requestFocus()
+            if (!focused) {
+                selection.commandFocus()
+                requester.requestFocus()
+            }
             onCommandHandled()
         }
     }
+    val onFocus = { isFocused: Boolean ->
+        val gained = isFocused && !focused
+        focused = isFocused
+        value = selection.onFocusChanged(isFocused, gained, value)
+        onEditingChange(isFocused)
+    }
+    val onValueChange = { new: TextFieldValue -> value = selection.onValueChange(value, new) }
     val submit = { text: String ->
         focus.clearFocus()
         browser.navigate(text)
@@ -185,16 +209,13 @@ private fun AddressBar(app: TrioApp, browser: BrowserModel, hub: AgentHub, comma
                         if (value.text.isEmpty()) Text(stringResource(R.string.address_hint), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         BasicTextField(
                             value = value,
-                            onValueChange = { value = it },
+                            onValueChange = onValueChange,
                             singleLine = true,
                             textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go, autoCorrectEnabled = false),
                             keyboardActions = KeyboardActions(onGo = { if (value.text.isNotBlank()) submit(value.text) }),
-                            modifier = Modifier.fillMaxWidth().focusRequester(requester).testTag("address-input").onFocusChanged {
-                                focused = it.isFocused
-                                if (it.isFocused) value = value.copy(selection = TextRange(0, value.text.length))
-                            },
+                            modifier = Modifier.fillMaxWidth().focusRequester(requester).testTag("address-input").onFocusChanged { onFocus(it.isFocused) },
                         )
                     }
                     if (tab != null && !focused) {
@@ -240,7 +261,8 @@ private fun SuggestionList(app: TrioApp, hub: AgentHub, text: String, run: (() -
             rows.add(Suggestion(question, stringResource(R.string.ask_agent, a.provider.name), a.provider.id, a.state != "signedIn") { hub.ask(a.provider.id, question) })
         }
     }
-    LazyColumn(Modifier.fillMaxWidth().height((rows.size.coerceAtMost(8) * 52).dp).testTag("suggestions")) {
+    // As tall as the rows (the "Ask …" rows come last), scrolling past the cap or the space above the keyboard.
+    LazyColumn(Modifier.fillMaxWidth().heightIn(max = 480.dp).testTag("suggestions")) {
         items(rows) { s ->
             Row(Modifier.fillMaxWidth().clickable { run(s.action) }.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (s.agentId != null) {

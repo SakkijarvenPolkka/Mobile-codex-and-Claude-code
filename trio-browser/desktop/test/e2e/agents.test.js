@@ -66,6 +66,18 @@ describe('agents', () => {
     assert.ok(!t.mock.log.some((l) => l.startsWith('POST /claude/send')), 'nothing was submitted');
   });
 
+  it('starts asking all agents from a page with Ctrl+Shift+A and keeps "@all " while typing', async () => {
+    await go(chrome, `${t.origin('news')}/page`);
+    const page = await t.page((u) => u.startsWith(t.origin('news')));
+    await page.click('body'); // reading the page: focus is in the web contents, not the address bar
+    await t.key(t.origin('news'), 'A', ['control', 'shift']);
+    const input = chrome.getByTestId('address-input');
+    await t.until(async () => (await input.inputValue()) === '@all ', 5000, '"@all " in the address bar');
+    await chrome.keyboard.type('compare');
+    assert.equal(await input.inputValue(), '@all compare');
+    await chrome.keyboard.press('Escape');
+  });
+
   it('summarizes the current page through a preview, excluding form values and hidden text', async () => {
     await go(chrome, `${t.origin('news')}/page`);
     await t.until(async () => (await chrome.getByTestId('tab-title').first().textContent()) === 'Test Article', 10000, 'page loaded');
