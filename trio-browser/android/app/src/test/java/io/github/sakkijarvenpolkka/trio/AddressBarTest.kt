@@ -7,6 +7,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import androidx.compose.ui.geometry.Offset
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -17,6 +20,7 @@ import org.junit.rules.ExternalResource
 import org.junit.rules.RuleChain
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /** Asking agents from the address bar, the way a user does it: taps and the keyboard's Go key. */
 @RunWith(RobolectricTestRunner::class)
@@ -81,5 +85,31 @@ class AddressBarTest {
         rule.waitForIdle()
         assertEquals("chatgpt", rule.activity.hub.openId)
         assertNotNull(rule.activity.hub.agent("chatgpt").pendingLabel)
+    }
+
+    /** A panel opened while the address bar is being edited (a New Tab card) is in front and takes touches. */
+    @Test
+    fun aPanelOpenedWhileEditingIsInFront() {
+        address().performClick()
+        rule.waitForIdle()
+        rule.onNodeWithTag("agent-card-claude").performClick()
+        rule.waitForIdle()
+        assertEquals("claude", rule.activity.hub.openId)
+        rule.onNodeWithTag("panel-close").performClick()
+        rule.waitForIdle()
+        assertEquals("the panel's own button got the tap", null, rule.activity.hub.openId)
+    }
+
+    /** Resizing the panel in a window smaller than its minimum size (split screen, landscape) must not crash. */
+    @Test
+    @Config(qualifiers = "w320dp-h260dp")
+    fun resizingThePanelInATinyWindowDoesNotCrash() {
+        rule.runOnUiThread { rule.activity.hub.show("claude") }
+        rule.waitForIdle()
+        rule.onNodeWithTag("panel-resize").performTouchInput { swipe(center, center + Offset(40f, 60f)) }
+        rule.waitForIdle()
+        rule.onNodeWithTag("agent-panel").performTouchInput { swipe(Offset(width / 2f, 30f), Offset(width / 2f, 200f)) }
+        rule.waitForIdle()
+        assertEquals("claude", rule.activity.hub.openId)
     }
 }

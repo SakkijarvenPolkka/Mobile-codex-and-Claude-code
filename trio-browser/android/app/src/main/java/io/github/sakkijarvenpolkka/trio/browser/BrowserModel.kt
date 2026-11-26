@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.Message
 import android.view.View
@@ -63,7 +64,7 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
 
     val active: Tab? get() = tabs.getOrNull(activeIndex)
 
-    fun newTab(url: String? = null, background: Boolean = false, transition: String? = "typed"): Tab {
+    private fun createTab(): Tab {
         val webView = WebView(context)
         val tab = Tab(nextId++, webView)
         Tab.configure(context, webView)
@@ -71,10 +72,31 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         webView.webChromeClient = TabChrome(tab)
         webView.setDownloadListener { dlUrl, userAgent, disposition, mime, _ -> download(dlUrl, userAgent, disposition, mime) }
         webView.setFindListener { active, matches, done -> if (done) findResult = (if (matches > 0) active + 1 else 0) to matches }
+        return tab
+    }
+
+    fun newTab(url: String? = null, background: Boolean = false, transition: String? = "typed"): Tab {
+        val tab = createTab()
         tabs.add(if (background) minOf(activeIndex + 1, tabs.size) else tabs.size, tab)
         if (!background || tabs.size == 1) activate(tabs.indexOf(tab))
         if (url != null) load(tab, url, transition)
         return tab
+    }
+
+    /** Reopens saved tabs; only the shown one loads now, the others when they are shown. */
+    fun restore(urls: List<String>, active: Int) {
+        for (url in urls) {
+            val tab = createTab()
+            tabs.add(tab)
+            if (url.isNotEmpty()) defer(tab, url)
+        }
+        if (tabs.isEmpty()) newTab(null) else activate(active.coerceIn(0, tabs.size - 1))
+    }
+
+    private fun defer(tab: Tab, url: String) {
+        tab.url = url
+        tab.deferredUrl = url
+        tab.pendingTransition = "reload"
     }
 
     fun activate(index: Int) {
@@ -82,31 +104,50 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         val now = System.currentTimeMillis()
         active?.let { prev -> prev.activeSince?.let { prev.visitAccum += now - it }; prev.activeSince = null; prev.webView.onPause() }
         activeIndex = index
-        tabs[index].apply { activeSince = now; webView.onResume() }
+        show(tabs[index])
         closeFind()
         onContextChanged?.invoke()
+    }
+
+    /** Makes [tab] the one on screen: it runs again and loads its page if that was put off. */
+    private fun show(tab: Tab) {
+        tab.activeSince = System.currentTimeMillis()
+        tab.webView.onResume()
+        tab.deferredUrl?.let { url ->
+            tab.deferredUrl = null
+            load(tab, url, tab.pendingTransition ?: "reload")
+        }
     }
 
     fun closeTab(tab: Tab) {
         val index = tabs.indexOf(tab)
         if (index < 0) return
+        val wasActive = index == activeIndex
         finishVisit(tab)
         tabs.removeAt(index)
-        tab.webView.destroy()
-        if (tabs.isEmpty()) {
-            activeIndex = 0
-            newTab(null)
-        } else {
-            activeIndex = minOf(activeIndex, tabs.size - 1).let { if (index < activeIndex) it - 1 else it }.coerceIn(0, tabs.size - 1)
-            tabs[activeIndex].activeSince = System.currentTimeMillis()
+        tab.webView.dispose()
+        when {
+            tabs.isEmpty() -> {
+                activeIndex = 0
+                newTab(null)
+            }
+            wasActive -> {
+                // The tab that took its place (or the new last one) comes on screen, running again.
+                activeIndex = minOf(index, tabs.size - 1)
+                show(tabs[activeIndex])
+                closeFind()
+            }
+            index < activeIndex -> activeIndex -= 1
         }
         onContextChanged?.invoke()
     }
 
     fun load(tab: Tab, url: String, transition: String?) {
         tab.pendingTransition = transition
+        tab.deferredUrl = null
         tab.error = null
         tab.url = url
+        tab.mainUrl = url
         tab.webView.loadUrl(url)
     }
 
@@ -207,19 +248,30 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
 
     // Downloads ------------------------------------------------------------------------------------
 
-    private fun download(url: String, userAgent: String, disposition: String?, mime: String?) {
-        val name = URLUtil.guessFileName(url, disposition, mime)
+    /** Hands a download to the system's download service (tabs and agent panels). */
+    fun download(url: String, userAgent: String, disposition: String?, mime: String?) {
+        val scheme = Uri.parse(url).scheme?.lowercase()
+        // Files made by the page itself (blob:, data:) cannot be handed to the download service.
+        if (scheme != "http" && scheme != "https") return toast(context.getString(R.string.notice_download_unsupported))
         runCatching {
+            val name = URLUtil.guessFileName(url, disposition, mime)
             val request = DownloadManager.Request(Uri.parse(url))
                 .setMimeType(mime)
                 .addRequestHeader("User-Agent", userAgent)
                 .setTitle(name)
                 .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+            // Android 9 needs a storage permission for the shared Downloads folder; Trio's own folder needs none.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, name)
+            else request.setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, name)
             CookieManager.getInstance().getCookie(url)?.let { request.addRequestHeader("Cookie", it) }
             (context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
-            Toast.makeText(context, context.getString(R.string.notice_download, name), Toast.LENGTH_SHORT).show()
-        }
+            name
+        }.onSuccess { toast(context.getString(R.string.notice_download, it)) }
+            .onFailure { toast(context.getString(R.string.notice_download_failed)) }
+    }
+
+    private fun toast(text: String) {
+        Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
     }
 
     // WebView clients ------------------------------------------------------------------------------
@@ -228,18 +280,26 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             val url = request.url.toString()
             val scheme = request.url.scheme?.lowercase().orEmpty()
-            if (scheme in setOf("http", "https", "about", "data", "blob", "javascript")) return false
-            openExternal(url)
+            if (scheme in setOf("http", "https", "about", "data", "blob", "javascript")) {
+                if (request.isForMainFrame) tab.mainUrl = url
+                return false
+            }
+            // Other apps open from the page itself or from a tap, never from an embedded frame (an ad) on its own.
+            if (request.isForMainFrame || request.hasGesture()) openExternal(tab, url)
             return true
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            // Another page (back, forward, a link): the error shown for the one that failed no longer applies.
+            if (tab.error != null && !sameUrl(url, tab.errorUrl)) tab.error = null
+            tab.mainUrl = url
             tab.url = url
             tab.favicon = favicon
             tab.refreshNav()
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
+            if (tab.error != null && !sameUrl(url, tab.errorUrl)) tab.error = null
             tab.url = url
             tab.refreshNav()
             recordVisit(tab, url, isReload)
@@ -253,40 +313,76 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         }
 
         override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
-            if (request.isForMainFrame) tab.error = error.description?.toString() ?: "ERROR"
+            if (request.isForMainFrame) {
+                tab.error = error.description?.toString() ?: "ERROR"
+                tab.errorUrl = request.url.toString()
+            }
         }
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
             handler.cancel()
-            tab.error = "SSL"
+            // Only the page itself: a picture or script with a bad certificate is just left out.
+            if (sameUrl(error.url, tab.mainUrl)) {
+                tab.error = "SSL"
+                tab.errorUrl = error.url
+            }
         }
 
         override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
-            // Replace the crashed tab with a fresh one at the same place.
+            // All tabs share one renderer. Each is replaced by a fresh tab at the same place; only the
+            // one on screen loads again now (reloading every tab at once could exhaust memory again).
             val index = tabs.indexOf(tab)
-            if (index < 0) return true
+            if (index < 0) {
+                view.dispose()
+                return true
+            }
             val wasActive = index == activeIndex
+            finishVisit(tab)
             tabs.removeAt(index)
-            tab.webView.destroy()
-            val replacement = newTab(tab.url.takeIf { it.startsWith("http") }, background = true, transition = "reload")
-            tabs.remove(replacement)
+            tab.webView.dispose()
+            val replacement = createTab()
             tabs.add(index, replacement)
+            (tab.deferredUrl ?: tab.url).takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let { defer(replacement, it) }
             replacement.crashed = true
-            if (wasActive || tabs.size == 1) activate(index)
+            if (wasActive) {
+                show(replacement)
+                onContextChanged?.invoke()
+            }
             return true
         }
     }
 
-    private fun openExternal(url: String) {
-        runCatching {
-            val intent = if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, Uri.parse(url))
-            intent.addCategory(Intent.CATEGORY_BROWSABLE)
-            intent.component = null
-            intent.selector = null
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    private fun sameUrl(a: String?, b: String?): Boolean = a != null && b != null && a.substringBefore('#').trimEnd('/') == b.substringBefore('#').trimEnd('/')
+
+    private fun openExternal(tab: Tab, url: String) {
+        val intent = runCatching {
+            if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        }.getOrNull() ?: return
+        intent.addCategory(Intent.CATEGORY_BROWSABLE)
+        intent.component = null
+        intent.selector = null
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
             context.startActivity(intent)
-        }.onFailure { if (it !is ActivityNotFoundException) it.printStackTrace() }
+        } catch (e: ActivityNotFoundException) {
+            // As in Chrome: the page's own fallback address, else the app's page in the store.
+            val fallback = runCatching { intent.getStringExtra("browser_fallback_url") }.getOrNull()
+                ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+            val pkg = intent.`package`
+            when {
+                fallback != null -> load(tab, fallback, "link")
+                pkg != null && openStore(pkg) -> Unit
+                else -> toast(context.getString(R.string.notice_no_app))
+            }
+        } catch (e: RuntimeException) {
+            toast(context.getString(R.string.notice_no_app))
+        }
     }
+
+    private fun openStore(pkg: String): Boolean = runCatching {
+        val store = Uri.parse("market://details").buildUpon().appendQueryParameter("id", pkg).build()
+        context.startActivity(Intent(Intent.ACTION_VIEW, store).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    }.isSuccess
 
     private inner class TabChrome(private val tab: Tab) : WebChromeClient() {
         override fun onProgressChanged(view: WebView, newProgress: Int) {

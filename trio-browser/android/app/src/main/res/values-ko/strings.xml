@@ -93,6 +93,12 @@
     <string name="notice_bookmark_added">북마크에 추가했습니다</string>
     <string name="notice_bookmark_removed">북마크를 삭제했습니다</string>
     <string name="notice_download">%1$s 다운로드 중</string>
+    <string name="notice_agent_reloaded">%1$s 페이지가 예기치 않게 멈춰 다시 불러왔습니다.</string>
+    <string name="notice_agent_stopped">%1$s 페이지가 계속 멈춥니다. 나중에 다시 열거나 새 채팅을 눌러 주세요.</string>
+    <string name="notice_history_failed">방문 기록을 읽지 못했습니다.</string>
+    <string name="notice_download_unsupported">이 방식의 다운로드는 아직 저장할 수 없습니다.</string>
+    <string name="notice_download_failed">다운로드를 시작하지 못했습니다.</string>
+    <string name="notice_no_app">이 링크를 열 수 있는 앱이 기기에 없습니다.</string>
     <string name="history_search">방문 기록 검색</string>
     <string name="history_empty">방문 기록이 없습니다</string>
     <string name="history_clear">기록 삭제</string>

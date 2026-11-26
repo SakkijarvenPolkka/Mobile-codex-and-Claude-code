@@ -40,6 +40,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +53,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -63,7 +67,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.zIndex
 import io.github.sakkijarvenpolkka.trio.R
 import io.github.sakkijarvenpolkka.trio.TrioApp
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
@@ -90,32 +93,46 @@ fun WebViewHost(webView: WebView, modifier: Modifier = Modifier) {
     )
 }
 
+/** The address bar's text and focus, shared with the suggestions that float over the panel. */
+internal class AddressState {
+    var value by mutableStateOf(TextFieldValue(""))
+    var focused by mutableStateOf(false)
+
+    /** The text to suggest for, while the bar is being edited. */
+    val suggesting: String? get() = value.text.takeIf { focused && it.isNotBlank() }
+}
+
 @Composable
 fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
     var screen by remember { mutableStateOf<Screen?>(null) }
     var historyQuery by remember { mutableStateOf("") }
     var addressCommand by remember { mutableStateOf<String?>(null) }
-    var addressEditing by remember { mutableStateOf(false) }
+    val address = remember { AddressState() }
+    var addressHeight by remember { mutableIntStateOf(0) }
+    val focus = LocalFocusManager.current
+    val density = LocalDensity.current
     androidx.compose.runtime.DisposableEffect(browser) {
         browser.onShowHistory = { q -> historyQuery = q; screen = Screen.History }
         onDispose { browser.onShowHistory = null }
     }
+    // Opening an agent panel (a New Tab card, the menu, the bubble, "Ask …") ends address-bar editing.
+    LaunchedEffect(hub.openId) {
+        if (hub.openId != null) focus.clearFocus()
+    }
 
-    BackHandler(enabled = screen != null || hub.openId != null || browser.active?.canGoBack == true || browser.fullscreenView != null) {
+    BackHandler(enabled = address.focused || screen != null || hub.openId != null || browser.active?.canGoBack == true || browser.fullscreenView != null) {
         when {
             browser.fullscreenView != null -> browser.exitFullscreen()
             screen != null -> screen = null
+            address.focused -> focus.clearFocus()
             hub.openId != null -> hub.openId = null
             else -> browser.back()
         }
     }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding().imePadding()) {
-        // While the address bar is being edited, its suggestions (with the "Ask …" rows) come in front of the floating
-        // agent bubble and panel; the panel stays where it is and is back in front when editing ends.
-        val editingInFront = addressEditing && screen == null && browser.fullscreenView == null
-        Column(Modifier.fillMaxSize().zIndex(if (editingInFront) 1f else 0f)) {
-            AddressBar(app, browser, hub, addressCommand, onCommandHandled = { addressCommand = null }, onEditingChange = { addressEditing = it })
+        Column(Modifier.fillMaxSize()) {
+            AddressBar(app, browser, hub, address, addressCommand, onCommandHandled = { addressCommand = null }, modifier = Modifier.onSizeChanged { addressHeight = it.height })
             if (browser.findQuery != null) FindBar(browser)
             Box(Modifier.weight(1f).fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
                 val tab = browser.active
@@ -134,6 +151,14 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
 
         if (app.settings.bubbleVisible) AgentBubble(app, hub)
         hub.open?.let { AgentPanel(app, hub, it, browser) }
+
+        // The suggestions, with their "Ask …" rows, float over the page and over the agent bubble and panel.
+        val suggesting = address.suggesting
+        if (suggesting != null && screen == null && browser.fullscreenView == null) {
+            Surface(Modifier.padding(top = with(density) { addressHeight.toDp() }).fillMaxWidth(), color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
+                SuggestionList(app, hub, suggesting) { action -> focus.clearFocus(); action() }
+            }
+        }
 
         when (screen) {
             Screen.Tabs -> TabsScreen(browser) { screen = null }
@@ -157,43 +182,41 @@ private fun AddressBar(
     app: TrioApp,
     browser: BrowserModel,
     hub: AgentHub,
+    address: AddressState,
     command: String?,
     onCommandHandled: () -> Unit,
-    onEditingChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val tab = browser.active
     val focus = LocalFocusManager.current
     val requester = remember { FocusRequester() }
-    var focused by remember { mutableStateOf(false) }
-    var value by remember { mutableStateOf(TextFieldValue("")) }
     val selection = remember { AddressSelection() }
     val shown = tab?.url?.let { if (it.isEmpty() || it == "about:blank") "" else Hosts.displayUrl(it) } ?: ""
-    androidx.compose.runtime.LaunchedEffect(shown, focused) {
-        if (!focused && value.text != shown) value = TextFieldValue(shown)
+    androidx.compose.runtime.LaunchedEffect(shown, address.focused) {
+        if (!address.focused && address.value.text != shown) address.value = TextFieldValue(shown)
     }
     androidx.compose.runtime.LaunchedEffect(command) {
         if (command != null) {
-            value = TextFieldValue(command, TextRange(command.length))
-            if (!focused) {
-                selection.commandFocus()
-                requester.requestFocus()
-            }
+            address.value = TextFieldValue(command, TextRange(command.length))
+            selection.commandApplied(willFocus = !address.focused)
+            if (!address.focused) requester.requestFocus()
             onCommandHandled()
         }
     }
     val onFocus = { isFocused: Boolean ->
-        val gained = isFocused && !focused
-        focused = isFocused
-        value = selection.onFocusChanged(isFocused, gained, value)
-        onEditingChange(isFocused)
+        val gained = isFocused && !address.focused
+        address.focused = isFocused
+        address.value = selection.onFocusChanged(isFocused, gained, address.value)
     }
-    val onValueChange = { new: TextFieldValue -> value = selection.onValueChange(value, new) }
+    val onValueChange = { new: TextFieldValue -> address.value = selection.onValueChange(address.value, new) }
     val submit = { text: String ->
         focus.clearFocus()
         browser.navigate(text)
     }
+    val focused = address.focused
+    val value = address.value
 
-    Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
+    Surface(modifier, color = MaterialTheme.colorScheme.surface, shadowElevation = 1.dp) {
         Column {
             Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Row(
@@ -214,7 +237,7 @@ private fun AddressBar(
                             textStyle = TextStyle(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
                             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go, autoCorrectEnabled = false),
-                            keyboardActions = KeyboardActions(onGo = { if (value.text.isNotBlank()) submit(value.text) }),
+                            keyboardActions = KeyboardActions(onGo = { if (address.value.text.isNotBlank()) submit(address.value.text) }),
                             modifier = Modifier.fillMaxWidth().focusRequester(requester).testTag("address-input").onFocusChanged { onFocus(it.isFocused) },
                         )
                     }
@@ -232,7 +255,6 @@ private fun AddressBar(
                 }
             }
             if (tab != null && tab.loading) LinearProgressIndicator(progress = { tab.progress / 100f }, modifier = Modifier.fillMaxWidth().height(2.dp))
-            if (focused && value.text.isNotBlank()) SuggestionList(app, hub, value.text) { action -> focus.clearFocus(); action() }
         }
     }
 }

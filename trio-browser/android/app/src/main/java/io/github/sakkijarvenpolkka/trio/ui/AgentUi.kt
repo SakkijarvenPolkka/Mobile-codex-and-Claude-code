@@ -43,6 +43,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -63,7 +64,39 @@ import io.github.sakkijarvenpolkka.trio.TrioApp
 import io.github.sakkijarvenpolkka.trio.agents.Agent
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
 import io.github.sakkijarvenpolkka.trio.browser.BrowserModel
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+/**
+ * Where the floating panel goes: the size and place the user chose, fitted into the space there is now
+ * (rotation, folding, split screen and the keyboard all change it). Never an empty range, so no
+ * window size can make it throw. The panel may stick out sideways, but stays inside vertically so its
+ * header and the chat box above the keyboard stay reachable.
+ */
+internal data class PanelBox(val x: Float, val y: Float, val w: Float, val h: Float) {
+    fun fit(maxW: Float, maxH: Float, minW: Float, minH: Float): PanelBox {
+        val mw = maxOf(maxW, 0f)
+        val mh = maxOf(maxH, 0f)
+        val fw = w.coerceIn(minOf(minW, mw), mw)
+        val fh = h.coerceIn(minOf(minH, mh), mh)
+        return PanelBox(x.coerceIn(-fw * 0.6f, mw - fw * 0.4f), y.coerceIn(0f, mh - fh), fw, fh)
+    }
+
+    /** Dragged by its header. */
+    fun moved(dx: Float, dy: Float, maxW: Float, maxH: Float, minW: Float, minH: Float): PanelBox =
+        copy(x = x + dx, y = y + dy).fit(maxW, maxH, minW, minH)
+
+    /** Resized by its corner grip; the top stays where it is. */
+    fun resized(dw: Float, dh: Float, maxW: Float, maxH: Float, minW: Float, minH: Float): PanelBox {
+        val f = fit(maxW, maxH, minW, minH)
+        val room = maxOf(maxH, 0f) - f.y
+        return f.copy(w = f.w + dw, h = (f.h + dh).coerceIn(minOf(minH, room), room)).fit(maxW, maxH, minW, minH)
+    }
+}
+
+/** The bubble's place, kept inside [maxX] × [maxY] (both may be 0 in a tiny window). */
+internal fun fitBubble(x: Float, y: Float, maxX: Float, maxY: Float): Pair<Float, Float> =
+    x.coerceIn(0f, maxOf(maxX, 0f)) to y.coerceIn(0f, maxOf(maxY, 0f))
 
 /** The floating bubble: tap to show the three agents, drag to move. */
 @Composable
@@ -79,13 +112,18 @@ fun AgentBubble(app: TrioApp, hub: AgentHub) {
             x = maxX - with(density) { 8.dp.toPx() }
             y = maxY * 0.62f
         }
+        // Read by the drag handler, which outlives this composition's bounds.
+        val bounds by rememberUpdatedState(maxX to maxY)
         Column(
-            Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }
+            Modifier.offset { fitBubble(x, y, maxX, maxY).let { (fx, fy) -> IntOffset(fx.roundToInt(), fy.roundToInt()) } }
                 .pointerInput(Unit) {
                     detectDragGestures { change, drag ->
                         change.consume()
-                        x = (x + drag.x).coerceIn(0f, maxX)
-                        y = (y + drag.y).coerceIn(0f, maxY)
+                        val (bx, by) = bounds
+                        val (fx, fy) = fitBubble(x, y, bx, by)
+                        val (nx, ny) = fitBubble(fx + drag.x, fy + drag.y, bx, by)
+                        x = nx
+                        y = ny
                     }
                 },
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -122,15 +160,16 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val maxW = with(density) { maxWidth.toPx() }
         val maxH = with(density) { maxHeight.toPx() }
-        var w by remember { mutableFloatStateOf(maxW * 0.94f) }
-        var h by remember { mutableFloatStateOf(maxH * 0.62f) }
-        var x by remember { mutableFloatStateOf(maxW * 0.03f) }
-        var y by remember { mutableFloatStateOf(maxH * 0.34f) }
         val minW = with(density) { 260.dp.toPx() }
         val minH = with(density) { 300.dp.toPx() }
+        // What the user chose; shown fitted into the space there is now.
+        var box by remember { mutableStateOf(PanelBox(maxW * 0.03f, maxH * 0.34f, maxW * 0.94f, maxH * 0.62f)) }
+        val shown = box.fit(maxW, maxH, minW, minH)
+        // Read by the drag handlers, which outlive this composition's bounds.
+        val bounds by rememberUpdatedState(floatArrayOf(maxW, maxH, minW, minH))
         Surface(
-            Modifier.offset { IntOffset(x.roundToInt(), y.roundToInt()) }
-                .size(with(density) { w.toDp() }, with(density) { h.toDp() })
+            Modifier.offset { IntOffset(shown.x.roundToInt(), shown.y.roundToInt()) }
+                .size(with(density) { shown.w.toDp() }, with(density) { shown.h.toDp() })
                 .testTag("agent-panel"),
             shape = RoundedCornerShape(16.dp),
             shadowElevation = 12.dp,
@@ -139,11 +178,11 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
             Box(Modifier.fillMaxSize().border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(16.dp))) {
                 Column(Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxWidth().height(3.dp).background(parseColor(agent.provider.accent)))
-                    PanelHeader(app, hub, agent, Modifier.pointerInput(Unit) {
+                    PanelHeader(app, hub, agent, browser, Modifier.pointerInput(Unit) {
                         detectDragGestures { change, drag ->
                             change.consume()
-                            x = (x + drag.x).coerceIn(-w * 0.6f, maxW - w * 0.4f)
-                            y = (y + drag.y).coerceIn(0f, maxH - with(density) { 48.dp.toPx() })
+                            val (bw, bh, mw, mh) = bounds
+                            box = box.fit(bw, bh, mw, mh).moved(drag.x, drag.y, bw, bh, mw, mh)
                         }
                     })
                     PanelBody(app, hub, agent, browser)
@@ -152,8 +191,8 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
                     Modifier.align(Alignment.BottomEnd).size(28.dp).pointerInput(Unit) {
                         detectDragGestures { change, drag ->
                             change.consume()
-                            w = (w + drag.x).coerceIn(minW, maxW)
-                            h = (h + drag.y).coerceIn(minH, maxH)
+                            val (bw, bh, mw, mh) = bounds
+                            box = box.fit(bw, bh, mw, mh).resized(drag.x, drag.y, bw, bh, mw, mh)
                         }
                     }.testTag("panel-resize"),
                     contentAlignment = Alignment.Center,
@@ -164,7 +203,7 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
 }
 
 @Composable
-private fun PanelHeader(app: TrioApp, hub: AgentHub, a: Agent, modifier: Modifier) {
+private fun PanelHeader(app: TrioApp, hub: AgentHub, a: Agent, browser: BrowserModel, modifier: Modifier) {
     var menu by remember { mutableStateOf(false) }
     Row(modifier.fillMaxWidth().height(48.dp).padding(start = 10.dp, end = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         AgentCircle(a.provider.monogram, a.provider.accent, a.state, 28.dp, a.busy)
@@ -184,18 +223,13 @@ private fun PanelHeader(app: TrioApp, hub: AgentHub, a: Agent, modifier: Modifie
                 }
                 DropdownMenuItem(text = { Text(stringResource(R.string.analyze_history)) }, onClick = { menu = false; hub.openHistory(a.provider.id) })
                 if (a.state == "signedIn") {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.open_in_tab)) }, onClick = { menu = false; LocalBrowserHolder.browser?.open(a.url.ifEmpty { a.provider.appUrl }, newTab = true) })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.open_in_tab)) }, onClick = { menu = false; browser.open(a.url.ifEmpty { a.provider.appUrl }, newTab = true) })
                     DropdownMenuItem(text = { Text(stringResource(R.string.sign_out)) }, onClick = { menu = false; hub.signOut(a.provider.id) })
                 }
             }
         }
         IconButton(onClick = { hub.openId = null }, modifier = Modifier.testTag("panel-close")) { Icon(Icons.minimize, stringResource(R.string.minimize), Modifier.size(20.dp)) }
     }
-}
-
-/** Gives non-composable callbacks access to the browser (set by MainActivity). */
-object LocalBrowserHolder {
-    var browser: BrowserModel? = null
 }
 
 @Composable
@@ -218,9 +252,15 @@ private fun PanelBody(app: TrioApp, hub: AgentHub, a: Agent, browser: BrowserMod
             Box(Modifier.fillMaxSize()) {
                 val popup = a.popup
                 when {
-                    popup != null -> {
+                    popup != null -> Column(Modifier.fillMaxSize()) {
+                        // A window opened by the provider: its address is always shown, so it cannot pose as another site.
+                        Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(if (a.popupUrl.startsWith("https://")) Icons.lock else Icons.search, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(6.dp))
+                            Text(runCatching { android.net.Uri.parse(a.popupUrl).host.orEmpty() }.getOrDefault(""), fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f).testTag("popup-host"))
+                            IconButton(onClick = { hub.closePopup(a) }, modifier = Modifier.testTag("popup-close")) { Icon(Icons.close, stringResource(R.string.close)) }
+                        }
                         WebViewHost(popup, Modifier.fillMaxSize())
-                        IconButton(onClick = { hub.closePopup(a) }, modifier = Modifier.align(Alignment.TopEnd)) { Icon(Icons.close, stringResource(R.string.close)) }
                     }
                     a.showProvider -> WebViewHost(hub.webViewFor(a), Modifier.fillMaxSize().testTag("provider-webview"))
                     else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer))
@@ -309,7 +349,11 @@ private fun HistoryPanel(hub: AgentHub) {
     val f = hub.historyForm
     var text by remember(hub.historyPreview?.id) { mutableStateOf(hub.historyPreview?.text.orEmpty()) }
     var toAll by remember { mutableStateOf(false) }
-    LaunchedEffect(f) { hub.rebuildHistoryPreview() }
+    LaunchedEffect(f) {
+        // Each letter typed into the question changes the form: rebuild once typing pauses, off the main thread.
+        if (hub.historyPreview != null) delay(300)
+        hub.refreshHistoryPreview()
+    }
     Column(Modifier.fillMaxSize().padding(12.dp).testTag("history-panel")) {
         Text(stringResource(R.string.history_title), fontWeight = FontWeight.Bold, fontSize = 16.sp)
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {

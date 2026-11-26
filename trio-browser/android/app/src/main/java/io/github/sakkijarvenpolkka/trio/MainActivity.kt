@@ -12,9 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.CompositionLocalProvider
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
 import io.github.sakkijarvenpolkka.trio.browser.BrowserModel
+import io.github.sakkijarvenpolkka.trio.browser.dispose
 import io.github.sakkijarvenpolkka.trio.ui.BrowserScreen
 import io.github.sakkijarvenpolkka.trio.ui.LocalBrowser
-import io.github.sakkijarvenpolkka.trio.ui.LocalBrowserHolder
 import io.github.sakkijarvenpolkka.trio.ui.TrioTheme
 
 class MainActivity : ComponentActivity() {
@@ -35,7 +35,6 @@ class MainActivity : ComponentActivity() {
         val app = application as TrioApp
         browser = BrowserModel(this, app)
         hub = AgentHub(this, app, browser)
-        LocalBrowserHolder.browser = browser
         browser.onAgentRequest = { id, query -> hub.ask(id, query) }
         browser.onAnyNavigation = { hub.refreshSessions() }
         browser.fileChooser = { callback, params ->
@@ -43,7 +42,12 @@ class MainActivity : ComponentActivity() {
             pendingFiles = callback
             runCatching { pickFiles.launch(params.createIntent()) }.isSuccess.also { if (!it) pendingFiles = null }
         }
-        browser.newTab(intentUrl(intent))
+        // Recreated after the process was stopped in the background (or a change of configuration the
+        // activity does not handle itself): the tabs come back, and the intent that first started the
+        // activity is not opened a second time.
+        val saved = savedInstanceState?.getStringArrayList(STATE_TABS)
+        if (saved != null) browser.restore(saved, savedInstanceState.getInt(STATE_ACTIVE))
+        else browser.newTab(intentUrl(intent))
         setContent {
             TrioTheme {
                 CompositionLocalProvider(LocalBrowser provides browser) {
@@ -55,7 +59,18 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         intentUrl(intent)?.let { browser.newTab(it) }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        // Addresses only (no page state), within the size a saved state may have.
+        val urls = browser.tabs.take(MAX_SAVED_TABS).map { tab ->
+            (tab.deferredUrl ?: tab.url).takeIf { (it.startsWith("http://") || it.startsWith("https://")) && it.length <= MAX_SAVED_URL }.orEmpty()
+        }
+        outState.putStringArrayList(STATE_TABS, ArrayList(urls))
+        outState.putInt(STATE_ACTIVE, browser.activeIndex.coerceIn(0, maxOf(0, urls.size - 1)))
     }
 
     private fun intentUrl(intent: Intent?): String? {
@@ -80,11 +95,18 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (isFinishing) {
-            browser.tabs.forEach { browser.finishVisit(it); it.webView.destroy() }
-            hub.agents.forEach { it.webView?.destroy() }
-            LocalBrowserHolder.browser = null
-        }
+        // This activity's tabs and agents go with it, also when it is recreated: the new one has its own.
+        browser.tabs.forEach { browser.finishVisit(it); it.webView.dispose() }
+        hub.destroy()
+        pendingFiles?.onReceiveValue(null)
+        pendingFiles = null
         super.onDestroy()
+    }
+
+    private companion object {
+        const val STATE_TABS = "trio.tabs"
+        const val STATE_ACTIVE = "trio.activeTab"
+        const val MAX_SAVED_TABS = 50
+        const val MAX_SAVED_URL = 4096
     }
 }

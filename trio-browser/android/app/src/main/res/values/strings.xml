@@ -93,6 +93,12 @@
     <string name="notice_bookmark_added">Bookmark added</string>
     <string name="notice_bookmark_removed">Bookmark removed</string>
     <string name="notice_download">Downloading %1$s</string>
+    <string name="notice_agent_reloaded">The %1$s page stopped unexpectedly and was loaded again.</string>
+    <string name="notice_agent_stopped">The %1$s page keeps stopping. Open it again later, or use New chat.</string>
+    <string name="notice_history_failed">The browsing history could not be read.</string>
+    <string name="notice_download_unsupported">This kind of download cannot be saved yet.</string>
+    <string name="notice_download_failed">The download could not be started.</string>
+    <string name="notice_no_app">No app on this device can open this link.</string>
     <string name="history_search">Search history</string>
     <string name="history_empty">No history yet</string>
     <string name="history_clear">Clear history</string>

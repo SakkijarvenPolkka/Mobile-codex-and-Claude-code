@@ -3,6 +3,7 @@ package io.github.sakkijarvenpolkka.trio
 import android.content.Intent
 import android.net.Uri
 import android.os.Looper
+import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -32,6 +33,20 @@ class MainActivityTest {
         Robolectric.buildActivity(MainActivity::class.java, intent).use { controller ->
             val activity = controller.setup().get()
             assertEquals("https://example.com/page", shadowOf(activity.browser.active!!.webView).lastLoadedUrl)
+        }
+    }
+
+    /** Recreated after being stopped in the background: the tabs come back and the first link is not opened again. */
+    @Test
+    fun tabsComeBackWhenTheActivityIsRecreated() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com/first"), ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+            scenario.onActivity { it.browser.newTab("https://example.org/second") }
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                assertEquals(listOf("https://example.com/first", "https://example.org/second"), activity.browser.tabs.map { it.url })
+                assertEquals(1, activity.browser.activeIndex)
+            }
         }
     }
 }

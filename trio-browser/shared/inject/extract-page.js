@@ -97,12 +97,22 @@
   }
   const root = document.body ? mainElement() : null;
   const body = root ? collect(root) : { text: '', truncated: false };
+  // On Android this runs in the page's own world, where a named element (<img name="title">) or a
+  // redefined getter can make document.title anything: read the real getter, and return strings only.
+  const str = (v) => (typeof v === 'string' ? v : '');
+  let title = '';
+  try {
+    const desc = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+    title = str(desc && desc.get ? desc.get.call(document) : document.title);
+  } catch (e) {
+    title = '';
+  }
   return {
-    title: document.title || '',
-    url: location.href,
-    lang: document.documentElement.lang || '',
-    selection,
-    text: body.text,
-    truncated: body.truncated,
+    title,
+    url: String(location.href),
+    lang: str(document.documentElement && document.documentElement.lang),
+    selection: str(selection),
+    text: str(body.text),
+    truncated: !!body.truncated,
   };
 })()

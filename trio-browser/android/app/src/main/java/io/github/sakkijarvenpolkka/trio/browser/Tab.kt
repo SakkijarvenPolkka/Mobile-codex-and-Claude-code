@@ -3,28 +3,36 @@ package io.github.sakkijarvenpolkka.trio.browser
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.view.ViewGroup
 import android.webkit.CookieManager
 import android.webkit.WebSettings
 import android.webkit.WebView
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.webkit.WebSettingsCompat
-import androidx.webkit.WebViewFeature
 
 /** One browser tab: its WebView plus the state the UI shows. */
 class Tab(val id: Long, val webView: WebView) {
     var url by mutableStateOf("")
     var title by mutableStateOf("")
-    var progress by mutableStateOf(100)
+    var progress by mutableIntStateOf(100)
     var canGoBack by mutableStateOf(false)
     var canGoForward by mutableStateOf(false)
     var favicon by mutableStateOf<Bitmap?>(null)
     var error by mutableStateOf<String?>(null)
+    /** The address that failed with [error]. */
+    var errorUrl: String? = null
     var crashed by mutableStateOf(false)
 
     /** Transition to record for the next committed navigation ("typed", "search", …). */
     var pendingTransition: String? = null
+
+    /** A restored or crashed tab loads its page only when it is shown. */
+    var deferredUrl: String? = null
+
+    /** The main-frame address being loaded (for telling page errors from errors of a page's parts). */
+    var mainUrl: String? = null
     var visitId: Long? = null
     var visitAccum = 0L
     var activeSince: Long? = null
@@ -64,11 +72,14 @@ class Tab(val id: Long, val webView: WebView) {
             s.allowContentAccess = false
             s.mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
             s.userAgentString = cleanUserAgent(WebSettings.getDefaultUserAgent(context))
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
-                WebSettingsCompat.setRequestedWithHeaderOriginAllowList(s, emptySet())
-            }
             CookieManager.getInstance().setAcceptCookie(true)
             CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         }
     }
+}
+
+/** Takes the view off the screen and destroys it. */
+fun WebView.dispose() {
+    (parent as? ViewGroup)?.removeView(this)
+    destroy()
 }

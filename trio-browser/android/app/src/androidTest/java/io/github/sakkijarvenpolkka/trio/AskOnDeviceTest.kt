@@ -3,8 +3,10 @@ package io.github.sakkijarvenpolkka.trio
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.sakkijarvenpolkka.trio.agents.HistoryForm
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -39,8 +41,7 @@ class AskOnDeviceTest {
             scenario.onActivity { activity ->
                 assertEquals("gemini", activity.hub.openId)
                 assertNotNull(activity.hub.agent("gemini").pendingLabel)
-                activity.hub.rebuildHistoryPreview()
-                assertNotNull(activity.hub.historyPreview)
+                assertTrue(activity.hub.buildHistoryPreview(HistoryForm()).text.isNotEmpty())
             }
         }
     }
