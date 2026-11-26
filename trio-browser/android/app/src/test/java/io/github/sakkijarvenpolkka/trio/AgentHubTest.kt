@@ -232,11 +232,15 @@ class AgentHubTest {
     @Test
     fun theTextGoesInOnceTheAppHasLoaded() {
         signInClaude()
-        hub.ask("claude", "hello")
-        idle()
+        // The panel starts loading the app; asking now must wait for that load, not start it again
+        // (starting again cancels it, and WebView reports the cancelled load as finished).
+        hub.show("claude")
         val claude = hub.agent("claude")
         val wv = hub.webViewFor(claude)
-        assertEquals("https://claude.ai/new", shadowOf(wv).lastLoadedUrl)
+        wv.loadUrl("about:marker")
+        hub.ask("claude", "hello")
+        idle()
+        assertEquals("no second load of the app", "about:marker", shadowOf(wv).lastLoadedUrl)
         assertNull("nothing runs in the page before the app has loaded", shadowOf(wv).lastEvaluatedJavascript)
         assertTrue(claude.busy)
         loaded("claude", "https://claude.ai/new")
@@ -245,16 +249,88 @@ class AgentHubTest {
         assertEquals(app.getString(R.string.notice_inserted), claude.notice)
     }
 
-    /** A page that never finishes loading, or never answers, still ends the handoff: the text is on the clipboard. */
+    /** The chat page never arrives (a stalled connection): the text goes to the clipboard, not into the old page. */
+    @Test
+    fun aChatPageThatNeverArrivesEndsOnTheClipboard() {
+        signInClaude()
+        hub.ask("claude", "never loaded")
+        idle(AgentHub.LOAD_TIMEOUT_MS + 500)
+        val claude = hub.agent("claude")
+        assertFalse(claude.busy)
+        assertNull("nothing ran in the page on screen", shadowOf(hub.webViewFor(claude)).lastEvaluatedJavascript)
+        assertEquals(app.getString(R.string.notice_load_failed_clipboard), claude.notice)
+        assertTrue(clipboardText().orEmpty().contains("never loaded"))
+    }
+
+    /** A page that starts but never finishes loading, and never answers, still ends the handoff on the clipboard. */
     @Test
     fun aHandoffThatNeverHearsBackEndsOnTheClipboard() {
         signInClaude()
         hub.ask("claude", "never answered")
+        idle()
+        val wv = hub.webViewFor(hub.agent("claude"))
+        shadowOf(wv).webViewClient.onPageStarted(wv, "https://claude.ai/new", null)
         idle(AgentHub.LOAD_TIMEOUT_MS + AgentHub.INSERT_TIMEOUT_MS + 5_500)
         val claude = hub.agent("claude")
         assertFalse(claude.busy)
+        assertNotNull("it tried once the page had started", shadowOf(wv).lastEvaluatedJavascript)
         assertEquals(app.getString(R.string.notice_clipboard), claude.notice)
         assertTrue(clipboardText().orEmpty().contains("never answered"))
+    }
+
+    /**
+     * Asking while another page of the app is loading (a link the user tapped) cancels that navigation;
+     * WebView then reports it as finished before the new chat has started. The text must wait.
+     */
+    @Test
+    fun theFinishOfANavigationThatTheNewChatCancelledIsNotTheNewChat() {
+        signInClaude()
+        hub.show("claude")
+        loaded("claude", "https://claude.ai/new")
+        val wv = hub.webViewFor(hub.agent("claude"))
+        hub.ask("claude", "for the new chat")
+        val client = shadowOf(wv).webViewClient
+        client.onPageFinished(wv, "https://claude.ai/chat/42")
+        idle()
+        assertNull("nothing goes into the old page", shadowOf(wv).lastEvaluatedJavascript)
+        loaded("claude", "https://claude.ai/new")
+        answerInsertCheck(wv, ok = true)
+        assertEquals(app.getString(R.string.notice_inserted), hub.agent("claude").notice)
+    }
+
+    /** The app goes to a sign-in page while the text is going in: it waits for sign-in instead of going elsewhere. */
+    @Test
+    fun aBounceToSignInDuringTheInsertWaitsForSignIn() {
+        signInClaude()
+        hub.ask("claude", "after the bounce")
+        idle()
+        loaded("claude", "https://claude.ai/new")
+        val claude = hub.agent("claude")
+        val wv = hub.webViewFor(claude)
+        val check = shadowOf(wv).lastEvaluatedJavascriptCallback
+        navigate("claude", "https://claude.ai/login?returnTo=%2Fnew")
+        assertEquals("signingIn", claude.state)
+        check.onReceiveValue("null")
+        idle()
+        assertFalse(claude.busy)
+        assertNotNull("waits for sign-in", claude.pendingLabel)
+        assertNull("not put on the clipboard", clipboardText())
+    }
+
+    @Test
+    fun aPartialInsertSaysSoAndKeepsTheFullText() {
+        signInClaude()
+        hub.ask("claude", "a long question")
+        idle()
+        loaded("claude", "https://claude.ai/new")
+        val wv = hub.webViewFor(hub.agent("claude"))
+        val check = shadowOf(wv).lastEvaluatedJavascript
+        val token = Regex("r\\.token===\"([^\"]+)\"").find(check)!!.groupValues[1]
+        shadowOf(wv).lastEvaluatedJavascriptCallback.onReceiveValue(JsonPrimitive("""{"token":"$token","state":"done","ok":false,"reason":"partial"}""").toString())
+        idle()
+        assertEquals(app.getString(R.string.notice_partial), hub.agent("claude").notice)
+        assertTrue(clipboardText().orEmpty().contains("a long question"))
+        assertTrue("the try in the page is called off", shadowOf(wv).lastEvaluatedJavascript.contains("cancelled"))
     }
 
     /** The app bounces through sign-in and back with the same session: what was asked meanwhile goes through. */
@@ -306,6 +382,36 @@ class AgentHubTest {
         assertTrue(clipboardText().orEmpty().contains("keep me"))
     }
 
+    /** The sign-in page went with its renderer while the panel was closed: opening the panel shows it again. */
+    @Test
+    fun aSignInPageLostWithItsRendererComesBackWhenThePanelOpens() {
+        hub.signIn("claude")
+        val claude = hub.agent("claude")
+        val wv = hub.webViewFor(claude)
+        hub.openId = null
+        assertTrue(shadowOf(wv).webViewClient.onRenderProcessGone(wv, crash))
+        idle()
+        assertNull(claude.webView)
+        hub.show("claude")
+        assertEquals("signingIn", claude.state)
+        assertEquals("https://claude.ai/login", shadowOf(claude.webView!!).lastLoadedUrl)
+    }
+
+    /** While Trio is in the background, a page that died is not loaded again until Trio is back. */
+    @Test
+    fun aPageThatDiesInTheBackgroundLoadsOnReturn() {
+        signInClaude()
+        hub.show("claude")
+        val claude = hub.agent("claude")
+        val wv = hub.webViewFor(claude)
+        hub.onPause()
+        shadowOf(wv).webViewClient.onRenderProcessGone(wv, crash)
+        idle()
+        assertNull(claude.webView)
+        hub.onResume()
+        assertEquals("https://claude.ai/new", shadowOf(claude.webView!!).lastLoadedUrl)
+    }
+
     /** A page that crashes the renderer again right after reloading is not reloaded in a loop. */
     @Test
     fun aRendererThatKeepsCrashingIsNotReloadedInALoop() {
@@ -319,7 +425,27 @@ class AgentHubTest {
         shadowOf(second).webViewClient.onRenderProcessGone(second, crash)
         idle()
         assertNull(claude.webView)
+        assertTrue(claude.stopped)
         assertEquals(app.getString(R.string.notice_agent_stopped, "Claude"), claude.notice)
+        // Opening the panel again does not reload it by itself; "Try again" does.
+        hub.show("claude")
+        assertNull(claude.webView)
+        hub.reload("claude")
+        assertEquals("https://claude.ai/new", shadowOf(claude.webView!!).lastLoadedUrl)
+        assertFalse(claude.stopped)
+    }
+
+    /** A window that never gets a page (filled by script, or abandoned) is dropped instead of kept hidden. */
+    @Test
+    fun windowsThatNeverGetAPageAreDropped() {
+        signInClaude()
+        hub.show("claude")
+        val wv = hub.webViewFor(hub.agent("claude"))
+        val blank = openWindow(shadowOf(wv).webChromeClient!!, wv)
+        shadowOf(blank).webViewClient.onPageStarted(blank, "about:blank", null)
+        idle(AgentHub.CANDIDATE_MS + 100)
+        assertTrue(shadowOf(blank).wasDestroyCalled())
+        assertNull(hub.agent("claude").popup)
     }
 
     @Test

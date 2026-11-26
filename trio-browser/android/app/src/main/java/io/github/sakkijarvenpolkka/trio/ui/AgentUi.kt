@@ -263,6 +263,15 @@ private fun PanelBody(app: TrioApp, hub: AgentHub, a: Agent, browser: BrowserMod
                         WebViewHost(popup, Modifier.fillMaxSize())
                     }
                     a.showProvider -> WebViewHost(hub.webViewFor(a), Modifier.fillMaxSize().testTag("provider-webview"))
+                    a.stopped -> Column(
+                        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer).padding(24.dp).testTag("agent-stopped"),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center,
+                    ) {
+                        Text(stringResource(R.string.agent_stopped, a.provider.name), textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = { hub.reload(a.provider.id) }) { Text(stringResource(R.string.error_retry)) }
+                    }
                     else -> Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceContainer))
                 }
             }

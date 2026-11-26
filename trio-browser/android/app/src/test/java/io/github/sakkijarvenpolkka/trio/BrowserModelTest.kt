@@ -200,4 +200,51 @@ class BrowserModelTest {
         shadowOf(tab.webView).downloadListener.onDownloadStart("blob:https://app.example/6f1c", "UA", null, "text/csv", 10)
         assertEquals(app.getString(R.string.notice_download_unsupported), ShadowToast.getTextOfLatestToast())
     }
+
+    private fun gone(crashed: Boolean) = object : RenderProcessGoneDetail() {
+        override fun didCrash() = crashed
+        override fun rendererPriorityAtExit() = 0
+    }
+
+    /** A page that crashed the renderer is not reloaded on its own (it could crash it again, forever): it offers Try again. */
+    @Test
+    fun aPageThatCrashedTheRendererWaitsForTryAgain() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://heavy.example/")
+        assertTrue(shadowOf(tab.webView).webViewClient.onRenderProcessGone(tab.webView, gone(crashed = true)))
+        val replacement = browser.active!!
+        assertTrue(replacement.crashed)
+        assertEquals(app.getString(R.string.error_crashed), replacement.error)
+        assertNull(shadowOf(replacement.webView).lastLoadedUrl)
+        browser.reload()
+        assertEquals("https://heavy.example/", shadowOf(replacement.webView).lastLoadedUrl)
+        assertNull(replacement.error)
+        assertFalse(replacement.crashed)
+    }
+
+    /** Killed for memory: loaded again once, but not again if it goes right away (a loop). */
+    @Test
+    fun aTabKilledForMemoryLoadsAgainOnceAndNotInALoop() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://news.example/")
+        shadowOf(tab.webView).webViewClient.onRenderProcessGone(tab.webView, gone(crashed = false))
+        val second = browser.active!!
+        assertEquals("https://news.example/", shadowOf(second.webView).lastLoadedUrl)
+        shadowOf(second.webView).webViewClient.onRenderProcessGone(second.webView, gone(crashed = false))
+        val third = browser.active!!
+        assertNull(shadowOf(third.webView).lastLoadedUrl)
+        assertEquals(app.getString(R.string.error_crashed), third.error)
+    }
+
+    @Test
+    fun aTabReclaimedInTheBackgroundLoadsWhenTrioIsBack() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://news.example/")
+        browser.onAppPause()
+        shadowOf(tab.webView).webViewClient.onRenderProcessGone(tab.webView, gone(crashed = false))
+        val replacement = browser.active!!
+        assertNull(shadowOf(replacement.webView).lastLoadedUrl)
+        browser.onAppResume()
+        assertEquals("https://news.example/", shadowOf(replacement.webView).lastLoadedUrl)
+    }
 }

@@ -87,10 +87,16 @@ class Agent(val provider: ProviderConfig) {
     var popupUrl by mutableStateOf("")
     var webView: WebView? = null
 
+    /** The page stopped (its renderer died twice in a row); the panel offers to load it again. */
+    var stopped by mutableStateOf(false)
+
     /** The page Trio asked the provider view to load, until it has finished loading. */
     internal var loadingUrl: String? = null
     internal var loadingSince = 0L
     internal var loadFailed = false
+
+    /** Whether a page has started (committed) since Trio's last load; before that, "finished" is the cancelled load's. */
+    internal var loadCommitted = true
     internal var goneAt = -60_000L
 
     /** The text Trio is putting into the composer. */
@@ -106,6 +112,9 @@ class Agent(val provider: ProviderConfig) {
     /** The login gate: may the provider's page be shown right now? */
     val showProvider: Boolean get() = url.isNotEmpty() && url != "about:blank" && state != "signedOut" && LoginState.gateView(state, urlKind) == "provider"
 }
+
+/** How a handoff ended; all but [Inserted] leave the text on the clipboard, with a notice that says why. */
+internal enum class Outcome { Inserted, NoComposer, Partial, LoadFailed, Crashed, TooLong }
 
 /** One handoff: Trio puts [text] into the composer of the page it is meant for and checks that it arrived. */
 internal class HandoffJob(val token: String, val text: String, val label: String) {
@@ -135,6 +144,19 @@ class AgentHub(
     private var previewSeq by mutableIntStateOf(1)
     private var jobSeq = 0
     private val main = Handler(Looper.getMainLooper())
+
+    /** False while the activity is in the background: pages that died are loaded again on return, not then. */
+    private var resumed = true
+
+    fun onPause() {
+        resumed = false
+    }
+
+    fun onResume() {
+        resumed = true
+        refreshSessions()
+        open?.let { a -> if (a.webView == null && !a.stopped) show(a.provider.id) }
+    }
 
     fun agent(id: String): Agent = agents.first { it.provider.id == id }
     val open: Agent? get() = openId?.let(::agent)
@@ -251,6 +273,8 @@ class AgentHub(
         a.loadingUrl = url
         a.loadingSince = now
         a.loadFailed = false
+        a.loadCommitted = false
+        a.stopped = false
         a.url = url
         webViewFor(a).loadUrl(url)
     }
@@ -276,10 +300,14 @@ class AgentHub(
             if (view !== a.webView) return
             a.loading = true
             a.loadFailed = false
+            a.loadCommitted = true
         }
 
         override fun onPageFinished(view: WebView, url: String) {
             if (view !== a.webView) return
+            // Trio's load cancelled another navigation, and WebView reports the cancelled one as finished
+            // before Trio's page has even started: the page on screen is still the old one.
+            if (a.loadingUrl != null && !a.loadCommitted) return
             a.loading = false
             a.loadingUrl = null
             loadWaiters.remove(a.provider.id)?.forEach { main.post(it) }
@@ -329,17 +357,23 @@ class AgentHub(
         // A page that takes the renderer down again right after a reload is not reloaded in a loop.
         val again = now - a.goneAt < 15_000
         a.goneAt = now
+        if (again) a.stopped = true
         val job = a.job
-        if (job != null) finish(a, job, ok = false)
+        if (job != null) finish(a, job, Outcome.Crashed)
         else if (openId == a.provider.id) notice(a, context.getString(if (again) R.string.notice_agent_stopped else R.string.notice_agent_reloaded, a.provider.name))
-        if (openId != a.provider.id || again) return
+        // Only the panel on screen loads again, and only while Trio is in front (else on return, see onResume).
+        if (openId != a.provider.id || again || !resumed) return
         main.post {
-            if (a.webView != null || openId != a.provider.id) return@post
-            when (a.state) {
-                "signedIn" -> loadProvider(a, a.provider.appUrl)
-                "signingIn" -> loadProvider(a, a.provider.loginUrl)
-            }
+            if (a.webView == null && openId == a.provider.id) show(a.provider.id)
         }
+    }
+
+    /** "Load again" on a page that stopped. */
+    fun reload(id: String) {
+        val a = agent(id)
+        a.goneAt = -60_000L
+        a.stopped = false
+        show(id)
     }
 
     // Popups ------------------------------------------------------------------------------------------
@@ -354,6 +388,8 @@ class AgentHub(
         a.popupCandidates.add(popup)
         transport.webView = popup
         resultMsg.sendToTarget()
+        // A window that never gets a page (window.open() filled by script, or abandoned) is not kept.
+        main.postDelayed({ if (a.popupCandidates.remove(popup)) popup.dispose() }, CANDIDATE_MS)
         return true
     }
 
@@ -480,7 +516,12 @@ class AgentHub(
 
     fun show(id: String) {
         val a = open(id)
-        if (a.state == "signedIn" && a.urlKind != "app") loadProvider(a, a.provider.appUrl)
+        when {
+            a.stopped -> Unit
+            a.state == "signedIn" && a.urlKind != "app" -> loadProvider(a, a.provider.appUrl)
+            // The sign-in page went with its renderer: show it again.
+            a.state == "signingIn" && a.webView == null -> loadProvider(a, a.provider.loginUrl)
+        }
     }
 
     /** Brings the agent's panel up without loading anything. */
@@ -565,7 +606,7 @@ class AgentHub(
         when (val plan = LoginState.planHandoff(a.provider, text, target)) {
             LoginState.Handoff.Clipboard -> {
                 cancelJob(a)
-                toClipboard(a, text)
+                toClipboard(a, text, context.getString(R.string.notice_too_long))
             }
             is LoginState.Handoff.Url -> loadProvider(a, plan.url) { notice(a, context.getString(R.string.notice_inserted)) }
             is LoginState.Handoff.Insert -> {
@@ -579,8 +620,8 @@ class AgentHub(
                 val url = plan.url ?: a.loadingUrl ?: a.provider.appUrl.takeIf { a.urlKind != "app" || a.webView == null }
                 if (url != null) loadProvider(a, url, start) else start()
                 // A page that never reports that it finished loading still gets the text, and every handoff ends.
-                main.postDelayed(start, LOAD_TIMEOUT_MS)
-                main.postDelayed({ if (!job.finished) finish(a, job, ok = false) }, LOAD_TIMEOUT_MS + INSERT_TIMEOUT_MS + 5000)
+                main.postDelayed({ startLate(a, job) }, LOAD_TIMEOUT_MS)
+                main.postDelayed({ if (!job.finished) finish(a, job, Outcome.NoComposer) }, LOAD_TIMEOUT_MS + INSERT_TIMEOUT_MS + 5000)
             }
         }
     }
@@ -590,17 +631,34 @@ class AgentHub(
         job.started = true
         if (a.state != "signedIn") {
             // The app bounced to sign-in: try again once the agent is signed in.
-            cancelJob(a)
-            setPending(a, job.label) { handoff(a.provider.id, job.text, "current", job.label) }
+            requeue(a, job)
             return
         }
         if (a.loadFailed) {
-            finish(a, job, ok = false)
+            finish(a, job, Outcome.LoadFailed)
             return
         }
         job.deadline = SystemClock.uptimeMillis() + INSERT_TIMEOUT_MS
         inject(a, job)
         pollInsert(a, job)
+    }
+
+    /** The load timeout: insert if the page has at least started; if it never arrived, the page on screen is the old one. */
+    private fun startLate(a: Agent, job: HandoffJob) {
+        if (job.started || job.finished || a.job !== job) return
+        if (a.loadingUrl != null && !a.loadCommitted) {
+            // Nothing ran in the page, so there is nothing to call off there.
+            a.loadingUrl = null
+            finish(a, job, Outcome.LoadFailed)
+            return
+        }
+        startInsert(a, job)
+    }
+
+    /** The text waits for sign-in instead (the app bounced to a sign-in page). */
+    private fun requeue(a: Agent, job: HandoffJob) {
+        cancelJob(a)
+        setPending(a, job.label) { handoff(a.provider.id, job.text, "current", job.label) }
     }
 
     private fun inject(a: Agent, job: HandoffJob) {
@@ -609,18 +667,23 @@ class AgentHub(
         val composer = app.injectScript("find-composer.js")
         val selectors = JsonArray(a.provider.composerSelectors.map(::JsonPrimitive)).toString()
         val expected = job.text.replace("\r", "").length
+        val wait = (job.deadline - SystemClock.uptimeMillis()).coerceIn(1000, 15_000)
         val script = """
             (function(){
               var token = ${JsonPrimitive(job.token)};
               window.__trioInsert = {token: token, state: 'pending'};
               var find = $composer;
-              find('focus', $selectors, 15000).then(function(r){
-                if (!r.found) { window.__trioInsert = {token: token, state: 'done', ok: false}; return; }
+              var mine = function(){ var r = window.__trioInsert; return !!r && r.token === token && r.state === 'pending'; };
+              find('focus', $selectors, $wait).then(function(r){
+                if (!mine()) return;
+                if (!r.found) { window.__trioInsert = {token: token, state: 'done', ok: false, reason: 'notFound'}; return; }
                 var ok = document.execCommand('insertText', false, ${JsonPrimitive(job.text)});
                 return find('measure', $selectors, 0).then(function(m){
-                  window.__trioInsert = {token: token, state: 'done', ok: !!ok && m.found && (m.length - r.length) >= $expected * 0.9};
+                  var full = !!ok && m.found && (m.length - r.length) >= $expected * 0.9;
+                  var some = m.found && m.length > r.length;
+                  window.__trioInsert = {token: token, state: 'done', ok: full, reason: full ? '' : (some ? 'partial' : 'notFound')};
                 });
-              }).catch(function(){ window.__trioInsert = {token: token, state: 'done', ok: false}; });
+              }).catch(function(){ if (mine()) window.__trioInsert = {token: token, state: 'done', ok: false, reason: 'notFound'}; });
               return 'started';
             })()
         """.trimIndent()
@@ -630,7 +693,7 @@ class AgentHub(
 
     private fun pollInsert(a: Agent, job: HandoffJob) {
         if (job.finished || a.job !== job) return
-        val wv = a.webView ?: return finish(a, job, ok = false)
+        val wv = a.webView ?: return finish(a, job, Outcome.Crashed)
         val token = JsonPrimitive(job.token)
         wv.evaluateJavascript("(function(){var r=window.__trioInsert;return JSON.stringify(r&&r.token===$token?r:null);})()") { raw ->
             if (job.finished || a.job !== job) return@evaluateJavascript
@@ -639,39 +702,67 @@ class AgentHub(
                 Json.parseToJsonElement(inner) as? JsonObject
             }.getOrNull()
             val state = (result?.get("state") as? JsonPrimitive)?.contentOrNull
+            val ok = (result?.get("ok") as? JsonPrimitive)?.booleanOrNull == true
+            val reason = (result?.get("reason") as? JsonPrimitive)?.contentOrNull
             when {
-                state == "done" -> finish(a, job, ok = (result?.get("ok") as? JsonPrimitive)?.booleanOrNull == true)
-                SystemClock.uptimeMillis() > job.deadline -> finish(a, job, ok = false)
+                state == "done" -> finish(a, job, if (ok) Outcome.Inserted else if (reason == "partial") Outcome.Partial else Outcome.NoComposer)
+                // The app went to a sign-in page: the text is handed over only when signed in.
+                a.state != "signedIn" -> requeue(a, job)
+                SystemClock.uptimeMillis() > job.deadline -> finish(a, job, Outcome.NoComposer)
                 else -> {
                     // The page the text was meant for has been replaced (a redirect, the app reloading itself):
-                    // start again in the page that is there now.
-                    if (result == null && a.loadingUrl == null && job.injections < MAX_INJECTIONS) inject(a, job)
+                    // start again in the page that is there now, if it is the chat app.
+                    if (result == null && a.loadingUrl == null && a.urlKind == "app" && job.injections < MAX_INJECTIONS) inject(a, job)
                     main.postDelayed({ pollInsert(a, job) }, 300)
                 }
             }
         }
     }
 
-    private fun finish(a: Agent, job: HandoffJob, ok: Boolean) {
+    private fun finish(a: Agent, job: HandoffJob, outcome: Outcome) {
         if (job.finished) return
         job.finished = true
         if (a.job === job) {
             a.job = null
             a.busy = false
         }
-        if (ok) notice(a, context.getString(R.string.notice_inserted)) else toClipboard(a, job.text)
+        if (outcome == Outcome.Inserted) {
+            notice(a, context.getString(R.string.notice_inserted))
+            return
+        }
+        cancelInPage(a, job)
+        toClipboard(
+            a, job.text,
+            when (outcome) {
+                Outcome.Partial -> context.getString(R.string.notice_partial)
+                Outcome.LoadFailed -> context.getString(R.string.notice_load_failed_clipboard)
+                Outcome.Crashed -> context.getString(R.string.notice_agent_crashed_clipboard, a.provider.name)
+                Outcome.TooLong -> context.getString(R.string.notice_too_long)
+                else -> context.getString(R.string.notice_clipboard)
+            },
+        )
     }
 
     private fun cancelJob(a: Agent) {
-        a.job?.finished = true
+        a.job?.let { job ->
+            job.finished = true
+            cancelInPage(a, job)
+        }
         a.job = null
         a.busy = false
     }
 
-    private fun toClipboard(a: Agent, text: String) {
+    /** A try still running in the page must not put the text in after the handoff ended. */
+    private fun cancelInPage(a: Agent, job: HandoffJob) {
+        if (!job.started) return
+        val token = JsonPrimitive(job.token)
+        a.webView?.evaluateJavascript("(function(){var r=window.__trioInsert;if(r&&r.token===$token&&r.state==='pending')window.__trioInsert={token:$token,state:'cancelled'};})()", null)
+    }
+
+    private fun toClipboard(a: Agent, text: String, why: String) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         runCatching { cm.setPrimaryClip(ClipData.newPlainText("Trio", text)) }
-        notice(a, context.getString(R.string.notice_clipboard))
+        notice(a, why)
     }
 
     // Actions ----------------------------------------------------------------------------------------
@@ -826,5 +917,7 @@ class AgentHub(
         /** How long the composer may take to appear and take the text. */
         const val INSERT_TIMEOUT_MS = 20_000L
         const val MAX_INJECTIONS = 4
+        /** How long a window opened by the provider may stay without a page before it is dropped. */
+        const val CANDIDATE_MS = 30_000L
     }
 }

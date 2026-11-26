@@ -9,6 +9,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Message
+import android.os.SystemClock
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.GeolocationPermissions
@@ -61,6 +62,10 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
     var onShowHistory: ((String) -> Unit)? = null
 
     private var nextId = 1L
+
+    /** False while the activity is in the background; a tab whose renderer died then loads on return. */
+    private var resumed = true
+    private var shownTabGoneAt = -60_000L
 
     val active: Tab? get() = tabs.getOrNull(activeIndex)
 
@@ -186,11 +191,13 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
 
     fun reload() {
         val tab = active ?: return
-        tab.pendingTransition = "reload"
-        if (tab.error != null) {
-            tab.error = null
-            tab.webView.loadUrl(tab.url)
-        } else tab.webView.reload()
+        if (tab.error != null || tab.deferredUrl != null) {
+            tab.crashed = false
+            load(tab, tab.deferredUrl ?: tab.url, "reload")
+        } else {
+            tab.pendingTransition = "reload"
+            tab.webView.reload()
+        }
     }
 
     fun stop() = active?.webView?.stopLoading()
@@ -238,12 +245,18 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
     }
 
     fun onAppPause() {
+        resumed = false
         active?.let { tab -> tab.activeSince?.let { tab.visitAccum += System.currentTimeMillis() - it }; tab.activeSince = null }
         CookieManager.getInstance().flush()
     }
 
     fun onAppResume() {
-        active?.activeSince = System.currentTimeMillis()
+        resumed = true
+        active?.let { tab ->
+            tab.activeSince = System.currentTimeMillis()
+            // Its renderer was reclaimed while Trio was in the background: load it now.
+            if (tab.deferredUrl != null && tab.error == null) show(tab)
+        }
     }
 
     // Downloads ------------------------------------------------------------------------------------
@@ -342,10 +355,26 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
             tab.webView.dispose()
             val replacement = createTab()
             tabs.add(index, replacement)
-            (tab.deferredUrl ?: tab.url).takeIf { it.startsWith("http://") || it.startsWith("https://") }?.let { defer(replacement, it) }
-            replacement.crashed = true
+            val url = (tab.deferredUrl ?: tab.url).takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            url?.let { defer(replacement, it) }
             if (wasActive) {
-                show(replacement)
+                val now = SystemClock.uptimeMillis()
+                val again = now - shownTabGoneAt < 15_000
+                shownTabGoneAt = now
+                when {
+                    // A page that crashed the renderer (or did again right after reloading) is not reloaded on its
+                    // own, which could repeat forever and take the agents down each time: it shows Try again.
+                    url != null && (detail.didCrash() || again) -> {
+                        replacement.crashed = true
+                        replacement.error = context.getString(R.string.error_crashed)
+                        replacement.errorUrl = url
+                        replacement.activeSince = System.currentTimeMillis()
+                        replacement.webView.onResume()
+                    }
+                    // Reclaimed for memory while Trio is in the background: it loads when Trio is back.
+                    !resumed -> replacement.webView.onResume()
+                    else -> show(replacement)
+                }
                 onContextChanged?.invoke()
             }
             return true

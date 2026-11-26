@@ -138,7 +138,7 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
                 val tab = browser.active
                 if (tab != null) {
                     WebViewHost(tab.webView, Modifier.fillMaxSize().testTag("tab-webview"))
-                    tab.error?.let { err -> ErrorPage(tab.url, err) { browser.reload() } }
+                    tab.error?.let { err -> ErrorPage(tab.url, err, crashed = tab.crashed) { browser.reload() } }
                     if (tab.url.isEmpty() && tab.error == null) NewTabPage(app, hub) { browser.navigate(it) }
                 }
             }
@@ -360,9 +360,9 @@ private fun BottomBar(app: TrioApp, browser: BrowserModel, hub: AgentHub, openSc
 }
 
 @Composable
-private fun ErrorPage(url: String, error: String, retry: () -> Unit) {
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(32.dp), verticalArrangement = Arrangement.Center) {
-        Text(stringResource(R.string.error_title), style = MaterialTheme.typography.headlineSmall)
+private fun ErrorPage(url: String, error: String, crashed: Boolean, retry: () -> Unit) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).padding(32.dp).testTag("error-page"), verticalArrangement = Arrangement.Center) {
+        Text(stringResource(if (crashed) R.string.error_crashed_title else R.string.error_title), style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(8.dp))
         Text(url, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 13.sp)
         Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)

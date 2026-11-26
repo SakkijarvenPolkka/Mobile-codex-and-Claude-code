@@ -49,4 +49,16 @@ class MainActivityTest {
             }
         }
     }
+
+    /** Reopened from Recents, the system gives back the intent that first started Trio: it is not opened again. */
+    @Test
+    fun reopeningFromRecentsDoesNotOpenTheFirstLinkAgain() {
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.com/old-link"), ApplicationProvider.getApplicationContext(), MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY)
+        Robolectric.buildActivity(MainActivity::class.java, intent).use { controller ->
+            val activity = controller.setup().get()
+            assertEquals(1, activity.browser.tabs.size)
+            assertEquals("", activity.browser.active!!.url)
+        }
+    }
 }

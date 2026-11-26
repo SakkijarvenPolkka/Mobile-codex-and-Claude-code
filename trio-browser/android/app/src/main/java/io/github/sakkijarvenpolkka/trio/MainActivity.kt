@@ -75,6 +75,8 @@ class MainActivity : ComponentActivity() {
 
     private fun intentUrl(intent: Intent?): String? {
         if (intent == null) return null
+        // Reopened from Recents, the system hands back the intent that first started Trio: not a new link.
+        if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return null
         if (intent.action == Intent.ACTION_WEB_SEARCH) {
             val q = intent.getStringExtra("query") ?: return null
             val app = application as TrioApp
@@ -86,12 +88,13 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         browser.onAppPause()
+        hub.onPause()
     }
 
     override fun onResume() {
         super.onResume()
         browser.onAppResume()
-        hub.refreshSessions()
+        hub.onResume()
     }
 
     override fun onDestroy() {
