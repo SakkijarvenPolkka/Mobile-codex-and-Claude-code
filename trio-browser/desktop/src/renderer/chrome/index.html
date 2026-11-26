@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Trio</title>
+    <link rel="stylesheet" href="/common/tokens.css" />
+    <link rel="stylesheet" href="/common/base.css" />
+    <link rel="stylesheet" href="./chrome.css" />
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <div class="bars" id="bars">
+      <div class="tabstrip" data-testid="tab-strip">
+        <span class="private-badge" data-testid="private-badge" hidden></span>
+        <div class="tabs" id="tabs" role="tablist"></div>
+        <button class="icon-btn new-tab" id="new-tab" data-testid="new-tab"></button>
+        <div class="tabstrip__spacer" id="strip-spacer"></div>
+      </div>
+      <div class="toolbar" data-testid="toolbar">
+        <div class="toolbar__nav">
+          <button class="icon-btn" id="nav-back" data-testid="nav-back"></button>
+          <button class="icon-btn" id="nav-forward" data-testid="nav-forward"></button>
+          <button class="icon-btn" id="nav-reload" data-testid="nav-reload"></button>
+        </div>
+        <div class="omnibox" id="omnibox" data-testid="omnibox">
+          <span class="omnibox__security" id="security-icon" data-testid="security-icon"></span>
+          <input
+            class="omnibox__input"
+            id="address-input"
+            data-testid="address-input"
+            type="text"
+            autocomplete="off"
+            spellcheck="false"
+            aria-autocomplete="list"
+            aria-controls="omnibox-dropdown"
+          />
+          <span class="omnibox__zoom" id="zoom-label" data-testid="zoom-label" hidden></span>
+          <button class="chip omnibox__ask" id="ask-search" data-testid="ask-search" hidden></button>
+          <button class="icon-btn icon-btn--sm omnibox__star" id="bookmark-star" data-testid="bookmark-star"></button>
+        </div>
+        <div class="toolbar__agents" id="agents"></div>
+        <span class="toolbar__agents-off" id="agents-off" data-testid="agents-off" hidden></span>
+        <div class="toolbar__end">
+          <button class="icon-btn" id="dock-toggle" data-testid="dock-toggle"></button>
+          <button class="icon-btn downloads-btn" id="downloads-button" data-testid="downloads-button" hidden></button>
+          <button class="icon-btn" id="app-menu" data-testid="app-menu"></button>
+        </div>
+      </div>
+      <div class="bookmarks-bar" id="bookmarks-bar" data-testid="bookmarks-bar" hidden></div>
+      <div class="infobar find-bar" id="find-bar" data-testid="find-bar" hidden>
+        <span class="find-bar__icon" id="find-icon"></span>
+        <input class="input find-bar__input" id="find-input" data-testid="find-input" type="text" spellcheck="false" />
+        <span class="find-bar__count" id="find-count" data-testid="find-count"></span>
+        <button class="icon-btn icon-btn--sm" id="find-prev" data-testid="find-prev"></button>
+        <button class="icon-btn icon-btn--sm" id="find-next" data-testid="find-next"></button>
+        <button class="icon-btn icon-btn--sm" id="find-close" data-testid="find-close"></button>
+      </div>
+      <div class="infobar permission-bar" id="permission-bar" data-testid="permission-bar" hidden>
+        <span class="infobar__icon" id="permission-icon"></span>
+        <span class="infobar__text" id="permission-text"></span>
+        <label class="check"><input type="checkbox" id="permission-remember" data-testid="permission-remember" checked /><span data-i18n="chrome.permission.remember"></span></label>
+        <button class="btn" id="permission-deny" data-testid="permission-deny" data-i18n="chrome.permission.deny"></button>
+        <button class="btn btn--primary" id="permission-allow" data-testid="permission-allow" data-i18n="chrome.permission.allow"></button>
+      </div>
+      <div class="infobar notice-bar" id="notice-bar" data-testid="notice-bar" hidden>
+        <span class="infobar__icon" id="notice-icon"></span>
+        <span class="infobar__text" id="notice-text"></span>
+        <button class="btn" id="notice-action" data-testid="notice-action" hidden></button>
+        <button class="icon-btn icon-btn--sm" id="notice-dismiss" data-testid="notice-dismiss"></button>
+      </div>
+    </div>
+    <div class="dropdown" id="omnibox-dropdown" data-testid="omnibox-dropdown" role="listbox" hidden></div>
+  </body>
+</html>

@@ -1,0 +1,15 @@
+.agent-row-name {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+.hosts {
+  width: 260px;
+  min-height: 90px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.perm-empty {
+  padding: var(--s3) var(--s4);
+  color: var(--muted);
+}

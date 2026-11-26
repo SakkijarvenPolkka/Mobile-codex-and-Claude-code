@@ -1,0 +1,14 @@
+.history-list {
+  padding: var(--s2);
+}
+.list-row input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding: var(--s3);
+}

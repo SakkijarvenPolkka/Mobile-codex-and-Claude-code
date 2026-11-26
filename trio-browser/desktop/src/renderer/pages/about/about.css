@@ -1,0 +1,22 @@
+.about {
+  padding: var(--s5);
+}
+.about dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--s2) var(--s5);
+  margin: var(--s4) 0;
+}
+.about dt {
+  color: var(--muted);
+}
+.about dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+}
+.about p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.6;
+}

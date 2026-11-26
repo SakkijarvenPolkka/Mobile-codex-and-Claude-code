@@ -1,3 +1,4 @@
+// @ts-nocheck — a generator script; its inputs are literal test data.
 'use strict';
 /**
  * Regenerates shared/test-vectors/golden.json from the JavaScript reference implementation:

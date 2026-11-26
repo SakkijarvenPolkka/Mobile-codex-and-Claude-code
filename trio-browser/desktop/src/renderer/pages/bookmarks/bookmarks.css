@@ -1,0 +1,17 @@
+.add-form {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: var(--s2);
+  padding: var(--s3) var(--s4);
+}
+@media (max-width: 640px) {
+  .add-form {
+    grid-template-columns: 1fr;
+  }
+}
+.edit-fields {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: var(--s2);
+  flex: 1;
+}

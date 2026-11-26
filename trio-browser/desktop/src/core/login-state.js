@@ -93,7 +93,8 @@ function deriveAgentState(s) {
 /**
  * What the agent window may show for a URL the provider view is on.
  * - signedIn: everything (external links are opened in tabs by the caller).
- * - signingIn: only authentication pages; reaching the app without a session hides it.
+ * - signingIn: authentication pages and other sites an identity provider may pass through
+ *   (company SSO); reaching the chat app without a session hides it.
  * - signedOut: nothing from the provider.
  * @param {AgentLoginState} state
  * @param {'app' | 'auth' | 'external'} urlKind
@@ -101,7 +102,7 @@ function deriveAgentState(s) {
  */
 function gateView(state, urlKind) {
   if (state === 'signedIn') return 'provider';
-  if (state === 'signingIn') return urlKind === 'auth' ? 'provider' : 'lock';
+  if (state === 'signingIn') return urlKind === 'app' ? 'lock' : 'provider';
   return 'lock';
 }
 

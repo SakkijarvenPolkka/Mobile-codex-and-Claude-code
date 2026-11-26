@@ -49,7 +49,7 @@
     { "state": "signedIn", "kind": "external", "out": "provider" },
     { "state": "signingIn", "kind": "auth", "out": "provider" },
     { "state": "signingIn", "kind": "app", "out": "lock" },
-    { "state": "signingIn", "kind": "external", "out": "lock" },
+    { "state": "signingIn", "kind": "external", "out": "provider" },
     { "state": "signedOut", "kind": "auth", "out": "lock" },
     { "state": "signedOut", "kind": "app", "out": "lock" }
   ]

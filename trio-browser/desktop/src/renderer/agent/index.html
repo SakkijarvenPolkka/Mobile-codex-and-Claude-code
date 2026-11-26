@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <title>Trio</title>
+    <link rel="stylesheet" href="/common/tokens.css" />
+    <link rel="stylesheet" href="/common/base.css" />
+    <link rel="stylesheet" href="./agent.css" />
+    <script type="module" src="./main.js"></script>
+  </head>
+  <body>
+    <div class="frame" id="frame">
+      <div class="top" id="top">
+        <header class="header" id="header" data-testid="agent-header">
+          <span class="header__circle" id="header-circle"></span>
+          <div class="header__titles">
+            <span class="header__name" id="agent-name"></span>
+            <span class="header__state" id="agent-state-text" data-testid="agent-state-text"></span>
+          </div>
+          <div class="header__actions">
+            <button class="icon-btn icon-btn--sm" id="agent-new-chat" data-testid="agent-new-chat"></button>
+            <button class="icon-btn icon-btn--sm" id="agent-pin" data-testid="agent-pin"></button>
+            <button class="icon-btn icon-btn--sm" id="agent-open-tab" data-testid="agent-open-tab"></button>
+            <button class="icon-btn icon-btn--sm" id="agent-menu" data-testid="agent-menu"></button>
+            <button class="icon-btn icon-btn--sm" id="agent-minimize" data-testid="agent-minimize"></button>
+            <button class="icon-btn icon-btn--sm" id="agent-close" data-testid="agent-close"></button>
+          </div>
+        </header>
+        <div class="actions" id="quick-actions" data-testid="quick-actions"></div>
+        <form class="question" id="question-form" data-testid="question-form" hidden>
+          <input class="input" id="question-input" data-testid="question-input" type="text" autocomplete="off" />
+          <button class="btn btn--primary" id="question-send" data-testid="question-send" type="submit" data-i18n="agent.question.send"></button>
+          <button class="btn btn--ghost" id="question-cancel" data-testid="question-cancel" type="button" data-i18n="common.cancel"></button>
+        </form>
+        <div class="signin-bar" id="signin-bar" data-testid="signin-bar" hidden>
+          <span class="signin-bar__icon" id="signin-icon"></span>
+          <span class="signin-bar__text" id="signin-text"></span>
+          <button class="btn btn--ghost" id="signin-in-tab" data-testid="signin-in-tab" data-i18n="agent.signInInTab"></button>
+          <button class="btn" id="signin-cancel" data-testid="signin-cancel" data-i18n="common.cancel"></button>
+        </div>
+        <div class="private-note" id="private-note" data-testid="private-note" hidden></div>
+        <div class="notice agent-notice" id="agent-notice" data-testid="agent-notice" hidden>
+          <span class="notice__icon" id="agent-notice-icon"></span>
+          <span class="notice__text" id="agent-notice-text"></span>
+          <button class="icon-btn icon-btn--sm" id="agent-notice-dismiss"></button>
+        </div>
+      </div>
+
+      <section class="lock" id="lock-screen" data-testid="lock-screen" hidden>
+        <div class="lock__circle" id="lock-circle"></div>
+        <h1 class="lock__title" id="lock-title"></h1>
+        <p class="lock__body" id="lock-body"></p>
+        <p class="lock__pending" id="pending-label" data-testid="pending-label" hidden></p>
+        <button class="btn btn--primary btn--lg" id="lock-signin" data-testid="lock-signin"></button>
+        <button class="btn btn--ghost" id="lock-signin-tab" data-testid="lock-signin-tab" data-i18n="agent.signInInTab"></button>
+        <p class="lock__foot" id="lock-foot"></p>
+      </section>
+
+      <section class="panel" id="preview" data-testid="preview" hidden>
+        <h2 class="panel__title" id="preview-title"></h2>
+        <p class="panel__source" id="preview-source" data-testid="preview-source"></p>
+        <textarea class="textarea panel__text" id="preview-text" data-testid="preview-text" spellcheck="false"></textarea>
+        <div class="panel__meta">
+          <span id="preview-count" data-testid="preview-count"></span>
+          <div class="segmented" id="preview-target" data-testid="preview-target" role="group">
+            <button type="button" data-target="new" aria-pressed="true" data-i18n="agent.preview.targetNew"></button>
+            <button type="button" data-target="current" aria-pressed="false" data-i18n="agent.preview.targetCurrent"></button>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="preview-skip" data-testid="preview-skip" /><span data-i18n="agent.preview.skip"></span></label>
+        <div class="panel__buttons">
+          <button class="btn" id="preview-cancel" data-testid="preview-cancel" data-i18n="common.cancel"></button>
+          <button class="btn btn--primary" id="preview-confirm" data-testid="preview-confirm" data-i18n="agent.preview.confirm"></button>
+        </div>
+        <p class="panel__foot" id="preview-foot"></p>
+      </section>
+
+      <section class="panel" id="history-analysis" data-testid="history-analysis" hidden>
+        <h2 class="panel__title" data-i18n="agent.history.title"></h2>
+        <div class="field">
+          <span class="field__label" data-i18n="agent.history.range"></span>
+          <div class="segmented" id="history-range" data-testid="history-range" role="group"></div>
+        </div>
+        <div class="field">
+          <label class="field__label" for="history-kind" data-i18n="agent.history.kind"></label>
+          <select class="select" id="history-kind" data-testid="history-kind"></select>
+        </div>
+        <div class="field" id="history-question-field" hidden>
+          <label class="field__label" for="history-question" data-i18n="agent.history.question"></label>
+          <input class="input" id="history-question" data-testid="history-question" type="text" autocomplete="off" />
+        </div>
+        <div class="field field--row">
+          <label class="check"><input type="checkbox" id="history-include-queries" data-testid="history-include-queries" checked /><span data-i18n="agent.history.includeQueries"></span></label>
+          <label class="check"><input type="checkbox" id="history-include-titles" data-testid="history-include-titles" checked /><span data-i18n="agent.history.includeTitles"></span></label>
+          <select class="select select--compact" id="history-include-urls" data-testid="history-include-urls">
+            <option value="sites" data-i18n="agent.history.urlsSites"></option>
+            <option value="paths" data-i18n="agent.history.urlsPaths"></option>
+          </select>
+        </div>
+        <p class="panel__source" id="history-counts" data-testid="history-counts"></p>
+        <textarea class="textarea panel__text" id="history-text" data-testid="history-text" spellcheck="false"></textarea>
+        <div class="panel__meta">
+          <span id="history-chars"></span>
+          <label class="check"><input type="checkbox" id="history-to-all" data-testid="history-to-all" /><span data-i18n="agent.history.toAll"></span></label>
+        </div>
+        <div class="panel__buttons">
+          <button class="btn" id="history-close" data-testid="history-close" data-i18n="common.close"></button>
+          <button class="btn btn--primary" id="history-send" data-testid="history-send" data-i18n="agent.preview.confirm"></button>
+        </div>
+        <p class="panel__foot" data-i18n="agent.history.foot"></p>
+      </section>
+
+      <div class="provider-placeholder" id="provider-placeholder">
+        <span class="spinner"></span>
+      </div>
+      <div class="resize-grip" id="resize-grip" data-testid="resize-grip"></div>
+    </div>
+  </body>
+</html>

@@ -450,6 +450,10 @@ export interface AgentApi {
   dismissNotice(id: number): void;
   /** Height in CSS pixels that our own UI occupies above the provider view in `signin` / `app` mode. */
   setHeaderHeight(px: number): void;
+  /** Start moving or resizing the window with the pointer; the main process follows the cursor until endDrag(). */
+  startMove(): void;
+  startResize(): void;
+  endDrag(): void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -470,6 +474,8 @@ export interface DockApi {
   showMenu(at: Point): void;
   /** The dock UI reports the size it needs so the window can fit it exactly. */
   setSize(width: number, height: number): void;
+  startMove(): void;
+  endDrag(): void;
 }
 
 // ---------------------------------------------------------------------------------------------
