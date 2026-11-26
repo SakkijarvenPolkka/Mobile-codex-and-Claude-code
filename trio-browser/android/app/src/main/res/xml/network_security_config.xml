@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A browser opens http:// pages too. usesCleartextTraffic alone is marked to stop having an effect in a future
      Android release; this file keeps cleartext allowed. Certificates: the system's trusted authorities only. -->
-<network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- Intended: a browser must open the http:// pages people visit. -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>
