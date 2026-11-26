@@ -102,7 +102,7 @@ object HistoryStatsCalc {
         else -> null
     }
 
-    fun normalizeQuery(q: String): String = q.replace(WS, " ").trim().lowercase()
+    fun normalizeQuery(q: String): String = q.replace(WS, " ").trimJs().lowercase()
 
     fun queryTerms(q: String): List<String> = q.split(SPLIT).filter { t -> t.isNotEmpty() && t.codePointCount(0, t.length) >= 2 && !DIGITS.matches(t) && t !in STOPWORDS }
 
@@ -156,7 +156,7 @@ object HistoryStatsCalc {
             val pg = pages.getOrPut(k.page) { PageAcc(k.site) }
             pg.visits++
             pg.duration += dur
-            val title = k.v.title.trim()
+            val title = k.v.title.trimJs()
             if (k.v.time >= pg.lastTime) {
                 pg.lastTime = k.v.time
                 if (title.isNotEmpty()) pg.title = title

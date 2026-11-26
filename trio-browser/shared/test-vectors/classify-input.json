@@ -75,6 +75,12 @@
     { "in": "@gpt\u2003질문 있어요", "out": { "type": "agent", "agentId": "chatgpt", "query": "질문 있어요" } },
     { "in": "서울\u3000날씨", "out": { "type": "search", "query": "서울\u3000날씨" } },
     { "in": "example.com\u3000page", "out": { "type": "search", "query": "example.com\u3000page" } },
-    { "in": "localhost:٣٠٠٠", "out": { "type": "search", "query": "localhost:٣٠٠٠" } }
+    { "in": "localhost:٣٠٠٠", "out": { "type": "search", "query": "localhost:٣٠٠٠" } },
+    { "in": "\uFEFFexample.com", "out": { "type": "url", "url": "https://example.com/" } },
+    { "in": "example.com\uFEFF", "out": { "type": "url", "url": "https://example.com/" } },
+    { "in": "\u001Fexample.com", "out": { "type": "search", "query": "\u001Fexample.com" } },
+    { "in": "\uFEFF@claude 안녕\uFEFF", "out": { "type": "agent", "agentId": "claude", "query": "안녕" } },
+    { "in": "@claude\uFEFF안녕", "out": { "type": "agent", "agentId": "claude", "query": "안녕" } },
+    { "in": "\u001C서울 날씨", "out": { "type": "search", "query": "\u001C서울 날씨" } }
   ]
 }

@@ -14,11 +14,13 @@ object Prompts {
 
     fun cleanContent(text: String): String = text
         .replace(Regex("\r\n?"), "\n")
-        .replace(Regex("[ \t ]+$", RegexOption.MULTILINE), "")
+        // JavaScript's /m line ends only (\n, \r, U+2028, U+2029): with MULTILINE, ICU would also end lines
+        // at \v, \f and U+0085, and the JVM at U+0085.
+        .replace(Regex("[ \t\u00A0]+(?=[\n\r\u2028\u2029]|\\z)"), "")
         .replace(Regex("\n{3,}"), "\n\n")
         .replace(Regex("<{3,}"), "<<")
         .replace(Regex(">{3,}"), ">>")
-        .trim { it.isWhitespace() || it == ' ' || it == '﻿' }
+        .trimJs()
 
     /** Page-controlled one-line values: no line breaks, no delimiter runs, bounded length. */
     fun cleanInline(text: String, max: Int): String = cut(
@@ -26,7 +28,7 @@ object Prompts {
             .replace(Regex("<{3,}"), "<<")
             .replace(Regex(">{3,}"), ">>")
             .replace(Regex("[$SPACE]{2,}"), " ")
-            .trim(),
+            .trimJs(),
         max,
     )
 
@@ -49,7 +51,7 @@ object Prompts {
         val template = prompts["actions"].obj()[key].obj()[locale].str() ?: error("Unknown prompt action: $actionId")
         val tag = if (isHistory) "HISTORY" else if (actionId == "explain_selection" || actionId == "translate_selection") "TEXT" else "PAGE"
         val notice = fill(prompts["untrustedNotice"].obj()[locale].strOr(""), mapOf("tag" to tag))
-        val question = input.question.trim()
+        val question = input.question.trimJs()
         val values = HashMap<String, String>()
         values["question"] = question
         values["query"] = cleanInline(input.query, 500)
@@ -77,7 +79,7 @@ object Prompts {
             val overhead = render("").length
             val marker = if (locale == "ko") "\n…(길이 제한으로 뒷부분 생략)" else "\n…(rest omitted to fit the length limit)"
             val room = maxOf(0, charLimit - overhead - marker.length)
-            content = cut(content, room).trimEnd() + marker
+            content = cut(content, room).trimEndJs() + marker
             text = render(content)
             truncated = true
         }

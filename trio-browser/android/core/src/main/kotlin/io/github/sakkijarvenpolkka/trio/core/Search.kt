@@ -25,7 +25,7 @@ class SearchData(val defaultId: String, val engines: List<SearchEngine>, val rec
         for (r in recognizers) {
             if (!r.host.containsMatchIn(host) || !r.path.containsMatchIn(u.path)) continue
             for (p in r.params) {
-                val q = u.queryParam(p)?.replace(Regex("[$SPACE]+"), " ")?.trim().orEmpty()
+                val q = u.queryParam(p)?.replace(Regex("[$SPACE]+"), " ")?.trimJs().orEmpty()
                 if (q.isNotEmpty()) return Triple(r, p, q)
             }
         }
@@ -35,7 +35,7 @@ class SearchData(val defaultId: String, val engines: List<SearchEngine>, val rec
     fun extractSearch(url: String): SearchMatch? = matchSearch(url)?.let { (r, _, q) -> SearchMatch(r.engineId, r.name, q) }
 
     companion object {
-        fun fillTemplate(template: String, query: String): String = template.replace("{searchTerms}", WebUrl.encodeComponent(query.trim()))
+        fun fillTemplate(template: String, query: String): String = template.replace("{searchTerms}", WebUrl.encodeComponent(query.trimJs()))
 
         fun parse(json: JsonElement): SearchData {
             val o = json.obj()
@@ -60,7 +60,7 @@ class SearchData(val defaultId: String, val engines: List<SearchEngine>, val rec
                 }
                 else -> emptyList()
             }
-            return list.mapNotNull { it.str()?.trim()?.takeIf(String::isNotEmpty) }
+            return list.mapNotNull { it.str()?.trimJs()?.takeIf(String::isNotEmpty) }
         }
     }
 }

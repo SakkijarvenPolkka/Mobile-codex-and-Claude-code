@@ -1,43 +1,170 @@
 package io.github.sakkijarvenpolkka.trio.core
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
 
 /**
- * The core's regular expressions run on ICU on Android and on the JVM in unit tests. ICU rejects
- * inline flags such as (?U) (the app then crashes), and the two engines give \s, \d and \w
- * different meanings. Core patterns must spell their classes out (see RegexClasses.kt); this
- * test fails on the JVM as soon as one does not, without needing a device.
+ * Regular expressions run on ICU on Android and on the JVM in unit tests. ICU rejects some syntax the
+ * JVM accepts, such as the (?U) flag, with a PatternSyntaxException that crashes the app, and the two
+ * engines give \s, \d and \w different meanings. This test reads every pattern written in the core's
+ * and the app's sources (Regex(…), "…".toRegex(), Pattern.compile(…), plain and raw string literals,
+ * with templates such as $SPACE expanded) and fails on the JVM, without a device, as soon as one uses
+ * syntax that is not portable:
+ *  - inline flags, plain or scoped ((?U), (?i:…)): use RegexOption instead;
+ *  - Java-only property classes (\p{IsAlphabetic}, \p{javaLowerCase}, POSIX names such as \p{Alpha});
+ *  - look-behind without a bounded length (ICU needs one);
+ *  - a "}" that closes no "{" (ICU wants it escaped).
+ * Core patterns must also match the JavaScript reference exactly, so they spell their classes out
+ * instead of using \s, \d or \w (see RegexClasses.kt).
  */
 class RegexPortabilityTest {
-    private val sources = File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }.toList()
+    private val coreSources = File("src/main/kotlin").walkTopDown().filter { it.extension == "kt" }.toList()
+    private val appSources = File(System.getProperty("trio.app") ?: "../app/src/main/java").walkTopDown().filter { it.extension == "kt" }.toList()
     private val sharedDir = File(System.getProperty("trio.shared") ?: "../../shared")
 
-    /** Inline flags, Java-only property classes and engine-dependent shorthand classes. */
-    private val forbidden = Regex("""\(\?[a-zA-Z]+\)|\\\\p\{(?:Is|In|java|Alpha|Alnum|Punct|Graph|Print|Blank|Cntrl|XDigit|Space|Lower|Upper|ASCII)|\\\\[sSdDwW]""")
+    /** The value of a constant used in templates ("$SPACE"), as the regex engine sees it. */
+    private val constants: Map<String, String> = coreSources.flatMap { f ->
+        Regex("""const val (\w+) = "((?:[^"\\]|\\.)*)"""").findAll(f.readText()).map { it.groupValues[1] to unescape(it.groupValues[2]) }.toList()
+    }.toMap()
 
-    @Test
-    fun coreSourcesUsePortablePatterns() {
-        val offenders = ArrayList<String>()
-        val literal = Regex("""Regex\("((?:[^"\\]|\\.)*)"""")
-        for (file in sources) {
-            file.readLines().forEachIndexed { i, line ->
-                for (m in literal.findAll(line)) {
-                    if (forbidden.containsMatchIn(m.groupValues[1])) offenders.add("${file.name}:${i + 1}: ${m.groupValues[1]}")
-                }
+    data class Pattern(val where: String, val regex: String)
+
+    /** Every pattern literal in [files]. */
+    private fun patterns(files: List<File>): List<Pattern> {
+        val plain = """"(?:[^"\\\n]|\\.)*""""
+        val raw = "\"\"\"[\\s\\S]*?\"\"\""
+        val literal = "($raw|$plain)"
+        val calls = listOf(
+            Regex("""(?:\bRegex|Pattern\.compile)\(\s*$literal"""),
+            Regex("""$literal\s*\.toRegex\("""),
+        )
+        return files.flatMap { file ->
+            val text = file.readText()
+            calls.flatMap { call ->
+                call.findAll(text).map { m ->
+                    val line = text.substring(0, m.range.first).count { it == '\n' } + 1
+                    Pattern("${file.name}:$line", expand(m.groupValues[1]))
+                }.toList()
             }
         }
+    }
+
+    /** A Kotlin string literal (with quotes) as the string it makes. */
+    private fun expand(literal: String): String {
+        val rawString = literal.startsWith("\"\"\"")
+        val body = if (rawString) literal.removeSurrounding("\"\"\"") else literal.removeSurrounding("\"")
+        val text = if (rawString) body.replace("\${'$'}", "\u0000DOLLAR\u0000") else unescape(body)
+        return Regex("""\$\{(\w+)}|\$(\w+)""").replace(text) { m -> constants[m.groupValues[1].ifEmpty { m.groupValues[2] }] ?: "x" }
+            .replace("\u0000DOLLAR\u0000", "$")
+    }
+
+    private fun unescape(s: String): String {
+        val out = StringBuilder()
+        var i = 0
+        while (i < s.length) {
+            val c = s[i]
+            if (c != '\\' || i + 1 == s.length) {
+                // A template's "$" stays for expand(); an escaped one ("\$") becomes a literal "$" below.
+                out.append(c)
+                i++
+                continue
+            }
+            when (val n = s[i + 1]) {
+                't' -> out.append('\t')
+                'n' -> out.append('\n')
+                'r' -> out.append('\r')
+                'b' -> out.append('\b')
+                'u' -> {
+                    out.append(s.substring(i + 2, i + 6).toInt(16).toChar())
+                    i += 4
+                }
+                '$' -> out.append("\u0000DOLLAR\u0000")
+                else -> out.append(n)
+            }
+            i += 2
+        }
+        return out.toString()
+    }
+
+    /** What makes [regex] unportable, or null. */
+    private fun problem(regex: String, core: Boolean): String? {
+        if (Regex("""\(\?[a-zA-Z-]+[:)]""").containsMatchIn(regex)) return "inline flag"
+        if (Regex("""\\p\{(?:Is|In|java|Alpha|Alnum|Punct|Graph|Print|Blank|Cntrl|XDigit|Space|Lower|Upper|ASCII)""").containsMatchIn(regex)) return "Java-only property class"
+        if (Regex("""\(\?<[=!](?:[^()\\]|\\.)*(?:[*+]|\{\d+,})""").containsMatchIn(regex)) return "unbounded look-behind"
+        if (strayBrace(regex)) return "unescaped }"
+        if (core && Regex("""\\[sSdDwW]""").containsMatchIn(regex)) return "shorthand class (\\s, \\d, \\w differ between ICU, the JVM and JavaScript)"
+        return null
+    }
+
+    /** True if a "}" closes no "{" outside a character class. */
+    private fun strayBrace(regex: String): Boolean {
+        var i = 0
+        var inClass = 0
+        var open = 0
+        while (i < regex.length) {
+            when (val c = regex[i]) {
+                '\\' -> {
+                    // \p{…}, \x{…}, \N{…} carry their own braces.
+                    if (i + 2 < regex.length && regex[i + 1] in "pPxN" && regex[i + 2] == '{') i = regex.indexOf('}', i).let { if (it < 0) regex.length else it }
+                    else i++
+                }
+                '[' -> inClass++
+                ']' -> if (inClass > 0) inClass--
+                '{' -> if (inClass == 0) open++
+                '}' -> if (inClass == 0) {
+                    if (open == 0) return true
+                    open--
+                }
+                else -> Unit
+            }
+            i++
+        }
+        return false
+    }
+
+    @Test
+    fun coreAndAppPatternsArePortable() {
+        val core = patterns(coreSources)
+        val app = patterns(appSources)
+        val offenders = core.mapNotNull { p -> problem(p.regex, core = true)?.let { "${p.where}: $it: ${p.regex}" } } +
+            app.mapNotNull { p -> problem(p.regex, core = false)?.let { "${p.where}: $it: ${p.regex}" } }
         assertEquals(offenders.joinToString("\n"), 0, offenders.size)
-        assert(sources.isNotEmpty()) { "core sources not found" }
+        assertTrue("core patterns found: ${core.size}", core.size > 20)
+        assertTrue("app patterns found: ${app.size}", app.isNotEmpty())
+        // The template constant is expanded, so its content is checked too.
+        assertTrue(core.any { it.regex.contains("\\u3000") })
+    }
+
+    /** The checks themselves catch what ICU rejects, written in every way Kotlin allows. */
+    @Test
+    fun theChecksCatchUnportableSyntax() {
+        val src = File.createTempFile("Patterns", ".kt").apply {
+            writeText(
+                """
+                val a = Regex("(?U)\\s{2,}")
+                val b = "(?i:abc)".toRegex()
+                val c = java.util.regex.Pattern.compile("(?<=a*)b")
+                val d = Regex(${"\"\"\""}x}${"\"\"\""})
+                val e = Regex(
+                    "\\p{javaLowerCase}"
+                )
+                val ok = Regex("[0-9]{2,3}\\p{L}\\}")
+                """.trimIndent(),
+            )
+            deleteOnExit()
+        }
+        val found = patterns(listOf(src)).map { problem(it.regex, core = false) }
+        assertEquals(listOf("inline flag", "inline flag", "unbounded look-behind", "unescaped }", "Java-only property class", null).sortedBy { it.toString() }, found.sortedBy { it.toString() })
     }
 
     @Test
     fun searchRecognizersInTheSharedDataArePortable() {
         val json = File(sharedDir, "search-engines.json").readText()
-        val patterns = Regex(""""(?:host|path)":\s*"((?:[^"\\]|\\.)*)"""").findAll(json).map { it.groupValues[1] }.toList()
-        val offenders = patterns.filter { Regex("""\(\?[a-zA-Z]+\)|\\\\[sSdDwW]""").containsMatchIn(it) }
+        val found = Regex(""""(?:host|path)":\s*"((?:[^"\\]|\\.)*)"""").findAll(json).map { unescape(it.groupValues[1]) }.toList()
+        val offenders = found.filter { problem(it, core = true) != null }
         assertEquals(offenders.joinToString("\n"), 0, offenders.size)
-        assert(patterns.size > 10)
+        assertTrue(found.size > 10)
     }
 }

@@ -11,3 +11,15 @@ package io.github.sakkijarvenpolkka.trio.core
  * RegexPortabilityTest keeps shorthand classes and inline flags out of the core.
  */
 internal const val SPACE = "\\t\\n\\u000B\\f\\r \\u00A0\\u1680\\u2000-\\u200A\\u2028\\u2029\\u202F\\u205F\\u3000\\uFEFF"
+
+/** JavaScript's whitespace: what its \s matches and String.prototype.trim removes (the JVM's trim() differs at U+001C–U+001F and U+FEFF). */
+internal fun isJsSpace(c: Char): Boolean = when (c) {
+    '\t', '\n', '\u000B', '\u000C', '\r', ' ', '\u00A0', '\u1680', '\u2028', '\u2029', '\u202F', '\u205F', '\u3000', '\uFEFF' -> true
+    else -> c in '\u2000'..'\u200A'
+}
+
+/** JavaScript's String.prototype.trim. */
+internal fun String.trimJs(): String = trim(::isJsSpace)
+
+/** JavaScript's s.replace(/\s+$/, ''). */
+internal fun String.trimEndJs(): String = trimEnd(::isJsSpace)

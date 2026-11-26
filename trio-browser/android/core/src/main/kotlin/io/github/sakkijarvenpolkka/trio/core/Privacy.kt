@@ -26,7 +26,7 @@ object Privacy {
         val u = WebUrl.parse(url) ?: return "internal"
         val host = u.hostname.lowercase()
         for (h in extraHosts) {
-            val clean = h.trim().lowercase().removePrefix("*.").removePrefix("www.")
+            val clean = h.trimJs().lowercase().removePrefix("*.").removePrefix("www.")
             if (clean.isNotEmpty() && hostMatches(host, clean)) return "user"
         }
         if (Hosts.isLocalHost(host, rules.localHostSuffixes)) return "local"

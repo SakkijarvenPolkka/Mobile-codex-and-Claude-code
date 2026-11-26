@@ -19,16 +19,16 @@ object ClassifyInput {
     private val WS = Regex("[$SPACE]")
 
     fun classify(text: String, agentKeywords: Map<String, String>, suffixes: SuffixData): InputKind {
-        val input = text.trim()
+        val input = text.trimJs()
         if (input.isEmpty()) return InputKind.Empty
         if (input.startsWith("?")) {
-            val q = input.substring(1).trim()
+            val q = input.substring(1).trimJs()
             return if (q.isEmpty()) InputKind.Empty else InputKind.Search(q)
         }
         if (input.startsWith("@")) {
             AT.matchEntire(input)?.let { m ->
                 val word = m.groupValues[1].lowercase()
-                val rest = m.groupValues[2].trim()
+                val rest = m.groupValues[2].trimJs()
                 agentKeywords[word]?.let { return InputKind.Agent(it, rest) }
                 if (word in ALL) return InputKind.Agent("all", rest)
                 if (word in HISTORY) return InputKind.History(rest)
