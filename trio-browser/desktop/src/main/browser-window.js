@@ -47,7 +47,7 @@ class BrowserWin {
     this.findState = null;
     /** @type {import('../types/contract').Notice & { action?: () => void } | null} */
     this.notice = null;
-    /** @type {{ id: number, origin: string, permission: import('../types/contract').PermissionKind, resolve: (d: 'allow' | 'deny') => void, remember: boolean }[]} */
+    /** @type {{ id: number, origin: string, permission: import('../types/contract').PermissionKind, resolve: (d: 'allow' | 'deny') => void, remember: boolean, wc: Electron.WebContents }[]} */
     this.prompts = [];
     this.htmlFullscreen = false;
     this.closed = false;
@@ -82,7 +82,14 @@ class BrowserWin {
     });
 
     this.win.on('resize', () => this.layout());
-    this.win.on('focus', () => app.windows.focused(this));
+    this.win.on('focus', () => {
+      this.active?.resumeTimer();
+      app.windows.focused(this);
+    });
+    for (const ev of /** @type {const} */ (['blur', 'minimize', 'hide'])) this.win.on(/** @type {any} */ (ev), () => this.active?.pauseTimer());
+    this.win.on('restore', () => {
+      if (this.win.isFocused()) this.active?.resumeTimer();
+    });
     this.win.on('enter-full-screen', () => this.pushState());
     this.win.on('leave-full-screen', () => {
       this.htmlFullscreen = false;
@@ -120,10 +127,12 @@ class BrowserWin {
         contextMenu: (t, params) => menus.pageContextMenu(this, t, params),
         foundInPage: (t, result) => this.onFound(t, result),
         beforeInput: (e, input) => this.beforeInput(e, input),
+        destroyed: (t) => this.tabDestroyed(t),
       },
       { url, lazy: opts.lazy, title: opts.title },
     );
     if (opts.transition && !opts.lazy) tab.pendingTransition = opts.transition;
+    tab.wc.on('did-navigate', () => this.dropPromptsFor(tab.wc));
     tab.wc.on('enter-html-full-screen', () => {
       this.htmlFullscreen = true;
       this.win.setFullScreen(true);
@@ -153,6 +162,7 @@ class BrowserWin {
     this.active = tab;
     this.findState = null;
     tab.setActive(true);
+    if (!this.win.isFocused()) tab.pauseTimer();
     this.win.contentView.addChildView(tab.view, 0);
     this.layout();
     this.updateTitle();
@@ -175,6 +185,34 @@ class BrowserWin {
       if (next) this.activate(next);
     }
     tab.destroy();
+    if (!this.tabs.length) {
+      this.win.close();
+      return;
+    }
+    this.pushState();
+    this.app.windows.sessionChanged();
+  }
+
+  /**
+   * A tab's web contents went away on its own (the page called window.close()).
+   * @param {Tab} tab
+   */
+  tabDestroyed(tab) {
+    this.dropPromptsFor(tab.wc);
+    if (this.closed) return;
+    const index = this.tabs.indexOf(tab);
+    if (index < 0) return;
+    this.tabs.splice(index, 1);
+    if (this.active === tab) {
+      this.active = null;
+      try {
+        this.win.contentView.removeChildView(tab.view);
+      } catch {
+        /* already detached */
+      }
+      const next = this.tabs[Math.min(index, this.tabs.length - 1)];
+      if (next) this.activate(next);
+    }
     if (!this.tabs.length) {
       this.win.close();
       return;
@@ -285,8 +323,7 @@ class BrowserWin {
     const tab = this.active;
     if (!tab) return;
     if (tab.crashed || tab.failed) {
-      const url = tab.failed ? new URL(tab.url).searchParams.get('url') || tab.url : tab.url;
-      tab.load(url, 'reload');
+      tab.load(tab.failed && tab.failedUrl ? tab.failedUrl : tab.url, 'reload');
       return;
     }
     tab.pendingTransition = 'reload';
@@ -359,13 +396,28 @@ class BrowserWin {
   /**
    * @param {string} origin
    * @param {import('../types/contract').PermissionKind} permission
+   * @param {Electron.WebContents} wc the web contents that asked
    * @returns {Promise<'allow' | 'deny'>}
    */
-  requestPermission(origin, permission) {
+  requestPermission(origin, permission, wc) {
     return new Promise((resolve) => {
-      this.prompts.push({ id: nextPromptId++, origin, permission, resolve, remember: !this.private });
+      this.prompts.push({ id: nextPromptId++, origin, permission, resolve, remember: !this.private, wc });
       this.pushState();
     });
+  }
+
+  /** Denies the prompts of a web contents that navigated away or closed. @param {Electron.WebContents} wc */
+  dropPromptsFor(wc) {
+    const mine = this.prompts.filter((p) => p.wc === wc);
+    if (!mine.length) return;
+    this.prompts = this.prompts.filter((p) => p.wc !== wc);
+    for (const p of mine) p.resolve('deny');
+    this.pushState();
+  }
+
+  /** The prompt to show: one from the active tab, or from a web contents that is not a tab. */
+  visiblePrompt() {
+    return this.prompts.find((p) => (this.active && p.wc === this.active.wc) || !this.tabs.some((t) => t.wc === p.wc)) || null;
   }
 
   /** @param {number} id @param {'allow' | 'deny'} decision @param {boolean} remember */
@@ -444,11 +496,11 @@ class BrowserWin {
   /** @returns {ChromeState} */
   state() {
     const settings = this.app.settings.get();
-    const prompt = this.prompts[0];
+    const prompt = this.visiblePrompt();
     return {
       windowId: this.id,
       private: this.private,
-      tabs: this.tabs.map((t) => t.state()),
+      tabs: this.tabs.filter((t) => !t.destroyed).map((t) => t.state()),
       activeTabId: this.active ? this.active.id : null,
       agents: this.app.agents.summaries(),
       dockVisible: this.app.agents.dockVisible(),
@@ -470,7 +522,7 @@ class BrowserWin {
     if (this.closed || this.pushTimer) return;
     this.pushTimer = setTimeout(() => {
       this.pushTimer = null;
-      if (!this.closed) emit(this.chromeView.webContents, 'chrome', 'state', this.state());
+      if (!this.closed && !this.chromeView.webContents.isDestroyed()) emit(this.chromeView.webContents, 'chrome', 'state', this.state());
     }, 16);
   }
 

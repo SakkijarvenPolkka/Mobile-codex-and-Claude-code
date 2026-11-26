@@ -15,6 +15,7 @@ const { WindowManager } = require('./windows');
 const { AgentManager } = require('./agents/agent-manager');
 const { installHandlers } = require('./ipc-handlers');
 const { contentsOf, emit } = require('./ipc');
+const { BaseWindow } = require('electron');
 const i18n = require('./i18n');
 const data = require('../core/data');
 
@@ -38,6 +39,28 @@ if (!app.requestSingleInstanceLock()) {
     dialog.showErrorBox('Trio', String(err && err.stack ? err.stack : err));
     app.exit(1);
   });
+}
+
+/**
+ * Asks before a page opens another app (mailto:, tel:, …).
+ * @param {import('./app-context').AppContext} ctx
+ * @param {Electron.WebContents} wc
+ * @param {string} externalUrl
+ * @param {string} origin
+ */
+async function confirmExternal(ctx, wc, externalUrl, origin) {
+  const owner = BaseWindow.getAllWindows().find((w) => w.contentView.children.some((v) => /** @type {any} */ (v).webContents === wc));
+  const scheme = externalUrl.split(':')[0];
+  const options = {
+    type: /** @type {const} */ ('question'),
+    buttons: [ctx.t('external.open'), ctx.t('common.cancel')],
+    defaultId: 1,
+    cancelId: 1,
+    message: ctx.t('external.title', { scheme }),
+    detail: ctx.t('external.detail', { origin: origin.replace(/^https?:\/\//, '') || '—', url: externalUrl.slice(0, 200) }),
+  };
+  const res = owner ? await dialog.showMessageBox(/** @type {any} */ (owner), options) : await dialog.showMessageBox(options);
+  return res.response === 0;
 }
 
 async function start() {
@@ -80,12 +103,13 @@ async function start() {
       settings: isPrivate ? /** @type {any} */ ({ get: () => ({ ...settings.get(), permissions: {} }), setPermission: () => settings.get() }) : settings,
       prompt: (wc, origin, kind) => {
         const w = ctx.windows.list.find((x) => x.tabs.some((t) => t.wc === wc)) || ctx.windows.current();
-        return w ? w.requestPermission(origin, kind) : Promise.resolve('deny');
+        return w ? w.requestPermission(origin, kind, wc) : Promise.resolve('deny');
       },
+      confirmExternal: (wc, externalUrl, origin) => confirmExternal(ctx, wc, externalUrl, origin),
     });
     // Pages (including the providers' sign-in pages) follow the browser's UI language.
     ses.setUserAgent(app.userAgentFallback, ctx.locale() === 'ko' ? 'ko-KR,ko,en-US,en' : 'en-US,en');
-    ctx.downloads.attach(ses);
+    ctx.downloads.attach(ses, isPrivate);
   };
 
   ctx.windows = new WindowManager(ctx, { configureSession });

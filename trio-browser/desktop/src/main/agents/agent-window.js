@@ -12,6 +12,8 @@ const { classifyProviderUrl, gateView } = require('../../core/login-state');
 const { planHandoff } = require('../../core/handoff');
 const data = require('../../core/data');
 const shortcuts = require('../shortcuts');
+const { popupOptions, guardPopup } = require('../popups');
+const { isInternalUrl } = require('../protocol');
 
 const DEFAULT_SIZE = { width: 440, height: 680 };
 const MIN_SIZE = { width: 340, height: 420 };
@@ -104,38 +106,47 @@ class AgentWindow {
     });
     wc.on('did-stop-loading', () => {
       this.loading = false;
+      // Give a script-driven logout page a moment to finish before the view is cleared.
+      if (this.record.signingOut) setTimeout(() => this.manager.signOutFinished(this.record), 2000);
       this.pushState();
     });
     wc.on('did-navigate', (_e, url) => this.onNavigate(url));
     wc.on('did-navigate-in-page', (_e, url, isMainFrame) => {
       if (isMainFrame) this.onNavigate(url);
     });
-    wc.on('will-navigate', (event) => {
-      const kind = classifyProviderUrl(this.provider, event.url);
-      if (this.record.state() === 'signedIn' && kind === 'external') {
+    /** Navigations and redirects: never to internal pages; external sites go to a tab when signed in. */
+    const guard = (/** @type {Electron.Event} */ event, /** @type {string} */ url) => {
+      if (isInternalUrl(url) || /^(file|chrome|devtools):/.test(url)) {
         event.preventDefault();
-        this.manager.openInBrowser(event.url);
+        return;
       }
-      if (/^(trio|file|chrome|devtools):/.test(event.url)) event.preventDefault();
+      if (this.record.state() === 'signedIn' && classifyProviderUrl(this.provider, url) === 'external') {
+        event.preventDefault();
+        this.manager.openInBrowser(url);
+      }
+    };
+    wc.on('will-navigate', (event) => guard(event, event.url));
+    wc.on('will-redirect', (event) => guard(event, event.url));
+    wc.on('will-frame-navigate', (event) => {
+      if (!event.isMainFrame && isInternalUrl(event.url)) event.preventDefault();
     });
     wc.setWindowOpenHandler((details) => {
-      const kind = details.url === 'about:blank' ? 'auth' : classifyProviderUrl(this.provider, details.url);
       const state = this.record.state();
+      if (state === 'signedOut' || isInternalUrl(details.url)) return { action: 'deny' };
+      const kind = details.url === 'about:blank' ? 'blank' : classifyProviderUrl(this.provider, details.url);
+      // Popups are for signing in: identity-provider pages, or a blank popup that a sign-in
+      // flow fills in (only while signing in).
       if (kind === 'auth' || (state === 'signingIn' && kind !== 'app')) {
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 680,
-            autoHideMenuBar: true,
-            parent: /** @type {any} */ (this.win),
-            webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
-          },
-        };
+        return { action: 'allow', overrideBrowserWindowOptions: { ...popupOptions(), parent: /** @type {any} */ (this.win) } };
       }
       if (kind === 'app' && state === 'signedIn') this.loadProvider(details.url);
       else if (kind === 'external') this.manager.openInBrowser(details.url);
       return { action: 'deny' };
+    });
+    wc.on('did-create-window', (win) => guardPopup(win, (url) => this.manager.openInBrowser(url)));
+    // The provider's page may close itself (window.close()); replace the view.
+    wc.once('destroyed', () => {
+      if (!this.closed && this.providerView === view) this.replaceProviderView();
     });
     wc.on('did-fail-load', (_e, code, desc, url, isMainFrame) => {
       if (isMainFrame && code !== -3 && url !== 'about:blank') this.showNotice('error', this.app.t('agent.notice.loadFailed', { error: desc || String(code) }));
@@ -144,6 +155,24 @@ class AgentWindow {
     wc.on('context-menu', (_e, p) => this.providerContextMenu(p));
     wc.on('before-input-event', (e, input) => this.beforeInput(e, input));
     return view;
+  }
+
+  /** Swaps in a fresh provider view after the old one's web contents went away. */
+  replaceProviderView() {
+    if (this.providerAttached) {
+      try {
+        this.win.contentView.removeChildView(this.providerView);
+      } catch {
+        /* already gone */
+      }
+      this.providerAttached = false;
+    }
+    this.providerView = this.createProviderView();
+    this.providerUrl = '';
+    this.loading = false;
+    const state = this.record.state();
+    if (state === 'signingIn') this.manager.cancelSignIn(this.provider.id);
+    else this.stateChanged();
   }
 
   /** @param {Electron.Rectangle | null} parent */
@@ -176,7 +205,7 @@ class AgentWindow {
 
   /** Attaches or detaches the provider view to match the mode and the URL it is on. */
   applyGate() {
-    if (this.closed) return;
+    if (this.closed || this.providerView.webContents.isDestroyed()) return;
     const mode = this.mode();
     const url = this.providerView.webContents.getURL();
     const kind = url && url !== 'about:blank' ? classifyProviderUrl(this.provider, url) : 'external';
@@ -194,10 +223,12 @@ class AgentWindow {
 
   /** Called whenever the login state may have changed. */
   stateChanged() {
+    if (this.closed || this.providerView.webContents.isDestroyed()) return;
     const state = this.record.state();
     const url = this.providerView.webContents.getURL();
     if (state === 'signedOut') {
-      if (url && url !== 'about:blank') this.blankProvider();
+      // While signing out the (detached, invisible) view keeps running the provider's logout page.
+      if (url && url !== 'about:blank' && !this.record.signingOut) this.blankProvider();
       this.preview = null;
       this.historyOpen = false;
     } else if (state === 'signedIn') {
@@ -211,6 +242,7 @@ class AgentWindow {
   loadProvider(url) {
     this.providerUrl = url;
     const wc = this.providerView.webContents;
+    if (wc.isDestroyed()) return Promise.resolve();
     const done = wc.loadURL(url).catch(() => {});
     this.applyGate();
     return done;
@@ -218,7 +250,7 @@ class AgentWindow {
 
   blankProvider() {
     this.providerUrl = '';
-    this.providerView.webContents.loadURL('about:blank').catch(() => {});
+    if (!this.providerView.webContents.isDestroyed()) this.providerView.webContents.loadURL('about:blank').catch(() => {});
   }
 
   /** @param {string} url */
@@ -434,6 +466,7 @@ class AgentWindow {
 
   /** @returns {import('../../types/contract').AgentWindowState} */
   state() {
+    if (this.providerView.webContents.isDestroyed()) this.replaceProviderView();
     const w = this.app.windows.current();
     const tab = w ? w.active : null;
     const tabState = tab ? tab.state() : null;

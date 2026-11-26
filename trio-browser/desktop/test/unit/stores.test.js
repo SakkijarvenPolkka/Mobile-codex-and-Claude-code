@@ -53,8 +53,10 @@ test('history: visits, titles, durations, search and deletion', () => {
   const a = db.addVisit({ url: 'https://news.naver.com/a', title: '크로뮴 브라우저 소식', time: t0, transition: 'typed', fromVisitId: null });
   const b = db.addVisit({ url: 'https://example.com/%EA%B2%BD%EB%A1%9C', title: 'Example', time: t0 + 1000, transition: 'link', fromVisitId: a });
   db.addVisit({ url: 'https://news.naver.com/a', title: '', time: t0 + 2000, transition: 'reload', fromVisitId: null });
-  db.setTitle(b, 'Example Domain');
-  db.setDuration(a, 61234.4);
+  db.setTitle(b, 'Example Domain', 'https://example.com/%EA%B2%BD%EB%A1%9C');
+  db.setTitle(b, 'Wrong page', 'https://other.example/');
+  db.setDuration(a, 61234.4, 'https://news.naver.com/a');
+  db.setDuration(b, 999, 'https://not-this-page.example/');
 
   assert.deepEqual(db.query({ text: '', beforeTime: null, limit: 10 }).entries.map((e) => e.visitId), [b, a], 'reloads are hidden');
   assert.deepEqual(db.query({ text: '브라우', beforeTime: null, limit: 10 }).entries.map((e) => e.visitId), [a], '2-character Korean substring');
@@ -72,6 +74,7 @@ test('history: visits, titles, durations, search and deletion', () => {
   assert.equal(all.length, 3);
   assert.equal(all[0].durationMs, 61234);
   assert.equal(all[1].fromVisitId, a);
+  assert.equal(all[1].durationMs, null, 'a visit is only updated for its own URL');
 
   db.setFavicon('news.naver.com', 'data:image/png;base64,AA==');
   assert.equal(db.query({ text: 'naver', beforeTime: null, limit: 5 }).entries[0].faviconUrl, 'data:image/png;base64,AA==');
@@ -81,5 +84,7 @@ test('history: visits, titles, durations, search and deletion', () => {
   assert.equal(db.suggest('example', 5).length, 0, 'URL removed with its last visit');
   db.deleteSince(t0);
   assert.equal(db.allVisits().length, 0);
+  const fresh = db.addVisit({ url: 'https://new.example/', title: 'New', time: t0 + 9000, transition: 'link', fromVisitId: null });
+  assert.ok(fresh > b, 'visit ids are never reused after deletion');
   db.close();
 });

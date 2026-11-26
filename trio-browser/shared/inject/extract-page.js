@@ -8,10 +8,28 @@
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'BUTTON', 'SVG', 'CANVAS', 'IFRAME', 'OBJECT', 'EMBED', 'VIDEO', 'AUDIO', 'NAV', 'FOOTER', 'ASIDE', 'FORM']);
   const BLOCK = /^(block|flex|grid|list-item|table|table-row|table-caption|flow-root)/;
 
-  function hiddenOrPrivate(el) {
+  const docWidth = Math.max(document.documentElement.scrollWidth, window.innerWidth);
+
+  /** Text the user cannot see (or cannot see as text) is never extracted. */
+  function hiddenOrPrivate(el, style) {
     if (SKIP.has(el.tagName)) return true;
     if (el.isContentEditable || el.hidden || el.getAttribute('aria-hidden') === 'true') return true;
-    if (typeof el.checkVisibility === 'function' && !el.checkVisibility()) return true;
+    if (
+      typeof el.checkVisibility === 'function' &&
+      !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true, opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })
+    ) {
+      return true;
+    }
+    if (style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return true;
+    if (parseFloat(style.fontSize) === 0) return true;
+    if (style.clipPath === 'inset(50%)' || /rect\(0(px)?,? 0(px)?,? 0(px)?,? 0(px)?\)/.test(style.clip)) return true;
+    const r = el.getBoundingClientRect();
+    if (style.display !== 'contents') {
+      if (r.width <= 1 && r.height <= 1) return true;
+      const left = r.left + window.scrollX;
+      const top = r.top + window.scrollY;
+      if (left + r.width <= 0 || top + r.height <= 0 || left >= docWidth) return true;
+    }
     return false;
   }
 
@@ -30,8 +48,14 @@
         }
         return;
       }
-      if (node.nodeType !== Node.ELEMENT_NODE || hiddenOrPrivate(node)) return;
-      const block = node.tagName === 'BR' || BLOCK.test(getComputedStyle(node).display);
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+      if (node.tagName === 'BR') {
+        out.push('\n');
+        return;
+      }
+      const style = getComputedStyle(node);
+      if (hiddenOrPrivate(node, style)) return;
+      const block = BLOCK.test(style.display);
       if (block) out.push('\n');
       for (const child of node.childNodes) walk(child);
       if (block) out.push('\n');

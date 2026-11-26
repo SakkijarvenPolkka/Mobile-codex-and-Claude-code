@@ -9,6 +9,7 @@ const { WebContentsView } = require('electron');
 const { preloadFile } = require('./paths');
 const { isInternalUrl, internalHost } = require('./protocol');
 const { registerSurface } = require('./ipc');
+const { popupOptions, guardPopup } = require('./popups');
 const { displayUrl } = require('../core/url');
 const { extractSearch } = require('../core/search');
 const data = require('../core/data');
@@ -28,6 +29,7 @@ let nextTabId = 1;
  *   contextMenu: (tab: Tab, params: Electron.ContextMenuParams) => void,
  *   foundInPage: (tab: Tab, result: Electron.Result) => void,
  *   beforeInput: (event: Electron.Event, input: Electron.Input) => void,
+ *   destroyed: (tab: Tab) => void,
  * }} TabHost
  */
 
@@ -58,7 +60,15 @@ class Tab {
     // the IPC layer checks that the calling frame is really on such a page.
     registerSurface(this.wc, 'pages', { tab: this, win: host.win });
     this.title = initial.title || '';
+    /** The committed URL (what the page really is). */
     this.url = initial.url || 'trio://newtab/';
+    /** A navigation we started that has not committed yet (shown in the address bar meanwhile). */
+    /** @type {string | null} */
+    this.pendingUrl = null;
+    /** The URL whose load failed, while the error page is shown. */
+    /** @type {string | null} */
+    this.failedUrl = null;
+    this.destroyed = false;
     /** @type {string | null} */
     this.faviconUrl = null;
     this.loading = false;
@@ -84,26 +94,29 @@ class Tab {
     wc.setWindowOpenHandler((details) => {
       const internal = isInternalUrl(details.url);
       if (internal && !isInternalUrl(wc.getURL())) return { action: 'deny' };
-      if (details.disposition === 'new-window' && !internal) {
-        // Real popups (sign-in windows and the like) keep their opener.
-        return {
-          action: 'allow',
-          overrideBrowserWindowOptions: {
-            width: 520,
-            height: 680,
-            autoHideMenuBar: true,
-            webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, session: this.host.session },
-          },
-        };
+      if (details.disposition === 'new-window' && !internal && /^(https?:|about:blank)/.test(details.url)) {
+        // Real popups (sign-in windows and the like) keep their opener; see popups.js for the
+        // guards and the address shown in their title bar.
+        return { action: 'allow', overrideBrowserWindowOptions: popupOptions(this.host.session) };
       }
       this.host.openTab(details.url, { background: details.disposition === 'background-tab', opener: this });
       return { action: 'deny' };
     });
+    wc.on('did-create-window', (win) => guardPopup(win, (url) => this.host.openTab(url, { background: false, opener: this })));
+    // Web content may never reach trio:// pages: not by navigation, redirect or subframe.
     wc.on('will-navigate', (event, url) => {
       if (isInternalUrl(url) && !isInternalUrl(wc.getURL())) event.preventDefault();
     });
+    wc.on('will-redirect', (event) => {
+      if (isInternalUrl(event.url)) event.preventDefault();
+    });
     wc.on('will-frame-navigate', (event) => {
       if (!event.isMainFrame && isInternalUrl(event.url)) event.preventDefault();
+    });
+    // A page may close itself (window.close()); the web contents is then destroyed.
+    wc.once('destroyed', () => {
+      this.destroyed = true;
+      this.host.destroyed(this);
     });
     wc.on('did-start-loading', () => {
       this.loading = true;
@@ -111,11 +124,15 @@ class Tab {
     });
     wc.on('did-stop-loading', () => {
       this.loading = false;
+      // A navigation that never committed (download, external protocol, aborted) is forgotten.
+      this.clearPending();
       this.changed();
     });
     wc.on('did-navigate', (_e, url, httpCode) => {
       this.failed = internalHost(url) === 'error';
+      if (!this.failed) this.failedUrl = null;
       this.crashed = false;
+      this.pendingUrl = null;
       this.url = url;
       this.faviconUrl = this.app.history ? this.app.history.faviconForUrl(url) : null;
       if (!this.failed) this.recordVisit(url, httpCode);
@@ -130,7 +147,7 @@ class Tab {
     });
     wc.on('page-title-updated', (_e, title) => {
       this.title = title;
-      if (this.visitId !== null && this.app.history) this.app.history.setTitle(this.visitId, title);
+      if (this.visitId !== null && this.app.history) this.app.history.setTitle(this.visitId, title, this.url);
       this.changed();
     });
     wc.on('page-favicon-updated', (_e, favicons) => {
@@ -138,7 +155,17 @@ class Tab {
       if (first) this.fetchFavicon(first);
     });
     wc.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      if (!isMainFrame || errorCode === -3) return; // -3: aborted (user stop or a new navigation)
+      if (!isMainFrame) return;
+      if (errorCode === -3) {
+        // Aborted: the user stopped, a new navigation started, or it became a download.
+        this.clearPending();
+        this.changed();
+        return;
+      }
+      if (isInternalUrl(validatedURL)) return;
+      // The failed URL is kept here; the error page's own query string is only for its text.
+      this.failedUrl = validatedURL;
+      this.pendingTransition = null;
       const q = new URLSearchParams({ url: validatedURL, code: String(errorCode), desc: errorDescription });
       this.wc.loadURL(`trio://error/?${q}`).catch(() => {});
     });
@@ -160,7 +187,14 @@ class Tab {
   }
 
   changed() {
-    this.host.onChange(this);
+    if (!this.destroyed) this.host.onChange(this);
+  }
+
+  clearPending() {
+    if (this.pendingUrl !== null || this.pendingTransition !== null) {
+      this.pendingUrl = null;
+      this.pendingTransition = null;
+    }
   }
 
   /**
@@ -168,13 +202,21 @@ class Tab {
    * @param {VisitTransition | null} transition
    */
   load(url, transition) {
+    if (this.destroyed) return;
     this.lazyUrl = null;
     this.pendingTransition = transition;
-    this.url = url;
+    this.pendingUrl = url;
     this.wc.loadURL(url).catch(() => {
       /* failures surface through did-fail-load */
     });
     this.changed();
+  }
+
+  /** The URL to save in the session: what the tab shows, never an error page or a download. */
+  sessionUrl() {
+    if (this.lazyUrl) return this.lazyUrl;
+    if (this.failed && this.failedUrl) return this.failedUrl;
+    return this.url;
   }
 
   /** Loads a lazily restored tab. */
@@ -205,7 +247,7 @@ class Tab {
     if (this.visitId === null || !this.app.history) return;
     const now = Date.now();
     const total = this.visitAccum + (this.activeSince !== null ? now - this.activeSince : 0);
-    this.app.history.setDuration(this.visitId, Math.min(total, MAX_DWELL_MS));
+    this.app.history.setDuration(this.visitId, Math.min(total, MAX_DWELL_MS), this.url);
     this.visitId = null;
     this.visitAccum = 0;
     this.activeSince = this.active ? now : null;
@@ -219,6 +261,22 @@ class Tab {
     this.activeSince = active ? now : null;
     this.active = active;
     if (active) this.ensureLoaded();
+  }
+
+  /** Stops counting dwell time (window blurred or minimised) without deactivating the tab. */
+  pauseTimer() {
+    if (this.activeSince !== null) this.visitAccum += Date.now() - this.activeSince;
+    this.activeSince = null;
+  }
+
+  resumeTimer() {
+    if (this.active && this.activeSince === null) this.activeSince = Date.now();
+  }
+
+  /** The history rows this tab pointed at were deleted. */
+  forgetVisit() {
+    this.visitId = null;
+    this.visitAccum = 0;
   }
 
   /** @param {string} iconUrl */
@@ -261,6 +319,9 @@ class Tab {
   /** @returns {import('../types/contract').TabState} */
   state() {
     const url = this.url;
+    if (this.destroyed || this.wc.isDestroyed()) {
+      return { id: this.id, title: this.title, url, displayUrl: displayUrl(url), faviconUrl: null, loading: false, canGoBack: false, canGoForward: false, audible: false, muted: false, crashed: true, security: 'error', zoomPercent: 100, bookmarked: false, search: null, internal: false };
+    }
     const internal = isInternalUrl(url);
     const host = internalHost(url);
     const nav = this.wc.navigationHistory;
@@ -270,15 +331,9 @@ class Tab {
     else if (internal) security = 'internal';
     else if (url.startsWith('https:')) security = 'secure';
     else if (url.startsWith('file:') || /^http:\/\/(localhost|127\.|\[::1\])/.test(url)) security = 'local';
-    let shownUrl = displayUrl(url);
-    if (host === 'newtab') shownUrl = '';
-    else if (host === 'error') {
-      try {
-        shownUrl = displayUrl(new URL(url).searchParams.get('url') || '');
-      } catch {
-        shownUrl = '';
-      }
-    }
+    let shownUrl = displayUrl(this.pendingUrl && this.loading ? this.pendingUrl : url);
+    if (host === 'newtab' && !(this.pendingUrl && this.loading)) shownUrl = '';
+    else if (host === 'error') shownUrl = displayUrl(this.failedUrl || '');
     return {
       id: this.id,
       title: this.title || (host === 'newtab' ? '' : shownUrl),
@@ -300,7 +355,9 @@ class Tab {
   }
 
   destroy() {
+    if (this.destroyed) return;
     this.finishVisit();
+    this.destroyed = true;
     if (!this.wc.isDestroyed()) this.wc.close();
   }
 }

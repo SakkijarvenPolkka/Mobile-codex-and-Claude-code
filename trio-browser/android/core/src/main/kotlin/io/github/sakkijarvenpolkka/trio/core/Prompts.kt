@@ -20,6 +20,16 @@ object Prompts {
         .replace(Regex(">{3,}"), ">>")
         .trim { it.isWhitespace() || it == ' ' || it == '﻿' }
 
+    /** Page-controlled one-line values: no line breaks, no delimiter runs, bounded length. */
+    fun cleanInline(text: String, max: Int): String = cut(
+        text.replace(Regex("[\r\n\t\u2028\u2029]+"), " ")
+            .replace(Regex("<{3,}"), "<<")
+            .replace(Regex(">{3,}"), ">>")
+            .replace(Regex("(?U)\\s{2,}"), " ")
+            .trim(),
+        max,
+    )
+
     private fun cut(s: String, max: Int): String {
         if (s.length <= max) return s
         var end = maxOf(0, max)
@@ -42,9 +52,9 @@ object Prompts {
         val question = input.question.trim()
         val values = HashMap<String, String>()
         values["question"] = question
-        values["query"] = input.query.trim()
-        values["title"] = input.title.trim()
-        values["url"] = input.url
+        values["query"] = cleanInline(input.query, 500)
+        values["title"] = cleanInline(input.title, 300)
+        values["url"] = cleanInline(input.url, 2000)
         values["untrustedNotice"] = notice
         values["pageBlock"] = ""
         values["targetLanguage"] = ""

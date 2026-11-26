@@ -76,7 +76,7 @@ npm run dist:linux      # dist/ 에 AppImage, tar.gz
 
 ```bash
 npm run test:unit   # 핵심 로직·저장소·IPC 계약·문자열 (214개)
-npm run test:e2e    # Playwright로 실제 앱을 띄워 브라우저 기능과 에이전트 흐름을 검사 (모의 Claude/Gemini/ChatGPT 서버 사용)
+npm run test:e2e    # Playwright로 실제 앱을 띄워 브라우저 기능·에이전트 흐름·보안 회귀를 검사 (34개, 모의 Claude/Gemini/ChatGPT 서버 사용)
 npm run typecheck
 ```
 

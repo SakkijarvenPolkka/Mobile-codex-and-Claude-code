@@ -6,6 +6,8 @@
  */
 
 const ALWAYS_ALLOW = new Set(['clipboard-sanitized-write', 'fullscreen', 'pointerLock', 'keyboardLock', 'speaker-selection']);
+/** Other-app link schemes that may be opened after confirmation. */
+const EXTERNAL_SCHEMES = new Set(['mailto', 'tel', 'sms', 'webcal', 'magnet', 'zoommtg', 'msteams', 'slack', 'spotify', 'steam', 'tg', 'whatsapp', 'kakaotalk', 'facetime', 'callto', 'skype']);
 
 /**
  * Maps an Electron permission request to the kind shown to the user, or null when it is never
@@ -17,7 +19,8 @@ const ALWAYS_ALLOW = new Set(['clipboard-sanitized-write', 'fullscreen', 'pointe
 function permissionKind(permission, details) {
   switch (permission) {
     case 'media': {
-      const types = (details && details.mediaTypes) || [];
+      // Requests carry mediaTypes (array); permission checks carry mediaType (one string).
+      const types = (details && details.mediaTypes) || (details && details.mediaType ? [details.mediaType] : []);
       const video = types.includes('video');
       const audio = types.includes('audio');
       if (video && audio) return 'camera+microphone';
@@ -71,11 +74,23 @@ function storedDecision(settings, origin, kind) {
 
 /**
  * @param {Electron.Session} ses
- * @param {{ settings: import('./settings').SettingsStore, prompt: (wc: Electron.WebContents, origin: string, kind: import('../types/contract').PermissionKind) => Promise<'allow' | 'deny'> }} deps
+ * @param {{
+ *   settings: import('./settings').SettingsStore,
+ *   prompt: (wc: Electron.WebContents, origin: string, kind: import('../types/contract').PermissionKind) => Promise<'allow' | 'deny'>,
+ *   confirmExternal: (wc: Electron.WebContents, externalUrl: string, origin: string) => Promise<boolean>,
+ * }} deps
  */
 function installPermissionHandlers(ses, deps) {
   ses.setPermissionRequestHandler((wc, permission, callback, details) => {
     if (ALWAYS_ALLOW.has(permission)) return callback(true);
+    if (permission === 'openExternal') {
+      // Links to other apps (mailto:, tel:, …): only well-known schemes, and only after the user agrees.
+      const external = /** @type {any} */ (details).externalURL || '';
+      const scheme = external.split(':')[0].toLowerCase();
+      if (!EXTERNAL_SCHEMES.has(scheme)) return callback(false);
+      deps.confirmExternal(wc, external, originOf(details.requestingUrl || wc.getURL()) || '').then(callback, () => callback(false));
+      return;
+    }
     const kind = permissionKind(permission, details);
     const origin = originOf(details.requestingUrl || wc.getURL());
     if (!kind || !origin) return callback(false);
@@ -93,4 +108,4 @@ function installPermissionHandlers(ses, deps) {
   ses.setDevicePermissionHandler(() => false);
 }
 
-module.exports = { installPermissionHandlers, permissionKind, storedDecision, originOf, ALWAYS_ALLOW };
+module.exports = { installPermissionHandlers, permissionKind, storedDecision, originOf, ALWAYS_ALLOW, EXTERNAL_SCHEMES };

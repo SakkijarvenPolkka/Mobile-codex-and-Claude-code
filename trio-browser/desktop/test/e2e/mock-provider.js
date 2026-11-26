@@ -41,6 +41,8 @@ function startMockServer() {
       }
       if (action === 'login') {
         if (url.searchParams.get('skip') === '1') return send(302, '', { location: `/${id}/app` });
+        // Like real sign-in pages, set an analytics cookie with a fresh value on every load.
+        res.setHeader('set-cookie', `_ga_${id}=${Date.now()}${Math.random()}; Path=/`);
         return send(200, page(`${id} sign in`, `<h1>${id} sign-in</h1><form method="post" action="/${id}/login"><input name="email" value="me@example.com"><button id="signin" type="submit">Sign in</button></form><a id="skip" href="/${id}/login?skip=1">Continue without signing in</a>`));
       }
       if (action === 'logout') return send(302, '', { location: `/${id}/login`, 'set-cookie': `${cookie}=; Path=/; Max-Age=0` });
@@ -56,6 +58,21 @@ function startMockServer() {
       return send(200, page(`${q} - Mock Search`, `<h1>Results for ${q.replace(/</g, '&lt;')}</h1><p>Result one</p>`));
     }
     if (url.pathname === '/bank') return send(200, page('My Bank', '<h1>Online banking</h1>'));
+    if (url.pathname === '/redir') return send(302, '', { location: url.searchParams.get('to') || '/' });
+    if (url.pathname === '/opener') return send(200, page('Opener', '<a id="open" href="/selfclose" target="_blank">open</a>'));
+    if (url.pathname === '/selfclose') return send(200, page('Self closing', '<button id="close" onclick="window.close()">close</button>'));
+    if (url.pathname === '/hidden') {
+      return send(
+        200,
+        page(
+          'Hidden text',
+          '<p>VISIBLE-TEXT</p><p style="visibility:hidden">VISHIDDEN</p><p style="opacity:0">OPACITY</p>' +
+            '<p style="position:absolute;left:-9999px">OFFSCREEN</p><p style="font-size:0">FONTZERO</p>' +
+            '<span style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">CLIPPED</span>' +
+            '<p style="display:none">DISPLAYNONE</p><input type="password" value="PASSWORD-VALUE">',
+        ),
+      );
+    }
     if (url.pathname === '/download') {
       res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-disposition': 'attachment; filename="report.txt"' });
       return res.end('hello download');

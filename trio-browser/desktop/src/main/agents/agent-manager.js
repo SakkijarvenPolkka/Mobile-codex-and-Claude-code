@@ -8,8 +8,9 @@
 const path = require('node:path');
 const { app: electronApp } = require('electron');
 const data = require('../../core/data');
-const { hasSession, sessionDomains, classifyProviderUrl, deriveAgentState } = require('../../core/login-state');
+const { hasSession, sessionDomains, classifyProviderUrl, deriveAgentState, cookieMatches } = require('../../core/login-state');
 const { buildPrompt } = require('../../core/prompts');
+const { sanitizeUrl } = require('../../core/privacy');
 const { JsonStore, v } = require('../json-store');
 const { AgentWindow } = require('./agent-window');
 const { DockWindow } = require('./dock-window');
@@ -30,6 +31,7 @@ const { buildHistoryPreview } = require('./history-analysis');
  *   lockReason: 'signedOut' | 'signInIncomplete' | 'signInRefused',
  *   pending: Pending | null,
  *   signingOut: boolean,
+ *   sessionSignature: string,
  *   window: AgentWindow | null,
  *   busy: boolean,
  *   state: () => import('../../types/contract').AgentLoginState,
@@ -62,6 +64,7 @@ class AgentManager {
         lockReason: 'signedOut',
         pending: null,
         signingOut: false,
+        sessionSignature: '',
         window: null,
         busy: false,
         state: () => deriveAgentState(record),
@@ -97,8 +100,11 @@ class AgentManager {
   async init() {
     await Promise.all([...this.records.values()].map((r) => this.refreshSession(r)));
     this.session.cookies.on('changed', (_e, cookie) => {
+      // Only the providers' session cookies matter; analytics and other cookies are ignored.
+      const c = { domain: cookie.domain || '', name: cookie.name, value: cookie.value };
       for (const r of this.records.values()) {
-        if (sessionDomains(r.provider).some((d) => cookie.domain && (cookie.domain.replace(/^\./, '') === d || cookie.domain.endsWith('.' + d)))) this.scheduleRefresh(r);
+        const rules = [...(r.provider.sessionCookies.anyOf || []), ...(r.provider.sessionCookies.allOf || [])];
+        if (rules.some((rule) => cookieMatches(c, rule))) this.scheduleRefresh(r);
       }
     });
   }
@@ -112,7 +118,6 @@ class AgentManager {
       id,
       setTimeout(() => {
         this.cookieTimers.delete(id);
-        r.staleSession = false;
         this.refreshSession(r);
       }, 250),
     );
@@ -125,6 +130,18 @@ class AgentManager {
     const lists = await Promise.all(domains.map((domain) => this.session.cookies.get({ domain }).catch(() => [])));
     const cookies = lists.flat().map((c) => ({ domain: c.domain || '', name: c.name, value: c.value, expirationDate: c.expirationDate }));
     r.sessionPresent = hasSession(r.provider, cookies, Date.now());
+    // A session marked stale (the app bounced to sign-in) becomes valid again only when the
+    // session cookie itself changes, e.g. after signing in.
+    const rules = [...(r.provider.sessionCookies.anyOf || []), ...(r.provider.sessionCookies.allOf || [])];
+    const signature = cookies
+      .filter((c) => rules.some((rule) => cookieMatches(c, rule)))
+      .map((c) => `${c.domain}|${c.name}=${c.value}`)
+      .sort()
+      .join(';');
+    if (signature !== r.sessionSignature) {
+      r.sessionSignature = signature;
+      r.staleSession = false;
+    }
     if (r.sessionPresent && !r.staleSession) r.signingIn = false;
     this.afterStateChange(r, before);
   }
@@ -156,15 +173,9 @@ class AgentManager {
     const kind = classifyProviderUrl(r.provider, url);
     const before = r.state();
     if (before === 'signedIn' && kind === 'auth') {
+      // The app sent us to a sign-in page: the session is not valid (or the user is switching accounts).
       r.staleSession = true;
-      if (r.signingOut) {
-        // The user signed out: lock instead of showing the provider's sign-in page.
-        r.signingOut = false;
-        r.signingIn = false;
-      } else {
-        // The app sent us to a sign-in page: the session is not valid (or the user is switching accounts).
-        r.signingIn = true;
-      }
+      r.signingIn = true;
       return this.afterStateChange(r, before);
     }
     if (before === 'signingIn' && kind === 'app') {
@@ -328,10 +339,27 @@ class AgentManager {
     const r = this.record(id);
     const w = this.ensureWindow(r);
     if (r.provider.logoutUrl) {
+      // Lock at once; the provider's logout page keeps running in the detached view until it
+      // has finished loading, and the session stays stale until its cookie changes.
+      const before = r.state();
       r.signingOut = true;
+      r.staleSession = true;
+      r.signingIn = false;
       w.loadProvider(r.provider.logoutUrl);
+      this.afterStateChange(r, before);
+      setTimeout(() => this.signOutFinished(r), 15000);
     }
     else w.showNotice('info', this.app.t('agent.notice.signOutInApp', { name: r.provider.name, vendor: r.provider.vendor }));
+  }
+
+  /** The logout page finished loading (or timed out): clear the view. @param {AgentRecord} r */
+  signOutFinished(r) {
+    if (!r.signingOut) return;
+    const url = r.window && !r.window.closed && !r.window.providerView.webContents.isDestroyed() ? r.window.providerView.webContents.getURL() : '';
+    if (url === r.provider.logoutUrl && r.window && r.window.loading) return; // still on the logout page
+    r.signingOut = false;
+    if (r.state() === 'signedOut') r.window?.blankProvider();
+    this.refreshSession(r);
   }
 
   /**
@@ -456,6 +484,8 @@ class AgentManager {
       } catch {
         host = '';
       }
+      // Query strings, fragments, tokens and e-mail addresses never go into a prompt.
+      const safeUrl = sanitizeUrl(page.url, data.privacyRules(), data.searchEngines()) || host;
       if (SELECTION_ACTIONS.has(actionId)) {
         const sel = (selectionOverride || page.selection || '').trim();
         if (!sel) {
@@ -463,7 +493,7 @@ class AgentManager {
           agentWin.showNotice('warning', t('agent.notice.noSelection'));
           return;
         }
-        input = { ...input, title: page.title, url: page.url, content: sel };
+        input = { ...input, title: page.title, url: safeUrl, content: sel };
         source = t('agent.source.selection', { title: page.title || host, host });
         preview = settings.preview.selection;
       } else {
@@ -472,7 +502,7 @@ class AgentManager {
           agentWin.showNotice('warning', t('agent.notice.pageEmpty'));
           return;
         }
-        input = { ...input, title: page.title, url: page.url, content: page.text };
+        input = { ...input, title: page.title, url: safeUrl, content: page.text };
         source = t('agent.source.page', { title: page.title || host, host });
         preview = settings.preview.page;
       }

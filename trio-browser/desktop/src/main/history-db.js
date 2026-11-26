@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS urls (
   search_text TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS visits (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
   url_id INTEGER NOT NULL REFERENCES urls(id) ON DELETE CASCADE,
   time INTEGER NOT NULL,
   duration_ms INTEGER,
@@ -89,6 +89,7 @@ class HistoryDb {
       bumpUrl: db.prepare('UPDATE urls SET visit_count = visit_count + 1, typed_count = typed_count + ?, last_visit = MAX(last_visit, ?) WHERE id = ?'),
       insertVisit: db.prepare('INSERT INTO visits (url_id, time, duration_ms, transition, from_visit) VALUES (?, ?, NULL, ?, ?)'),
       setTitle: db.prepare('UPDATE urls SET title = ?, search_text = ? WHERE id = ?'),
+      visitUrl: db.prepare('SELECT u.url AS url FROM visits v JOIN urls u ON u.id = v.url_id WHERE v.id = ?'),
       urlOfVisit: db.prepare('SELECT u.id AS id, u.url AS url FROM visits v JOIN urls u ON u.id = v.url_id WHERE v.id = ?'),
       setDuration: db.prepare('UPDATE visits SET duration_ms = ? WHERE id = ?'),
       setFavicon: db.prepare('INSERT INTO favicons (host, data_url) VALUES (?, ?) ON CONFLICT(host) DO UPDATE SET data_url = excluded.data_url'),
@@ -117,15 +118,20 @@ class HistoryDb {
     }
   }
 
-  /** @param {number} visitId @param {string} title */
-  setTitle(visitId, title) {
+  /**
+   * Updates the title of a visit's URL; ignored unless the visit still belongs to `url`
+   * (a deleted visit's id must never touch another page).
+   * @param {number} visitId @param {string} title @param {string} url
+   */
+  setTitle(visitId, title, url) {
     const row = /** @type {{ id: number, url: string } | undefined} */ (this.stmt.urlOfVisit.get(visitId));
-    if (row && title) this.stmt.setTitle.run(title, searchText(title, row.url), row.id);
+    if (row && title && row.url === url) this.stmt.setTitle.run(title, searchText(title, row.url), row.id);
   }
 
-  /** @param {number} visitId @param {number} ms */
-  setDuration(visitId, ms) {
-    this.stmt.setDuration.run(Math.max(0, Math.round(ms)), visitId);
+  /** @param {number} visitId @param {number} ms @param {string} url */
+  setDuration(visitId, ms, url) {
+    const row = /** @type {{ url: string } | undefined} */ (this.stmt.visitUrl.get(visitId));
+    if (row && row.url === url) this.stmt.setDuration.run(Math.max(0, Math.round(ms)), visitId);
   }
 
   /** @param {string} host @param {string} dataUrl */

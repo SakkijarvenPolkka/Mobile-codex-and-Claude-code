@@ -18,16 +18,16 @@
       "en": "I searched for: “{query}”\nWork out what I most likely want to know and answer it with reliable sources.{pageBlock}"
     },
     "summarize_page": {
-      "ko": "다음 웹페이지를 한국어로 요약해 주세요. 핵심 내용 3~5개를 글머리표로 정리하고, 마지막에 한 문장 결론을 덧붙여 주세요.\n\n페이지: {title}\n주소: {url}\n\n{untrustedNotice}\n\n<<<PAGE\n{content}\nPAGE>>>",
-      "en": "Summarize the following web page. Give 3–5 key points as bullets and finish with a one-sentence takeaway.\n\nPage: {title}\nAddress: {url}\n\n{untrustedNotice}\n\n<<<PAGE\n{content}\nPAGE>>>"
+      "ko": "다음 웹페이지를 한국어로 요약해 주세요. 핵심 내용 3~5개를 글머리표로 정리하고, 마지막에 한 문장 결론을 덧붙여 주세요.\n\n{untrustedNotice}\n\n<<<PAGE\n제목: {title}\n주소: {url}\n\n{content}\nPAGE>>>",
+      "en": "Summarize the following web page. Give 3–5 key points as bullets and finish with a one-sentence takeaway.\n\n{untrustedNotice}\n\n<<<PAGE\nTitle: {title}\nAddress: {url}\n\n{content}\nPAGE>>>"
     },
     "ask_page": {
-      "ko": "다음 웹페이지 내용을 바탕으로 질문에 답해 주세요.\n\n질문: {question}\n\n페이지: {title}\n주소: {url}\n\n{untrustedNotice}\n\n<<<PAGE\n{content}\nPAGE>>>",
-      "en": "Answer the question using the following web page.\n\nQuestion: {question}\n\nPage: {title}\nAddress: {url}\n\n{untrustedNotice}\n\n<<<PAGE\n{content}\nPAGE>>>"
+      "ko": "다음 웹페이지 내용을 바탕으로 질문에 답해 주세요.\n\n질문: {question}\n\n{untrustedNotice}\n\n<<<PAGE\n제목: {title}\n주소: {url}\n\n{content}\nPAGE>>>",
+      "en": "Answer the question using the following web page.\n\nQuestion: {question}\n\n{untrustedNotice}\n\n<<<PAGE\nTitle: {title}\nAddress: {url}\n\n{content}\nPAGE>>>"
     },
     "explain_selection": {
-      "ko": "다음 글을 쉽게 설명해 주세요. 어려운 용어는 풀어서 설명하고, 필요하면 예를 들어 주세요.\n\n출처: {title} ({url})\n\n{untrustedNotice}\n\n<<<TEXT\n{content}\nTEXT>>>",
-      "en": "Explain the following text in plain language. Define difficult terms and give an example if it helps.\n\nSource: {title} ({url})\n\n{untrustedNotice}\n\n<<<TEXT\n{content}\nTEXT>>>"
+      "ko": "다음 글을 쉽게 설명해 주세요. 어려운 용어는 풀어서 설명하고, 필요하면 예를 들어 주세요.\n\n{untrustedNotice}\n\n<<<TEXT\n출처: {title} ({url})\n\n{content}\nTEXT>>>",
+      "en": "Explain the following text in plain language. Define difficult terms and give an example if it helps.\n\n{untrustedNotice}\n\n<<<TEXT\nSource: {title} ({url})\n\n{content}\nTEXT>>>"
     },
     "translate_selection": {
       "ko": "다음 글을 자연스러운 {targetLanguage}로 번역해 주세요. 번역문만 보여 주세요.\n\n{untrustedNotice}\n\n<<<TEXT\n{content}\nTEXT>>>",
@@ -61,7 +61,13 @@
     }
   },
   "languages": {
-    "ko": { "ko": "한국어", "en": "영어" },
-    "en": { "ko": "Korean", "en": "English" }
+    "ko": {
+      "ko": "한국어",
+      "en": "영어"
+    },
+    "en": {
+      "ko": "Korean",
+      "en": "English"
+    }
   }
 }

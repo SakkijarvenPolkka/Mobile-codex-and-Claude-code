@@ -180,6 +180,7 @@ function installHandlers(app) {
       if (!app.history || !sel) return;
       if (Array.isArray(sel.visitIds)) app.history.deleteVisits(sel.visitIds.filter(Number.isInteger).slice(0, 10000));
       else if (typeof sel.range === 'string') clearHistoryRange(app, sel.range);
+      forgetOpenVisits(app);
       app.historyChanged();
     },
     analyzeHistory: (/** @type {any} */ p, id) => app.agents.openHistoryAnalysis(id ? agentId(id) : undefined, p.win),
@@ -192,9 +193,9 @@ function installHandlers(app) {
     },
     removeBookmark: (_p, id) => app.bookmarks.remove(str(id)),
     moveBookmark: (_p, id, to) => app.bookmarks.move(str(id), int(to)),
-    getDownloads: () => {
+    getDownloads: (/** @type {any} */ p) => {
       app.downloads.markSeen();
-      return app.downloads.list();
+      return app.downloads.list(p.win.private ? p.win.session : null);
     },
     downloadAction: (_p, id, action) => {
       if (['open', 'show', 'cancel', 'pause', 'resume', 'remove'].includes(action)) return app.downloads.act(str(id), action);
@@ -209,6 +210,7 @@ function installHandlers(app) {
       const range = ['hour', 'day', 'week', 'month', 'all'].includes(req.range) ? req.range : 'hour';
       if (req.history && app.history) {
         clearHistoryRange(app, range);
+        forgetOpenVisits(app);
         app.historyChanged();
       }
       const ses = p.win.session;
@@ -229,15 +231,17 @@ function installHandlers(app) {
       platform: `${process.platform} ${process.arch}`,
     }),
     retry: (/** @type {any} */ p) => {
-      try {
-        const url = new URL(p.tab.wc.getURL()).searchParams.get('url');
-        if (url && /^(https?|file):/.test(url)) p.tab.load(url, 'reload');
-      } catch {
-        /* nothing to retry */
-      }
+      // The URL comes from the tab, never from the error page's query string.
+      const url = p.tab.failedUrl;
+      if (url && /^(https?|file):/.test(url)) p.tab.load(url, 'reload');
     },
   });
   void electronSession;
+}
+
+/** Open tabs stop writing titles and dwell time into visits that were deleted. @param {import('./app-context').AppContext} app */
+function forgetOpenVisits(app) {
+  for (const w of app.windows.list) for (const t of w.tabs) t.forgetVisit();
 }
 
 /** @param {import('./app-context').AppContext} app @param {string} range */

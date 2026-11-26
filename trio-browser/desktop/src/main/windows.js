@@ -56,6 +56,7 @@ class WindowManager {
   /** @param {BrowserWin} w */
   closed(w) {
     this.list = this.list.filter((x) => x !== w);
+    if (w.private) this.app.downloads.dropPrivate(w.session);
     if (this.last === w) this.last = this.list[this.list.length - 1] || null;
     if (!this.quitting) this.saveSession();
     this.app.agents.windowsChanged();
@@ -88,7 +89,7 @@ class WindowManager {
       .map((w) => ({
         bounds: w.win.isMaximized() || w.win.isFullScreen() ? w.win.getNormalBounds() : w.win.getBounds(),
         maximized: w.win.isMaximized(),
-        tabs: w.tabs.map((t) => ({ url: t.lazyUrl || t.url, title: t.title })),
+        tabs: w.tabs.filter((t) => !t.destroyed).map((t) => ({ url: t.sessionUrl(), title: t.title })),
         active: w.active ? Math.max(0, w.tabs.indexOf(w.active)) : 0,
       }));
     if (windows.length) this.app.session.set({ windows });

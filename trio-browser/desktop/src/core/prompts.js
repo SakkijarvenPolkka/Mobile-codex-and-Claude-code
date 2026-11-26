@@ -32,6 +32,24 @@ function cleanContent(text) {
     .trim();
 }
 
+/**
+ * Page-controlled one-line values (title, URL, query): no line breaks, no delimiter runs,
+ * bounded length.
+ * @param {string} text
+ * @param {number} max
+ */
+function cleanInline(text, max) {
+  return cut(
+    text
+      .replace(/[\r\n\t\u2028\u2029]+/g, ' ')
+      .replace(/<{3,}/g, '<<')
+      .replace(/>{3,}/g, '>>')
+      .replace(/\s{2,}/g, ' ')
+      .trim(),
+    max,
+  );
+}
+
 /** Cuts a string to at most `max` UTF-16 units without splitting a surrogate pair. */
 function cut(/** @type {string} */ s, /** @type {number} */ max) {
   if (s.length <= max) return s;
@@ -69,9 +87,9 @@ function buildPrompt(prompts, actionId, input, options) {
   /** @type {Record<string, string>} */
   const values = {
     question,
-    query: (input.query || '').trim(),
-    title: (input.title || '').trim(),
-    url: input.url || '',
+    query: cleanInline(input.query || '', 500),
+    title: cleanInline(input.title || '', 300),
+    url: cleanInline(input.url || '', 2000),
     untrustedNotice,
     pageBlock: '',
     targetLanguage: '',
@@ -110,4 +128,4 @@ function buildPrompt(prompts, actionId, input, options) {
   return { text, truncated };
 }
 
-module.exports = { buildPrompt, cleanContent, isMostlyKorean };
+module.exports = { buildPrompt, cleanContent, cleanInline, isMostlyKorean };

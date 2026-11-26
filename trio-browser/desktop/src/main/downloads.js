@@ -33,6 +33,9 @@ class DownloadManager extends EventEmitter {
     this.live = new Map();
     /** @type {Set<string>} */
     this.unseen = new Set();
+    /** Downloads from private windows: memory only, listed only in private windows. */
+    /** @type {Map<string, { session: Electron.Session, item: DownloadItem }>} */
+    this.privateItems = new Map();
     this.store = new JsonStore(
       file,
       () => /** @type {DownloadItem[]} */ ([]),
@@ -55,13 +58,16 @@ class DownloadManager extends EventEmitter {
     );
   }
 
-  /** @param {Electron.Session} ses */
-  attach(ses) {
-    ses.on('will-download', (_event, item) => this.track(item));
+  /** @param {Electron.Session} ses @param {boolean} [isPrivate] */
+  attach(ses, isPrivate = false) {
+    ses.on('will-download', (_event, item) => this.track(item, isPrivate ? ses : null));
   }
 
-  /** @param {Electron.DownloadItem} item */
-  track(item) {
+  /**
+   * @param {Electron.DownloadItem} item
+   * @param {Electron.Session | null} privateSession
+   */
+  track(item, privateSession) {
     const id = crypto.randomUUID();
     const s = this.settings().downloads;
     if (!s.askWhere) {
@@ -70,6 +76,19 @@ class DownloadManager extends EventEmitter {
     }
     this.live.set(id, item);
     const entry = () => this.snapshot(id, item);
+    if (privateSession) {
+      const update = () => {
+        this.privateItems.set(id, { session: privateSession, item: entry() });
+        this.emit('change');
+      };
+      update();
+      item.on('updated', update);
+      item.once('done', () => {
+        this.live.delete(id);
+        update();
+      });
+      return;
+    }
     this.upsert(entry());
     item.on('updated', () => this.upsert(entry()));
     item.once('done', (_e, state) => {
@@ -104,9 +123,20 @@ class DownloadManager extends EventEmitter {
     this.emit('change');
   }
 
-  /** @returns {DownloadItem[]} newest first, with `exists` checked for finished files */
-  list() {
-    return this.store.get().map((d) => (d.state === 'completed' ? { ...d, exists: fs.existsSync(d.path) } : d));
+  /**
+   * @param {Electron.Session | null} [privateSession] a private window's session: list its downloads instead
+   * @returns {DownloadItem[]} newest first, with `exists` checked for finished files
+   */
+  list(privateSession = null) {
+    const items = privateSession
+      ? [...this.privateItems.values()].filter((p) => p.session === privateSession).map((p) => p.item).reverse()
+      : this.store.get();
+    return items.map((d) => (d.state === 'completed' ? { ...d, exists: fs.existsSync(d.path) } : d));
+  }
+
+  /** Forgets a closed private window's downloads. @param {Electron.Session} session */
+  dropPrivate(session) {
+    for (const [id, p] of this.privateItems) if (p.session === session) this.privateItems.delete(id);
   }
 
   summary() {
@@ -134,7 +164,7 @@ class DownloadManager extends EventEmitter {
    * @param {'open' | 'show' | 'cancel' | 'pause' | 'resume' | 'remove'} action
    */
   async act(id, action) {
-    const d = this.store.get().find((x) => x.id === id);
+    const d = this.store.get().find((x) => x.id === id) || this.privateItems.get(id)?.item;
     const item = this.live.get(id);
     switch (action) {
       case 'open':
@@ -154,6 +184,7 @@ class DownloadManager extends EventEmitter {
         break;
       case 'remove':
         item?.cancel();
+        this.privateItems.delete(id);
         this.store.set(this.store.get().filter((x) => x.id !== id));
         this.unseen.delete(id);
         this.emit('change');

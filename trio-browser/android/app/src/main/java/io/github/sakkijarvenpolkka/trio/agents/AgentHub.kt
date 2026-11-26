@@ -24,6 +24,7 @@ import io.github.sakkijarvenpolkka.trio.browser.Tab
 import io.github.sakkijarvenpolkka.trio.core.HistoryDigest
 import io.github.sakkijarvenpolkka.trio.core.HistoryStatsCalc
 import io.github.sakkijarvenpolkka.trio.core.LoginState
+import io.github.sakkijarvenpolkka.trio.core.Privacy
 import io.github.sakkijarvenpolkka.trio.core.Prompts
 import io.github.sakkijarvenpolkka.trio.core.ProviderConfig
 import io.github.sakkijarvenpolkka.trio.core.StatsOptions
@@ -444,7 +445,9 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
                 return@evaluateJavascript
             }
             val title = field("title").ifBlank { host }
-            val prompt = Prompts.build(app.shared.prompts, actionId, Prompts.Input(question = question, title = field("title"), url = field("url"), content = content), locale(), app.settings.pageCharLimit)
+            // Query strings, fragments, tokens and e-mail addresses never go into a prompt.
+            val safeUrl = Privacy.sanitizeUrl(field("url"), app.shared.privacyRules, app.shared.searchData) ?: host
+            val prompt = Prompts.build(app.shared.prompts, actionId, Prompts.Input(question = question, title = field("title"), url = safeUrl, content = content), locale(), app.settings.pageCharLimit)
             val source = context.getString(if (selection) R.string.source_selection else R.string.source_page, title, host)
             deliverOrPreview(a, actionId, source, prompt, if (selection) app.settings.previewSelection else app.settings.previewPage)
         }
