@@ -16,6 +16,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -33,6 +34,10 @@ android {
     sourceSets {
         getByName("main") {
             assets.directories.add(rootDir.resolve("../shared").absolutePath)
+        }
+        // On-device tests read the shared test vectors from the test APK's assets.
+        getByName("androidTest") {
+            assets.directories.add(rootDir.resolve("../shared/test-vectors").absolutePath)
         }
     }
     androidResources {
@@ -76,4 +81,11 @@ dependencies {
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(testFixtures(project(":core")))
+
+    androidTestImplementation(testFixtures(project(":core")))
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }

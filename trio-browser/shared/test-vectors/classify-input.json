@@ -70,6 +70,11 @@
     { "in": ".com", "out": { "type": "search", "query": ".com" } },
     { "in": "-bad-.com", "out": { "type": "search", "query": "-bad-.com" } },
     { "in": "example.com:99999", "out": { "type": "search", "query": "example.com:99999" } },
-    { "in": "example.com:8443", "out": { "type": "url", "url": "https://example.com:8443/" } }
+    { "in": "example.com:8443", "out": { "type": "url", "url": "https://example.com:8443/" } },
+    { "in": "@claude\u3000hello", "out": { "type": "agent", "agentId": "claude", "query": "hello" } },
+    { "in": "@gpt\u2003질문 있어요", "out": { "type": "agent", "agentId": "chatgpt", "query": "질문 있어요" } },
+    { "in": "서울\u3000날씨", "out": { "type": "search", "query": "서울\u3000날씨" } },
+    { "in": "example.com\u3000page", "out": { "type": "search", "query": "example.com\u3000page" } },
+    { "in": "localhost:٣٠٠٠", "out": { "type": "search", "query": "localhost:٣٠٠٠" } }
   ]
 }

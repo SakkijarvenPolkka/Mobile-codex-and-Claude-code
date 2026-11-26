@@ -32,7 +32,8 @@
     { "url": "https://www.startpage.com/sp/search?query=start", "out": { "engineId": "startpage", "name": "Startpage", "query": "start" } },
     { "url": "ftp://www.google.com/search?q=x", "out": null },
     { "url": "not a url", "out": null },
-    { "url": "https://www.google.com/search?q=%20%20spaced%20%20%20out%20", "out": { "engineId": "google", "name": "Google", "query": "spaced out" } }
+    { "url": "https://www.google.com/search?q=%20%20spaced%20%20%20out%20", "out": { "engineId": "google", "name": "Google", "query": "spaced out" } },
+    { "url": "https://www.google.com/search?q=%E3%80%80%EC%84%9C%EC%9A%B8%E3%80%80%EB%82%A0%EC%94%A8%E3%80%80", "out": { "engineId": "google", "name": "Google", "query": "서울 날씨" } }
   ],
   "suggestions": [
     { "format": "opensearch", "json": ["q", ["a", " b ", "", 3]], "out": ["a", "b"] },

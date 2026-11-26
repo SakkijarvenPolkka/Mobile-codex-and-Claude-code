@@ -2,6 +2,9 @@
 // JSON vectors and golden outputs as the desktop reference implementation.
 plugins {
     alias(libs.plugins.kotlin.jvm)
+    // The vector and golden checks live in test fixtures so that the app's on-device tests can
+    // run them on the Android runtime too (it uses ICU regular expressions, the JVM does not).
+    `java-test-fixtures`
 }
 
 java {

@@ -90,8 +90,8 @@ object HistoryStatsCalc {
         "or", "by", "at", "it", "be", "do", "does", "can", "my", "me", "from",
         "방법", "하는", "하기", "그리고", "또는", "이란", "뜻", "무엇", "어떻게", "왜", "추천", "정리",
     )
-    private val SPLIT = Regex("(?U)[\\s\\p{P}\\p{S}]+")
-    private val WS = Regex("(?U)\\s+")
+    private val SPLIT = Regex("[$SPACE\\p{P}\\p{S}]+")
+    private val WS = Regex("[$SPACE]+")
     private val DIGITS = Regex("^[0-9]+$")
 
     fun rangeStart(range: String, now: Long, zone: String): Long? = when (range) {

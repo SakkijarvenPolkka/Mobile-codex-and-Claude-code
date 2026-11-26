@@ -8,7 +8,7 @@ object HistoryDigest {
 
     fun formatInt(n: Long): String {
         val s = Math.round(Math.abs(n.toDouble())).toString()
-        val out = s.replace(Regex("\\B(?=(\\d{3})+(?!\\d))"), ",")
+        val out = s.replace(Regex("\\B(?=([0-9]{3})+(?![0-9]))"), ",")
         return if (n < 0) "-$out" else out
     }
 

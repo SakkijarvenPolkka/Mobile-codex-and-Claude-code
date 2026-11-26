@@ -25,7 +25,7 @@ class SearchData(val defaultId: String, val engines: List<SearchEngine>, val rec
         for (r in recognizers) {
             if (!r.host.containsMatchIn(host) || !r.path.containsMatchIn(u.path)) continue
             for (p in r.params) {
-                val q = u.queryParam(p)?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
+                val q = u.queryParam(p)?.replace(Regex("[$SPACE]+"), " ")?.trim().orEmpty()
                 if (q.isNotEmpty()) return Triple(r, p, q)
             }
         }

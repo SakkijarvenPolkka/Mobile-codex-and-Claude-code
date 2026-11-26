@@ -7,7 +7,7 @@ object Prompts {
     data class Input(val question: String = "", val query: String = "", val title: String = "", val url: String = "", val content: String = "", val historyKind: String? = null)
     data class Result(val text: String, val truncated: Boolean)
 
-    private val PLACEHOLDER = Regex("\\{(\\w+)\\}")
+    private val PLACEHOLDER = Regex("\\{([A-Za-z0-9_]+)\\}")
 
     private fun fill(template: String, values: Map<String, String>): String =
         PLACEHOLDER.replace(template) { m -> values[m.groupValues[1]] ?: "" }
@@ -25,7 +25,7 @@ object Prompts {
         text.replace(Regex("[\r\n\t\u2028\u2029]+"), " ")
             .replace(Regex("<{3,}"), "<<")
             .replace(Regex(">{3,}"), ">>")
-            .replace(Regex("(?U)\\s{2,}"), " ")
+            .replace(Regex("[$SPACE]{2,}"), " ")
             .trim(),
         max,
     )

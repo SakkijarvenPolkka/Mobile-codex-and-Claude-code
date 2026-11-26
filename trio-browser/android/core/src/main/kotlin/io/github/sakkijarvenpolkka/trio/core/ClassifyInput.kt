@@ -13,10 +13,10 @@ object ClassifyInput {
     private val ALL = setOf("all", "모두", "전체")
     private val HISTORY = setOf("history", "기록")
     private val INTERNAL_PAGES = setOf("newtab", "history", "bookmarks", "downloads", "settings", "about")
-    private val AT = Regex("^@(\\S+)(?:\\s+([\\s\\S]*))?$")
+    private val AT = Regex("^@([^$SPACE]+)(?:[$SPACE]+(.*))?$", RegexOption.DOT_MATCHES_ALL)
     private val SCHEME = Regex("^([a-zA-Z][a-zA-Z0-9+.-]*):(.*)$", RegexOption.DOT_MATCHES_ALL)
     private val LABEL = Regex("^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$")
-    private val WS = Regex("\\s")
+    private val WS = Regex("[$SPACE]")
 
     fun classify(text: String, agentKeywords: Map<String, String>, suffixes: SuffixData): InputKind {
         val input = text.trim()
@@ -56,7 +56,7 @@ object ClassifyInput {
                     return if (page in INTERNAL_PAGES) InputKind.Url("trio://$page/") else search
                 }
             }
-            if (!Regex("^\\d+(?:[/?#]|$)").containsMatchIn(rest)) return search
+            if (!Regex("^[0-9]+(?:[/?#]|$)").containsMatchIn(rest)) return search
         }
 
         if (WS.containsMatchIn(input)) return search
@@ -67,12 +67,12 @@ object ClassifyInput {
 
         val host: String
         val port: String
-        val v6 = Regex("^(\\[[0-9a-fA-F:.]+\\])(?::(\\d*))?$").matchEntire(authority)
+        val v6 = Regex("^(\\[[0-9a-fA-F:.]+\\])(?::([0-9]*))?$").matchEntire(authority)
         if (v6 != null) {
             host = v6.groupValues[1]
             port = v6.groupValues[2]
         } else {
-            val hp = Regex("^([^:]+)(?::(\\d+))?$").matchEntire(authority) ?: return search
+            val hp = Regex("^([^:]+)(?::([0-9]+))?$").matchEntire(authority) ?: return search
             host = hp.groupValues[1]
             port = hp.groupValues[2]
         }
@@ -82,7 +82,7 @@ object ClassifyInput {
         }
         val lower = host.lowercase()
         if (v6 != null || lower == "localhost" || Hosts.isIpv4(lower)) return parsedOr("http://$authority$tail", search)
-        if (lower.matches(Regex("^[\\d.]+$"))) return search
+        if (lower.matches(Regex("^[0-9.]+$"))) return search
         val ascii = WebUrl.toAscii(lower) ?: return search
         val labels = ascii.split('.')
         if (!labels.all { it.length in 1..63 && LABEL.matches(it) }) return search
