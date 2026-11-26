@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "providers": [
+    {
+      "id": "claude",
+      "name": "Claude",
+      "vendor": "Anthropic",
+      "monogram": "C",
+      "accent": "#D97757",
+      "keywords": ["claude", "클로드"],
+      "appUrl": "https://claude.ai/new",
+      "loginUrl": "https://claude.ai/login",
+      "logoutUrl": "https://claude.ai/logout",
+      "appHosts": ["claude.ai"],
+      "authHosts": ["accounts.google.com", "appleid.apple.com"],
+      "authPathPrefixes": ["/login", "/logout", "/magic-link", "/oauth", "/sso"],
+      "sessionCookies": { "anyOf": [{ "domain": "claude.ai", "name": "sessionKey" }] },
+      "prefill": null,
+      "composerSelectors": [
+        "div.ProseMirror[contenteditable=\"true\"]",
+        "[data-testid=\"chat-input\"] [contenteditable=\"true\"]",
+        "fieldset [contenteditable=\"true\"]",
+        "[contenteditable=\"true\"][role=\"textbox\"]",
+        "textarea"
+      ]
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "vendor": "Google",
+      "monogram": "G",
+      "accent": "#4C8DF6",
+      "keywords": ["gemini", "제미나이", "제미니"],
+      "appUrl": "https://gemini.google.com/app",
+      "loginUrl": "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgemini.google.com%2Fapp",
+      "logoutUrl": null,
+      "appHosts": ["gemini.google.com"],
+      "authHosts": ["accounts.google.com", "accounts.youtube.com", "myaccount.google.com"],
+      "authPathPrefixes": [],
+      "sessionCookies": {
+        "anyOf": [
+          { "domain": "google.com", "name": "__Secure-1PSID" },
+          { "domain": "google.com", "name": "SID" }
+        ]
+      },
+      "prefill": null,
+      "composerSelectors": [
+        "rich-textarea .ql-editor[contenteditable=\"true\"]",
+        ".ql-editor[contenteditable=\"true\"]",
+        "[contenteditable=\"true\"][role=\"textbox\"]",
+        "textarea"
+      ]
+    },
+    {
+      "id": "chatgpt",
+      "name": "ChatGPT",
+      "vendor": "OpenAI",
+      "monogram": "GPT",
+      "accent": "#10A37F",
+      "keywords": ["chatgpt", "gpt", "챗지피티", "지피티"],
+      "appUrl": "https://chatgpt.com/",
+      "loginUrl": "https://chatgpt.com/auth/login",
+      "logoutUrl": null,
+      "appHosts": ["chatgpt.com", "chat.openai.com"],
+      "authHosts": ["auth.openai.com", "auth0.openai.com", "accounts.google.com", "login.microsoftonline.com", "login.live.com", "appleid.apple.com"],
+      "authPathPrefixes": ["/auth/"],
+      "sessionCookies": {
+        "anyOf": [
+          { "domain": "chatgpt.com", "namePrefix": "__Secure-next-auth.session-token" }
+        ]
+      },
+      "prefill": null,
+      "composerSelectors": [
+        "#prompt-textarea[contenteditable=\"true\"]",
+        "#prompt-textarea",
+        "div.ProseMirror[contenteditable=\"true\"]",
+        "textarea[name=\"prompt\"]",
+        "[contenteditable=\"true\"][role=\"textbox\"]",
+        "textarea"
+      ]
+    }
+  ]
+}

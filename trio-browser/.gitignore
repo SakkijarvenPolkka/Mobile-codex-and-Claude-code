@@ -1,0 +1,22 @@
+# Node / Electron
+node_modules/
+dist/
+out/
+*.log
+
+# Test output
+test-results/
+__screenshots__/
+.e2e-profiles/
+
+# Android (standalone project under android/)
+android/.gradle/
+android/**/build/
+android/local.properties
+android/.idea/
+android/.kotlin/
+*.apk
+*.aab
+
+# OS
+.DS_Store

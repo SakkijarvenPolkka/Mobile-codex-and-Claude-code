@@ -1,0 +1,30 @@
+{
+  "name": "trio-browser",
+  "productName": "Trio",
+  "version": "0.1.0",
+  "description": "Chromium-based browser with floating Claude, Gemini and ChatGPT agents",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "typecheck": "tsc -p jsconfig.json && tsc -p src/renderer/jsconfig.json",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test --test-reporter=dot \"test/unit/**/*.test.js\"",
+    "test:e2e": "node scripts/run-e2e.js"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0",
+    "typescript": "5.9.3",
+    "@types/node": "22.20.7"
+  },
+  "peerDependencies": {
+    "playwright": ">=1.55.0"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
+  }
+}

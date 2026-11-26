@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "default": "google",
+  "engines": [
+    {
+      "id": "google",
+      "name": "Google",
+      "searchTemplate": "https://www.google.com/search?q={searchTerms}",
+      "suggestTemplate": "https://suggestqueries.google.com/complete/search?client=firefox&q={searchTerms}",
+      "suggestFormat": "opensearch"
+    },
+    {
+      "id": "naver",
+      "name": "네이버",
+      "searchTemplate": "https://search.naver.com/search.naver?query={searchTerms}",
+      "suggestTemplate": "https://ac.search.naver.com/nx/ac?q={searchTerms}&q_enc=UTF-8&st=100&r_format=json&r_enc=UTF-8",
+      "suggestFormat": "naver"
+    },
+    {
+      "id": "daum",
+      "name": "Daum",
+      "searchTemplate": "https://search.daum.net/search?q={searchTerms}",
+      "suggestTemplate": "https://suggest.search.daum.net/sushi/opensearch/pc?q={searchTerms}",
+      "suggestFormat": "opensearch"
+    },
+    {
+      "id": "bing",
+      "name": "Bing",
+      "searchTemplate": "https://www.bing.com/search?q={searchTerms}",
+      "suggestTemplate": null,
+      "suggestFormat": null
+    },
+    {
+      "id": "duckduckgo",
+      "name": "DuckDuckGo",
+      "searchTemplate": "https://duckduckgo.com/?q={searchTerms}",
+      "suggestTemplate": null,
+      "suggestFormat": null
+    }
+  ],
+  "recognizers": [
+    { "engineId": "google", "name": "Google", "host": "^(www\\.)?google\\.(com|[a-z]{2}|co\\.[a-z]{2}|com\\.[a-z]{2})$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "naver", "name": "네이버", "host": "^(m\\.)?search\\.naver\\.com$", "path": "^/search\\.naver$", "params": ["query"] },
+    { "engineId": "daum", "name": "Daum", "host": "^(m\\.)?search\\.daum\\.net$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "bing", "name": "Bing", "host": "^(www\\.|cn\\.)?bing\\.com$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "duckduckgo", "name": "DuckDuckGo", "host": "^(html\\.|lite\\.)?duckduckgo\\.com$", "path": "^/(html/?|lite/?)?$", "params": ["q"] },
+    { "engineId": "yahoo", "name": "Yahoo", "host": "^([a-z]{2}\\.)?search\\.yahoo\\.(com|co\\.jp)$", "path": "^/search/?$", "params": ["p"] },
+    { "engineId": "youtube", "name": "YouTube", "host": "^(www\\.|m\\.)?youtube\\.com$", "path": "^/results/?$", "params": ["search_query"] },
+    { "engineId": "baidu", "name": "百度", "host": "^(www\\.|m\\.)?baidu\\.com$", "path": "^/s/?$", "params": ["wd", "word"] },
+    { "engineId": "yandex", "name": "Yandex", "host": "^(www\\.)?(yandex\\.(ru|com|com\\.tr|kz|by)|ya\\.ru)$", "path": "^/search/?$", "params": ["text"] },
+    { "engineId": "kagi", "name": "Kagi", "host": "^kagi\\.com$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "brave", "name": "Brave Search", "host": "^search\\.brave\\.com$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "perplexity", "name": "Perplexity", "host": "^(www\\.)?perplexity\\.ai$", "path": "^/search(/new)?/?$", "params": ["q"] },
+    { "engineId": "ecosia", "name": "Ecosia", "host": "^(www\\.)?ecosia\\.org$", "path": "^/search/?$", "params": ["q"] },
+    { "engineId": "startpage", "name": "Startpage", "host": "^(www\\.)?startpage\\.com$", "path": "^/(do/search|sp/search|search)/?$", "params": ["query", "q"] }
+  ]
+}

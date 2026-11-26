@@ -1,0 +1,56 @@
+{
+  "_doc": "classifyProviderUrl(provider, url), hasSession(provider, cookies, now) and gateView(state, kind) with shared/providers.json. now = 1764115200000 (2025-11-26T00:00:00Z); expirationDate is in seconds.",
+  "now": 1764115200000,
+  "urls": [
+    { "provider": "claude", "url": "https://claude.ai/new", "out": "app" },
+    { "provider": "claude", "url": "https://claude.ai/chat/1234", "out": "app" },
+    { "provider": "claude", "url": "https://claude.ai/login?returnTo=%2Fnew", "out": "auth" },
+    { "provider": "claude", "url": "https://claude.ai/logout?involuntary=1", "out": "auth" },
+    { "provider": "claude", "url": "https://claude.ai/loginhelp", "out": "auth" },
+    { "provider": "claude", "url": "https://accounts.google.com/o/oauth2/v2/auth", "out": "auth" },
+    { "provider": "claude", "url": "https://www.anthropic.com/legal", "out": "external" },
+    { "provider": "claude", "url": "http://claude.ai.evil.com/new", "out": "external" },
+    { "provider": "chatgpt", "url": "https://chatgpt.com/", "out": "app" },
+    { "provider": "chatgpt", "url": "https://chatgpt.com/c/abc", "out": "app" },
+    { "provider": "chatgpt", "url": "https://chatgpt.com/auth/login", "out": "auth" },
+    { "provider": "chatgpt", "url": "https://auth.openai.com/log-in", "out": "auth" },
+    { "provider": "chatgpt", "url": "https://openai.com/policies", "out": "external" },
+    { "provider": "gemini", "url": "https://gemini.google.com/app/abc", "out": "app" },
+    { "provider": "gemini", "url": "https://accounts.google.com/ServiceLogin", "out": "auth" },
+    { "provider": "gemini", "url": "https://www.google.com/search?q=x", "out": "external" },
+    { "provider": "gemini", "url": "about:blank", "out": "external" }
+  ],
+  "sessions": [
+    { "provider": "claude", "cookies": [], "out": false },
+    { "provider": "claude", "cookies": [{ "domain": "claude.ai", "name": "sessionKey", "value": "x" }], "out": true },
+    { "provider": "claude", "cookies": [{ "domain": ".claude.ai", "name": "sessionKey", "value": "x", "expirationDate": 1800000000 }], "out": true },
+    { "provider": "claude", "cookies": [{ "domain": "claude.ai", "name": "sessionKey", "value": "x", "expirationDate": 1700000000 }], "out": false },
+    { "provider": "claude", "cookies": [{ "domain": "claude.ai", "name": "sessionKey", "value": "" }], "out": false },
+    { "provider": "claude", "cookies": [{ "domain": "evilclaude.ai", "name": "sessionKey", "value": "x" }], "out": false },
+    { "provider": "claude", "cookies": [{ "domain": "claude.ai", "name": "lastActiveOrg", "value": "x" }], "out": false },
+    { "provider": "chatgpt", "cookies": [{ "domain": "chatgpt.com", "name": "__Secure-next-auth.session-token.0", "value": "x" }], "out": true },
+    { "provider": "chatgpt", "cookies": [{ "domain": "chatgpt.com", "name": "__Secure-next-auth.session-token", "value": "x" }], "out": true },
+    { "provider": "chatgpt", "cookies": [{ "domain": "chatgpt.com", "name": "oai-did", "value": "x" }], "out": false },
+    { "provider": "gemini", "cookies": [{ "domain": ".google.com", "name": "SID", "value": "x" }], "out": true },
+    { "provider": "gemini", "cookies": [{ "domain": ".google.com", "name": "__Secure-1PSID", "value": "x" }], "out": true },
+    { "provider": "gemini", "cookies": [{ "domain": ".google.com", "name": "NID", "value": "x" }], "out": false },
+    { "provider": "gemini", "cookies": [{ "domain": ".google.co.kr", "name": "SID", "value": "x" }], "out": false }
+  ],
+  "states": [
+    { "in": { "sessionPresent": false, "staleSession": false, "signingIn": false }, "out": "signedOut" },
+    { "in": { "sessionPresent": false, "staleSession": false, "signingIn": true }, "out": "signingIn" },
+    { "in": { "sessionPresent": true, "staleSession": false, "signingIn": true }, "out": "signedIn" },
+    { "in": { "sessionPresent": true, "staleSession": true, "signingIn": false }, "out": "signedOut" },
+    { "in": { "sessionPresent": true, "staleSession": true, "signingIn": true }, "out": "signingIn" }
+  ],
+  "gate": [
+    { "state": "signedIn", "kind": "app", "out": "provider" },
+    { "state": "signedIn", "kind": "auth", "out": "provider" },
+    { "state": "signedIn", "kind": "external", "out": "provider" },
+    { "state": "signingIn", "kind": "auth", "out": "provider" },
+    { "state": "signingIn", "kind": "app", "out": "lock" },
+    { "state": "signingIn", "kind": "external", "out": "lock" },
+    { "state": "signedOut", "kind": "auth", "out": "lock" },
+    { "state": "signedOut", "kind": "app", "out": "lock" }
+  ]
+}

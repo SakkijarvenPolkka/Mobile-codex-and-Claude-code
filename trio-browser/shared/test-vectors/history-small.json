@@ -1,0 +1,245 @@
+{
+ "_doc": "Hand-checked scenario for computeHistoryStats (see the definitions in desktop/src/core/history-stats.js). Times are KST.",
+ "options": {
+  "now": 1795662000000,
+  "timeZone": "Asia/Seoul",
+  "range": "7d",
+  "excludeSensitive": true,
+  "extraExcludedHosts": []
+ },
+ "visits": [
+  {
+   "id": 1,
+   "url": "https://news.naver.com/main/read?oid=001&aid=0012345",
+   "title": "오늘의 뉴스",
+   "time": 1795651200000,
+   "durationMs": 600000,
+   "transition": "link",
+   "fromVisitId": null
+  },
+  {
+   "id": 2,
+   "url": "https://search.naver.com/search.naver?where=nexearch&query=%EC%84%9C%EC%9A%B8+%EB%82%A0%EC%94%A8",
+   "title": "서울 날씨 : 네이버 검색",
+   "time": 1795651500000,
+   "durationMs": 60000,
+   "transition": "typed",
+   "fromVisitId": null
+  },
+  {
+   "id": 3,
+   "url": "https://news.naver.com/main/read?oid=001&aid=0012345",
+   "title": "오늘의 뉴스",
+   "time": 1795651560000,
+   "durationMs": 120000,
+   "transition": "reload",
+   "fromVisitId": null
+  },
+  {
+   "id": 4,
+   "url": "https://obank.kbstar.com/quics?page=C025255",
+   "title": "KB국민은행",
+   "time": 1795651800000,
+   "durationMs": 240000,
+   "transition": "typed",
+   "fromVisitId": null
+  },
+  {
+   "id": 5,
+   "url": "https://www.google.com/search?q=Electron+WebContentsView",
+   "title": "Electron WebContentsView - Google 검색",
+   "time": 1795652400000,
+   "durationMs": 120000,
+   "transition": "search",
+   "fromVisitId": null
+  },
+  {
+   "id": 6,
+   "url": "https://github.com/electron/electron",
+   "title": "electron/electron",
+   "time": 1795652520000,
+   "durationMs": 900000,
+   "transition": "link",
+   "fromVisitId": null
+  },
+  {
+   "id": 7,
+   "url": "https://www.youtube.com/watch?v=abc123",
+   "title": "음악 영상",
+   "time": 1795617000000,
+   "durationMs": 1800000,
+   "transition": "link",
+   "fromVisitId": null
+  },
+  {
+   "id": 8,
+   "url": "https://github.com/",
+   "title": "GitHub",
+   "time": 1795136400000,
+   "durationMs": 300000,
+   "transition": "typed",
+   "fromVisitId": null
+  },
+  {
+   "id": 9,
+   "url": "https://github.com/",
+   "title": "GitHub",
+   "time": 1794272400000,
+   "durationMs": 300000,
+   "transition": "typed",
+   "fromVisitId": null
+  },
+  {
+   "id": 10,
+   "url": "https://naver.com/",
+   "title": "",
+   "time": 1795651140000,
+   "durationMs": 0,
+   "transition": "redirect",
+   "fromVisitId": null
+  },
+  {
+   "id": 11,
+   "url": "https://docs.google.com/document/d/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms/edit",
+   "title": "회의록",
+   "time": 1795658400000,
+   "durationMs": null,
+   "transition": "link",
+   "fromVisitId": null
+  },
+  {
+   "id": 12,
+   "url": "https://www.google.com/search?q=%EC%84%9C%EC%9A%B8%20%20%EB%82%A0%EC%94%A8",
+   "title": "서울 날씨 - Google 검색",
+   "time": 1795658460000,
+   "durationMs": 180000,
+   "transition": "search",
+   "fromVisitId": null
+  }
+ ],
+ "expected": {
+  "totals": {
+   "visits": 8,
+   "sites": 4,
+   "pages": 8,
+   "searches": 3,
+   "activeDays": 3,
+   "durationMs": 3960000,
+   "excluded": 1
+  },
+  "topSitesByVisits": [
+   {
+    "site": "google.com",
+    "visits": 3,
+    "durationMs": 300000
+   },
+   {
+    "site": "github.com",
+    "visits": 2,
+    "durationMs": 1200000
+   },
+   {
+    "site": "naver.com",
+    "visits": 2,
+    "durationMs": 660000
+   },
+   {
+    "site": "youtube.com",
+    "visits": 1,
+    "durationMs": 1800000
+   }
+  ],
+  "topSitesByTime": [
+   {
+    "site": "youtube.com",
+    "visits": 1,
+    "durationMs": 1800000
+   },
+   {
+    "site": "github.com",
+    "visits": 2,
+    "durationMs": 1200000
+   },
+   {
+    "site": "naver.com",
+    "visits": 2,
+    "durationMs": 660000
+   },
+   {
+    "site": "google.com",
+    "visits": 3,
+    "durationMs": 300000
+   }
+  ],
+  "hours": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   4,
+   1,
+   2,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   1
+  ],
+  "weekdays": [
+   0,
+   0,
+   1,
+   6,
+   1,
+   0,
+   0
+  ],
+  "sessions": {
+   "count": 4,
+   "averageMinutes": 19,
+   "longestMinutes": 37
+  },
+  "topQueries": [
+   {
+    "query": "서울 날씨",
+    "count": 2
+   },
+   {
+    "query": "electron webcontentsview",
+    "count": 1
+   }
+  ],
+  "topTerms": [
+   {
+    "term": "날씨",
+    "count": 2
+   },
+   {
+    "term": "서울",
+    "count": 2
+   },
+   {
+    "term": "electron",
+    "count": 1
+   },
+   {
+    "term": "webcontentsview",
+    "count": 1
+   }
+  ],
+  "newSites": 3,
+  "returningSites": 1
+ }
+}

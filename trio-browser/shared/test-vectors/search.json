@@ -1,0 +1,43 @@
+{
+  "_doc": "buildSearchUrl(engineId, query) and extractSearch(url) against shared/search-engines.json.",
+  "build": [
+    { "engineId": "google", "query": "서울 날씨", "out": "https://www.google.com/search?q=%EC%84%9C%EC%9A%B8%20%EB%82%A0%EC%94%A8" },
+    { "engineId": "naver", "query": "a&b=c", "out": "https://search.naver.com/search.naver?query=a%26b%3Dc" },
+    { "engineId": "daum", "query": "  trim me ", "out": "https://search.daum.net/search?q=trim%20me" },
+    { "engineId": "bing", "query": "c++", "out": "https://www.bing.com/search?q=c%2B%2B" },
+    { "engineId": "duckduckgo", "query": "x", "out": "https://duckduckgo.com/?q=x" },
+    { "engineId": "unknown", "query": "x", "out": "https://www.google.com/search?q=x" }
+  ],
+  "extract": [
+    { "url": "https://www.google.com/search?q=%EC%84%9C%EC%9A%B8+%EB%82%A0%EC%94%A8&oq=x", "out": { "engineId": "google", "name": "Google", "query": "서울 날씨" } },
+    { "url": "https://www.google.co.kr/search?q=chromium&udm=2", "out": { "engineId": "google", "name": "Google", "query": "chromium" } },
+    { "url": "https://google.de/search?q=test", "out": { "engineId": "google", "name": "Google", "query": "test" } },
+    { "url": "https://www.google.com/maps?q=seoul", "out": null },
+    { "url": "https://www.google.com/search?q=", "out": null },
+    { "url": "https://www.google.com.evil.example/search?q=x", "out": null },
+    { "url": "https://search.naver.com/search.naver?where=nexearch&query=%EB%B8%8C%EB%9D%BC%EC%9A%B0%EC%A0%80", "out": { "engineId": "naver", "name": "네이버", "query": "브라우저" } },
+    { "url": "https://m.search.naver.com/search.naver?query=abc", "out": { "engineId": "naver", "name": "네이버", "query": "abc" } },
+    { "url": "https://search.daum.net/search?w=tot&q=%EB%8B%A4%EC%9D%8C", "out": { "engineId": "daum", "name": "Daum", "query": "다음" } },
+    { "url": "https://www.bing.com/search?q=electron+app&form=QBLH", "out": { "engineId": "bing", "name": "Bing", "query": "electron app" } },
+    { "url": "https://duckduckgo.com/?q=privacy&ia=web", "out": { "engineId": "duckduckgo", "name": "DuckDuckGo", "query": "privacy" } },
+    { "url": "https://duckduckgo.com/about", "out": null },
+    { "url": "https://search.yahoo.com/search?p=yahoo+query", "out": { "engineId": "yahoo", "name": "Yahoo", "query": "yahoo query" } },
+    { "url": "https://www.youtube.com/results?search_query=lofi+beats", "out": { "engineId": "youtube", "name": "YouTube", "query": "lofi beats" } },
+    { "url": "https://www.baidu.com/s?wd=%E7%99%BE%E5%BA%A6", "out": { "engineId": "baidu", "name": "百度", "query": "百度" } },
+    { "url": "https://yandex.ru/search/?text=yandex", "out": { "engineId": "yandex", "name": "Yandex", "query": "yandex" } },
+    { "url": "https://kagi.com/search?q=kagi", "out": { "engineId": "kagi", "name": "Kagi", "query": "kagi" } },
+    { "url": "https://search.brave.com/search?q=brave&source=web", "out": { "engineId": "brave", "name": "Brave Search", "query": "brave" } },
+    { "url": "https://www.perplexity.ai/search?q=what", "out": { "engineId": "perplexity", "name": "Perplexity", "query": "what" } },
+    { "url": "https://www.ecosia.org/search?q=trees", "out": { "engineId": "ecosia", "name": "Ecosia", "query": "trees" } },
+    { "url": "https://www.startpage.com/sp/search?query=start", "out": { "engineId": "startpage", "name": "Startpage", "query": "start" } },
+    { "url": "ftp://www.google.com/search?q=x", "out": null },
+    { "url": "not a url", "out": null },
+    { "url": "https://www.google.com/search?q=%20%20spaced%20%20%20out%20", "out": { "engineId": "google", "name": "Google", "query": "spaced out" } }
+  ],
+  "suggestions": [
+    { "format": "opensearch", "json": ["q", ["a", " b ", "", 3]], "out": ["a", "b"] },
+    { "format": "naver", "json": { "query": ["q"], "items": [[["x"], ["y"]]] }, "out": ["x", "y"] },
+    { "format": null, "json": ["q", ["a"]], "out": [] },
+    { "format": "opensearch", "json": { "bad": true }, "out": [] }
+  ]
+}
