@@ -120,7 +120,7 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
         if (hub.openId != null) focus.clearFocus()
     }
 
-    BackHandler(enabled = address.focused || screen != null || hub.openId != null || browser.active?.canGoBack == true || browser.fullscreenView != null) {
+    BackHandler(enabled = address.focused || screen != null || hub.openId != null || browser.active?.canGoBack == true || browser.fullscreenView != null || browser.errorOverPage) {
         when {
             browser.fullscreenView != null -> browser.exitFullscreen()
             screen != null -> screen = null
@@ -138,7 +138,7 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
                 val tab = browser.active
                 if (tab != null) {
                     WebViewHost(tab.webView, Modifier.fillMaxSize().testTag("tab-webview"))
-                    tab.error?.let { err -> ErrorPage(tab.url, err, crashed = tab.crashed) { browser.reload() } }
+                    tab.error?.let { err -> ErrorPage(tab.errorUrl ?: tab.url, err, crashed = tab.crashed) { browser.reload() } }
                     if (tab.url.isEmpty() && tab.error == null) NewTabPage(app, hub) { browser.navigate(it) }
                 }
             }

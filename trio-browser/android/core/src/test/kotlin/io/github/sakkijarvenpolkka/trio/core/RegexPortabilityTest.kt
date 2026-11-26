@@ -25,7 +25,7 @@ class RegexPortabilityTest {
     private val sharedDir = File(System.getProperty("trio.shared") ?: "../../shared")
 
     /** The value of a constant used in templates ("$SPACE"), as the regex engine sees it. */
-    private val constants: Map<String, String> = coreSources.flatMap { f ->
+    private val constants: Map<String, String> = (coreSources + appSources).flatMap { f ->
         Regex("""const val (\w+) = "((?:[^"\\]|\\.)*)"""").findAll(f.readText()).map { it.groupValues[1] to unescape(it.groupValues[2]) }.toList()
     }.toMap()
 
@@ -88,6 +88,25 @@ class RegexPortabilityTest {
         return out.toString()
     }
 
+    /** Every place a pattern is made, and the ones that are not a literal this test can read. */
+    private fun unreadCallSites(files: List<File>): List<String> {
+        val literal = "(\"\"\"[\\s\\S]*?\"\"\"|\"(?:[^\"\\\\\\n]|\\\\.)*\")"
+        val read = Regex("""(?:\bRegex|Pattern\.compile)\(\s*$literal|$literal\s*\.to(?:Regex|Pattern)\(""")
+        val call = Regex("""\bRegex\(|Pattern\.compile\(|\.toRegex\(|\.toPattern\(""")
+        return files.flatMap { file ->
+            val text = file.readText()
+            // A literal read starts where "Regex(" / "Pattern.compile(" starts, or ends where ".toRegex(" ends.
+            val covered = read.findAll(text).flatMap { m -> listOf(m.range.first, m.range.last) }.toSet()
+            call.findAll(text).filter { c -> c.range.first !in covered && c.range.last !in covered }
+                .map { c -> "${file.name}:${text.substring(0, c.range.first).count { it == '\n' } + 1}: ${text.substring(c.range.first).lineSequence().first().take(60)}" }
+                .filterNot { it in allowedDynamic }
+                .toList()
+        }
+    }
+
+    /** Patterns that come from the shared data, checked by searchRecognizersInTheSharedDataArePortable. */
+    private val allowedDynamic = setOf("Search.kt:10: Regex(host)", "Search.kt:11: Regex(path)")
+
     /** What makes [regex] unportable, or null. */
     private fun problem(regex: String, core: Boolean): String? {
         if (Regex("""\(\?[a-zA-Z-]+[:)]""").containsMatchIn(regex)) return "inline flag"
@@ -122,6 +141,24 @@ class RegexPortabilityTest {
             i++
         }
         return false
+    }
+
+    /** A pattern written in a way this test cannot read is not silently skipped: it must be allowed by name. */
+    @Test
+    fun everyPatternIsOneThisTestReads() {
+        val unread = unreadCallSites(coreSources + appSources)
+        assertEquals(unread.joinToString("\n"), 0, unread.size)
+    }
+
+    /** Flags Android's ICU-backed Pattern rejects while the JVM accepts them. */
+    @Test
+    fun noFlagsThatIcuRejects() {
+        val offenders = (coreSources + appSources).flatMap { f ->
+            f.readLines().mapIndexedNotNull { i, line ->
+                if (Regex("""\b(?:CANON_EQ|UNICODE_CHARACTER_CLASS)\b""").containsMatchIn(line)) "${f.name}:${i + 1}: $line" else null
+            }
+        }
+        assertEquals(offenders.joinToString("\n"), 0, offenders.size)
     }
 
     @Test

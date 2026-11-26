@@ -117,6 +117,7 @@ class SignedInOnDeviceTest {
             val composer = scenario.js(::claudeView, "document.querySelector('.ProseMirror').textContent").orEmpty()
             assertTrue("composer: $composer", composer.contains("second question"))
             assertEquals("composer: $composer", 1, Regex("second question").findAll(composer).count())
+            assertTrue("the first question was replaced, composer: $composer", !composer.contains("first question"))
         }
     }
 

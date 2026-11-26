@@ -34,7 +34,9 @@
     { "url": "https://news.naver.com/main", "out": null },
     { "url": "https://www.youtube.com/watch?v=abc", "out": null },
     { "url": "https://secret.example.org/x", "extraHosts": ["example.org"], "out": "user" },
-    { "url": "https://www.diary.example/", "extraHosts": [" *.diary.example "], "out": "user" }
+    { "url": "https://www.diary.example/", "extraHosts": [" *.diary.example "], "out": "user" },
+    { "url": "https://example.com/", "extraHosts": ["\uFEFFexample.com"], "out": "user" },
+    { "url": "https://example.com/", "extraHosts": ["\u001Fexample.com"], "out": null }
   ],
   "sanitize": [
     { "url": "https://user:pw@Example.com:443/a/b?x=1&token=abc#frag", "out": "https://example.com/a/b" },

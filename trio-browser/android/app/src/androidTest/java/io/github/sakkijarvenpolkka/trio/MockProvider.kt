@@ -19,14 +19,13 @@ class MockProvider : AutoCloseable {
     val app: String get() = "http://127.0.0.1:$port/claude/new"
     val outside: String get() = "http://localhost:$port/elsewhere"
     val clobbered: String get() = "http://127.0.0.1:$port/clobbered"
-    @Volatile var requests = 0
-        private set
 
     init {
         thread(isDaemon = true, name = "mock-provider") {
             while (!server.isClosed) {
                 val socket = runCatching { server.accept() }.getOrNull() ?: break
-                thread(isDaemon = true) { serve(socket) }
+                // A request the WebView gives up on (a closed page) fails here; that must not end the test run.
+                thread(isDaemon = true) { runCatching { serve(socket) } }
             }
         }
     }
@@ -69,7 +68,6 @@ class MockProvider : AutoCloseable {
             val header = reader.readLine() ?: break
             if (header.isEmpty()) break
         }
-        requests++
         val (status, body) = page(requestLine.split(' ').getOrElse(1) { "/" })
         val bytes = body.toByteArray()
         val head = "HTTP/1.1 $status ${if (status == 200) "OK" else "Not Found"}\r\n" +

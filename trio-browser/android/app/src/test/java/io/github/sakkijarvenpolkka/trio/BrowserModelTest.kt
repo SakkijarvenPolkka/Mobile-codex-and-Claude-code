@@ -2,7 +2,10 @@ package io.github.sakkijarvenpolkka.trio
 
 import android.net.Uri
 import android.os.Looper
+import android.net.http.SslCertificate
+import android.net.http.SslError
 import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
 import android.webkit.WebResourceRequest
 import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.trio.browser.BrowserModel
@@ -246,5 +249,111 @@ class BrowserModelTest {
         assertNull(shadowOf(replacement.webView).lastLoadedUrl)
         browser.onAppResume()
         assertEquals("https://news.example/", shadowOf(replacement.webView).lastLoadedUrl)
+    }
+
+    private fun committed(tab: Tab, url: String) {
+        shadowOf(tab.webView).webViewClient.onPageStarted(tab.webView, url, null)
+        // What WebView.getUrl() answers: the page that is there.
+        ReflectionHelpers.setField(shadowOf(tab.webView), "originalUrl", url)
+    }
+
+    /** A page's fallback address must not show in the address bar (with its lock) before that page arrives. */
+    @Test
+    fun aFallbackDoesNotShowItsAddressBeforeItArrives() {
+        shadowOf(app).checkActivities(true)
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://shop.example/")
+        committed(tab, "https://shop.example/")
+        val client = shadowOf(tab.webView).webViewClient
+        val link = "intent://x#Intent;scheme=nope;S.browser_fallback_url=https%3A%2F%2Fwww.google.com%2Fgenerate_204;end"
+        assertTrue(client.shouldOverrideUrlLoading(tab.webView, request(link)))
+        assertEquals("https://www.google.com/generate_204", shadowOf(tab.webView).lastLoadedUrl)
+        assertEquals("https://shop.example/", tab.url)
+        // It never arrives (no content): the address stays that of the page on screen.
+        ReflectionHelpers.setField(shadowOf(tab.webView), "originalUrl", "https://shop.example/")
+        client.onPageFinished(tab.webView, "https://www.google.com/generate_204")
+        assertEquals("https://shop.example/", tab.url)
+        // A frame gets no fallback at all.
+        val frame = "intent://y#Intent;scheme=nope;S.browser_fallback_url=https%3A%2F%2Fevil.example%2F;end"
+        assertTrue(client.shouldOverrideUrlLoading(tab.webView, request(frame, mainFrame = false, gesture = true)))
+        assertEquals("https://www.google.com/generate_204", shadowOf(tab.webView).lastLoadedUrl)
+    }
+
+    /** A typed address that never arrives (a download, no content) gives the address bar back to the page there. */
+    @Test
+    fun aTypedAddressThatNeverArrivesShowsThePageThatIsThere() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://a.example/")
+        committed(tab, "https://a.example/")
+        browser.load(tab, "https://files.example/report.pdf", "typed")
+        assertEquals("https://files.example/report.pdf", tab.url)
+        ReflectionHelpers.setField(shadowOf(tab.webView), "originalUrl", "https://a.example/")
+        shadowOf(tab.webView).webViewClient.onPageFinished(tab.webView, "https://files.example/report.pdf")
+        assertEquals("https://a.example/", tab.url)
+    }
+
+    /** A refused certificate on a load WebView did not ask about (a form sent, back) still shows the error. */
+    @Test
+    fun aRefusedCertificateOnAFormOrBackShowsTheError() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://a.example/")
+        committed(tab, "https://a.example/")
+        val client = shadowOf(tab.webView).webViewClient
+        val handler = ReflectionHelpers.callConstructor(SslErrorHandler::class.java)
+        val cert = SslCertificate("bad.example", "nobody", "20260101000000Z", "20270101000000Z")
+        client.onReceivedSslError(tab.webView, handler, SslError(SslError.SSL_UNTRUSTED, cert, "https://bad.example/login"))
+        assertNull("not known yet to be the page itself", tab.error)
+        client.onPageFinished(tab.webView, "https://bad.example/login")
+        assertEquals("SSL", tab.error)
+        assertEquals("https://bad.example/login", tab.errorUrl)
+        assertEquals("the page under the error is still the one shown", "https://a.example/", tab.url)
+        // Back closes the error (the page under it is still there) instead of skipping that page.
+        assertTrue(browser.errorOverPage)
+        browser.back()
+        assertNull(tab.error)
+        // A picture with a bad certificate on a page is not an error for the page.
+        client.onReceivedSslError(tab.webView, handler, SslError(SslError.SSL_UNTRUSTED, cert, "https://bad.example/pixel.png"))
+        client.onPageFinished(tab.webView, "https://a.example/")
+        assertNull(tab.error)
+    }
+
+    /** "Try again" on an error loads the address that failed, not the page under the error. */
+    @Test
+    fun tryAgainLoadsTheAddressThatFailed() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://a.example/")
+        committed(tab, "https://a.example/")
+        tab.error = "SSL"
+        tab.errorUrl = "https://bad.example/login"
+        browser.reload()
+        assertEquals("https://bad.example/login", shadowOf(tab.webView).lastLoadedUrl)
+        assertNull(tab.error)
+    }
+
+    /** A web address in intent form, or one aimed at Trio itself, stays in the tab instead of opening Trio again. */
+    @Test
+    fun intentsForTrioItselfStayInTheTab() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://a.example/")
+        committed(tab, "https://a.example/")
+        val client = shadowOf(tab.webView).webViewClient
+        assertTrue(client.shouldOverrideUrlLoading(tab.webView, request("intent://evil.example/#Intent;scheme=https;package=${app.packageName};end", gesture = false)))
+        assertNull(shadowOf(app).nextStartedActivity)
+        assertEquals("https://evil.example/", shadowOf(tab.webView).lastLoadedUrl)
+        assertEquals("https://a.example/", tab.url)
+        assertTrue(client.shouldOverrideUrlLoading(tab.webView, request("intent://web.example/p#Intent;scheme=https;end", gesture = false)))
+        assertNull(shadowOf(app).nextStartedActivity)
+        assertEquals("https://web.example/p", shadowOf(tab.webView).lastLoadedUrl)
+    }
+
+    @Test
+    fun theStoppedTitleGoesWithItsError() {
+        val browser = BrowserModel(app, app)
+        val tab = browser.newTab("https://heavy.example/")
+        shadowOf(tab.webView).webViewClient.onRenderProcessGone(tab.webView, gone(crashed = true))
+        val replacement = browser.active!!
+        assertTrue(replacement.crashed)
+        browser.load(replacement, "https://other.example/", "typed")
+        assertFalse(replacement.crashed)
     }
 }

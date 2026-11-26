@@ -5402,6 +5402,33 @@
     "durationMs": 39682,
     "transition": "search",
     "fromVisitId": null
+   },
+   {
+    "id": 601,
+    "url": "https://blog.naver.com/bom/22001",
+    "title": "﻿앞뒤에 BOM이 있는 제목﻿",
+    "time": 1792376053623,
+    "durationMs": 1740000,
+    "transition": "link",
+    "fromVisitId": null
+   },
+   {
+    "id": 602,
+    "url": "https://news.naver.com/main/read?oid=0us",
+    "title": "\u001f단위 구분자로 감싼 제목\u001f",
+    "time": 1792376113623,
+    "durationMs": 1740000,
+    "transition": "link",
+    "fromVisitId": null
+   },
+   {
+    "id": 603,
+    "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+    "title": "검색어 - Google 검색",
+    "time": 1792376173623,
+    "durationMs": 60000,
+    "transition": "search",
+    "fromVisitId": null
    }
   ]
  },
@@ -5420,19 +5447,19 @@
     "from": 1791774793623,
     "to": 1792379593623,
     "totals": {
-     "visits": 50,
+     "visits": 53,
      "sites": 9,
-     "pages": 35,
-     "searches": 20,
+     "pages": 37,
+     "searches": 21,
      "activeDays": 8,
-     "durationMs": 23077715,
+     "durationMs": 26617715,
      "excluded": 7
     },
     "topSitesByVisits": [
      {
       "site": "naver.com",
-      "visits": 14,
-      "durationMs": 8814392
+      "visits": 16,
+      "durationMs": 12294392
      },
      {
       "site": "daum.net",
@@ -5441,8 +5468,8 @@
      },
      {
       "site": "google.com",
-      "visits": 7,
-      "durationMs": 1825697
+      "visits": 8,
+      "durationMs": 1885697
      },
      {
       "site": "coupang.com",
@@ -5478,8 +5505,8 @@
     "topSitesByTime": [
      {
       "site": "naver.com",
-      "visits": 14,
-      "durationMs": 8814392
+      "visits": 16,
+      "durationMs": 12294392
      },
      {
       "site": "daum.net",
@@ -5503,8 +5530,8 @@
      },
      {
       "site": "google.com",
-      "visits": 7,
-      "durationMs": 1825697
+      "visits": 8,
+      "durationMs": 1885697
      },
      {
       "site": "coupang.com",
@@ -5534,7 +5561,7 @@
      1,
      2,
      3,
-     4,
+     7,
      1,
      2,
      0,
@@ -5549,7 +5576,7 @@
      0
     ],
     "weekdays": [
-     8,
+     11,
      8,
      8,
      6,
@@ -5586,6 +5613,10 @@
      {
       "query": "크로뮴 브라우저 만들기",
       "count": 2
+     },
+     {
+      "query": "\u001f검색어",
+      "count": 1
      },
      {
       "query": "bts 신곡",
@@ -5658,6 +5689,10 @@
       "count": 2
      },
      {
+      "term": "\u001f검색어",
+      "count": 1
+     },
+     {
       "term": "bts",
       "count": 1
      },
@@ -5676,21 +5711,17 @@
      {
       "term": "신곡",
       "count": 1
-     },
-     {
-      "term": "정렬",
-      "count": 1
      }
     ],
     "newSites": 0,
     "returningSites": 9,
     "notablePages": [
      {
-      "title": "네이버 뉴스 5",
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
       "url": "https://news.naver.com/main/read",
       "site": "naver.com",
-      "visits": 7,
-      "durationMs": 6009817
+      "visits": 8,
+      "durationMs": 7749817
      },
      {
       "title": "how to cook rice - 검색",
@@ -5733,6 +5764,13 @@
       "site": "google.com",
       "visits": 2,
       "durationMs": 0
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "visits": 1,
+      "durationMs": 1740000
      },
      {
       "title": "rust vs go - 검색",
@@ -5782,27 +5820,32 @@
       "site": "google.com",
       "visits": 1,
       "durationMs": 704579
-     },
-     {
-      "title": "문서 28",
-      "url": "https://docs.google.com/document/d/:id/edit",
-      "site": "google.com",
-      "visits": 1,
-      "durationMs": 684842
      }
     ],
     "recentPages": [
+     {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "time": 1792376173623
+     },
+     {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "time": 1792376113623
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "time": 1792376053623
+     },
      {
       "title": "rust vs go - 검색",
       "url": "https://www.google.com/search?q=rust%20vs%20go",
       "site": "google.com",
       "time": 1792375993623
-     },
-     {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "time": 1792354303947
      },
      {
       "title": "How to 26",
@@ -6021,24 +6064,24 @@
     "from": 1789787593623,
     "to": 1792379593623,
     "totals": {
-     "visits": 202,
+     "visits": 205,
      "sites": 8,
-     "pages": 89,
-     "searches": 79,
+     "pages": 91,
+     "searches": 80,
      "activeDays": 31,
-     "durationMs": 97471908,
+     "durationMs": 101011908,
      "excluded": 57
     },
     "topSitesByVisits": [
      {
       "site": "naver.com",
-      "visits": 58,
-      "durationMs": 32195210
+      "visits": 60,
+      "durationMs": 35675210
      },
      {
       "site": "google.com",
-      "visits": 36,
-      "durationMs": 17394729
+      "visits": 37,
+      "durationMs": 17454729
      },
      {
       "site": "daum.net",
@@ -6074,13 +6117,13 @@
     "topSitesByTime": [
      {
       "site": "naver.com",
-      "visits": 58,
-      "durationMs": 32195210
+      "visits": 60,
+      "durationMs": 35675210
      },
      {
       "site": "google.com",
-      "visits": 36,
-      "durationMs": 17394729
+      "visits": 37,
+      "durationMs": 17454729
      },
      {
       "site": "youtube.com",
@@ -6125,7 +6168,7 @@
      6,
      7,
      9,
-     11,
+     14,
      7,
      8,
      6,
@@ -6140,7 +6183,7 @@
      6
     ],
     "weekdays": [
-     32,
+     35,
      25,
      29,
      23,
@@ -6193,6 +6236,10 @@
      {
       "query": "환율",
       "count": 5
+     },
+     {
+      "query": "\u001f검색어",
+      "count": 1
      }
     ],
     "topTerms": [
@@ -6281,11 +6328,11 @@
     "returningSites": 8,
     "notablePages": [
      {
-      "title": "네이버 뉴스 5",
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
       "url": "https://news.naver.com/main/read",
       "site": "naver.com",
-      "visits": 20,
-      "durationMs": 11242751
+      "visits": 21,
+      "durationMs": 12982751
      },
      {
       "title": "영상 20",
@@ -6388,16 +6435,28 @@
     ],
     "recentPages": [
      {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "time": 1792376173623
+     },
+     {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "time": 1792376113623
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "time": 1792376053623
+     },
+     {
       "title": "rust vs go - 검색",
       "url": "https://www.google.com/search?q=rust%20vs%20go",
       "site": "google.com",
       "time": 1792375993623
-     },
-     {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "time": 1792354303947
      },
      {
       "title": "How to 26",
@@ -6614,18 +6673,6 @@
       "url": "https://stackoverflow.com/questions/9/how-to",
       "site": "stackoverflow.com",
       "time": 1791710028650
-     },
-     {
-      "title": "How to 2",
-      "url": "https://stackoverflow.com/questions/2/how-to",
-      "site": "stackoverflow.com",
-      "time": 1791696123251
-     },
-     {
-      "title": "맛집 추천 강남 - 검색",
-      "url": "https://search.naver.com/search.naver?query=%EB%A7%9B%EC%A7%91%20%EC%B6%94%EC%B2%9C%20%EA%B0%95%EB%82%A8",
-      "site": "naver.com",
-      "time": 1791645808593
      }
     ]
    }
@@ -6644,24 +6691,24 @@
     "from": 1784603593623,
     "to": 1792379593623,
     "totals": {
-     "visits": 516,
+     "visits": 519,
      "sites": 11,
-     "pages": 171,
-     "searches": 157,
+     "pages": 173,
+     "searches": 158,
      "activeDays": 60,
-     "durationMs": 256222056,
+     "durationMs": 259762056,
      "excluded": 0
     },
     "topSitesByVisits": [
      {
       "site": "naver.com",
-      "visits": 121,
-      "durationMs": 65123010
+      "visits": 123,
+      "durationMs": 68603010
      },
      {
       "site": "google.com",
-      "visits": 103,
-      "durationMs": 53556658
+      "visits": 104,
+      "durationMs": 53616658
      },
      {
       "site": "daum.net",
@@ -6707,13 +6754,13 @@
     "topSitesByTime": [
      {
       "site": "naver.com",
-      "visits": 121,
-      "durationMs": 65123010
+      "visits": 123,
+      "durationMs": 68603010
      },
      {
       "site": "google.com",
-      "visits": 103,
-      "durationMs": 53556658
+      "visits": 104,
+      "durationMs": 53616658
      },
      {
       "site": "wikipedia.org",
@@ -6779,7 +6826,7 @@
      17,
      19,
      23,
-     29,
+     32,
      17
     ],
     "weekdays": [
@@ -6789,7 +6836,7 @@
      82,
      74,
      77,
-     81
+     84
     ],
     "sessions": {
      "count": 474,
@@ -6836,6 +6883,10 @@
      {
       "query": "파이썬 리스트 정렬",
       "count": 11
+     },
+     {
+      "query": "\u001f검색어",
+      "count": 1
      }
     ],
     "topTerms": [
@@ -6924,11 +6975,11 @@
     "returningSites": 0,
     "notablePages": [
      {
-      "title": "네이버 뉴스 5",
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
       "url": "https://news.naver.com/main/read",
       "site": "naver.com",
-      "visits": 38,
-      "durationMs": 18123780
+      "visits": 39,
+      "durationMs": 19863780
      },
      {
       "title": "영상 20",
@@ -7031,16 +7082,28 @@
     ],
     "recentPages": [
      {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "time": 1792376173623
+     },
+     {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "time": 1792376113623
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "time": 1792376053623
+     },
+     {
       "title": "rust vs go - 검색",
       "url": "https://www.google.com/search?q=rust%20vs%20go",
       "site": "google.com",
       "time": 1792375993623
-     },
-     {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "time": 1792354303947
      },
      {
       "title": "How to 26",
@@ -7257,18 +7320,6 @@
       "url": "https://blog.naver.com/user5/225",
       "site": "naver.com",
       "time": 1791871682542
-     },
-     {
-      "title": "문서 28",
-      "url": "https://docs.google.com/document/d/:id/edit",
-      "site": "google.com",
-      "time": 1791857429699
-     },
-     {
-      "title": "Topic 22 - Wikipedia",
-      "url": "https://en.wikipedia.org/wiki/Topic_22",
-      "site": "wikipedia.org",
-      "time": 1791823190966
      }
     ]
    }
@@ -7287,24 +7338,24 @@
     "from": 1787200144955,
     "to": 1792379593623,
     "totals": {
-     "visits": 438,
+     "visits": 441,
      "sites": 9,
-     "pages": 153,
-     "searches": 157,
+     "pages": 155,
+     "searches": 158,
      "activeDays": 61,
-     "durationMs": 216469960,
+     "durationMs": 220009960,
      "excluded": 78
     },
     "topSitesByVisits": [
      {
       "site": "naver.com",
-      "visits": 121,
-      "durationMs": 65123010
+      "visits": 123,
+      "durationMs": 68603010
      },
      {
       "site": "google.com",
-      "visits": 75,
-      "durationMs": 38801156
+      "visits": 76,
+      "durationMs": 38861156
      },
      {
       "site": "daum.net",
@@ -7345,13 +7396,13 @@
     "topSitesByTime": [
      {
       "site": "naver.com",
-      "visits": 121,
-      "durationMs": 65123010
+      "visits": 123,
+      "durationMs": 68603010
      },
      {
       "site": "google.com",
-      "visits": 75,
-      "durationMs": 38801156
+      "visits": 76,
+      "durationMs": 38861156
      },
      {
       "site": "wikipedia.org",
@@ -7393,7 +7444,7 @@
      14,
      15,
      20,
-     22,
+     25,
      14,
      22,
      16,
@@ -7416,7 +7467,7 @@
      14
     ],
     "weekdays": [
-     51,
+     54,
      67,
      55,
      72,
@@ -7469,6 +7520,10 @@
      {
       "query": "파이썬 리스트 정렬",
       "count": 11
+     },
+     {
+      "query": "\u001f검색어",
+      "count": 1
      }
     ],
     "topTerms": [
@@ -7557,11 +7612,11 @@
     "returningSites": null,
     "notablePages": [
      {
-      "title": "네이버 뉴스 5",
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
       "url": "https://news.naver.com/main/read",
       "site": "naver.com",
-      "visits": 38,
-      "durationMs": 18123780
+      "visits": 39,
+      "durationMs": 19863780
      },
      {
       "title": "영상 20",
@@ -7664,16 +7719,28 @@
     ],
     "recentPages": [
      {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "time": 1792376173623
+     },
+     {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "time": 1792376113623
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "time": 1792376053623
+     },
+     {
       "title": "rust vs go - 검색",
       "url": "https://www.google.com/search?q=rust%20vs%20go",
       "site": "google.com",
       "time": 1792375993623
-     },
-     {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "time": 1792354303947
      },
      {
       "title": "How to 26",
@@ -7890,18 +7957,6 @@
       "url": "https://ko.wikipedia.org/wiki/%EC%A3%BC%EC%A0%9C_15",
       "site": "wikipedia.org",
       "time": 1791754452151
-     },
-     {
-      "title": "kotlin coroutine flow - 검색",
-      "url": "https://www.google.com/search?q=kotlin%20coroutine%20flow",
-      "site": "google.com",
-      "time": 1791742262550
-     },
-     {
-      "title": "Issue 19 · repo",
-      "url": "https://github.com/org/repo19/issues/19",
-      "site": "github.com",
-      "time": 1791726560152
      }
     ]
    }
@@ -7920,24 +7975,24 @@
     "from": 1792335600000,
     "to": 1792379593623,
     "totals": {
-     "visits": 5,
+     "visits": 8,
      "sites": 3,
-     "pages": 5,
-     "searches": 3,
+     "pages": 7,
+     "searches": 4,
      "activeDays": 1,
-     "durationMs": 1979564,
+     "durationMs": 5519564,
      "excluded": 0
     },
     "topSitesByVisits": [
      {
       "site": "naver.com",
-      "visits": 2,
-      "durationMs": 1010677
+      "visits": 4,
+      "durationMs": 4490677
      },
      {
       "site": "google.com",
-      "visits": 2,
-      "durationMs": 39682
+      "visits": 3,
+      "durationMs": 99682
      },
      {
       "site": "stackoverflow.com",
@@ -7948,8 +8003,8 @@
     "topSitesByTime": [
      {
       "site": "naver.com",
-      "visits": 2,
-      "durationMs": 1010677
+      "visits": 4,
+      "durationMs": 4490677
      },
      {
       "site": "stackoverflow.com",
@@ -7958,8 +8013,8 @@
      },
      {
       "site": "google.com",
-      "visits": 2,
-      "durationMs": 39682
+      "visits": 3,
+      "durationMs": 99682
      }
     ],
     "hours": [
@@ -7974,7 +8029,7 @@
      0,
      0,
      0,
-     1,
+     4,
      0,
      0,
      0,
@@ -7989,7 +8044,7 @@
      0
     ],
     "weekdays": [
-     5,
+     8,
      0,
      0,
      0,
@@ -7999,10 +8054,14 @@
     ],
     "sessions": {
      "count": 4,
-     "averageMinutes": 12,
+     "averageMinutes": 13,
      "longestMinutes": 20
     },
     "topQueries": [
+     {
+      "query": "\u001f검색어",
+      "count": 1
+     },
      {
       "query": "rust vs go",
       "count": 1
@@ -8017,6 +8076,10 @@
      }
     ],
     "topTerms": [
+     {
+      "term": "\u001f검색어",
+      "count": 1
+     },
      {
       "term": "cook",
       "count": 1
@@ -8046,6 +8109,20 @@
     "returningSites": 3,
     "notablePages": [
      {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "visits": 2,
+      "durationMs": 2429327
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "visits": 1,
+      "durationMs": 1740000
+     },
+     {
       "title": "How to 26",
       "url": "https://stackoverflow.com/questions/26/how-to",
       "site": "stackoverflow.com",
@@ -8053,18 +8130,18 @@
       "durationMs": 929205
      },
      {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "visits": 1,
-      "durationMs": 689327
-     },
-     {
       "title": "how to cook rice - 검색",
       "url": "https://search.naver.com/search.naver?query=how%20to%20cook%20rice",
       "site": "naver.com",
       "visits": 1,
       "durationMs": 321350
+     },
+     {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "visits": 1,
+      "durationMs": 60000
      },
      {
       "title": "rust vs go - 검색",
@@ -8083,16 +8160,28 @@
     ],
     "recentPages": [
      {
+      "title": "검색어 - Google 검색",
+      "url": "https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4",
+      "site": "google.com",
+      "time": 1792376173623
+     },
+     {
+      "title": "\u001f단위 구분자로 감싼 제목\u001f",
+      "url": "https://news.naver.com/main/read",
+      "site": "naver.com",
+      "time": 1792376113623
+     },
+     {
+      "title": "앞뒤에 BOM이 있는 제목",
+      "url": "https://blog.naver.com/bom/22001",
+      "site": "naver.com",
+      "time": 1792376053623
+     },
+     {
       "title": "rust vs go - 검색",
       "url": "https://www.google.com/search?q=rust%20vs%20go",
       "site": "google.com",
       "time": 1792375993623
-     },
-     {
-      "title": "네이버 뉴스 5",
-      "url": "https://news.naver.com/main/read",
-      "site": "naver.com",
-      "time": 1792354303947
      },
      {
       "title": "How to 26",
@@ -8130,7 +8219,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "기간: 2026-10-12 ~ 2026-10-19 (최근 7일, 시간대 Asia/Seoul)\n방문 50건 · 사이트 9곳 · 페이지 35개 · 검색 20건 · 활동한 날 8일 (민감한 사이트 방문 7건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 14회, 2시간 27분\n2. daum.net — 10회, 1시간 5분\n3. google.com — 7회, 30분\n4. coupang.com — 5회, 14분\n5. wikipedia.org — 4회, 33분\n6. stackoverflow.com — 4회, 32분\n7. youtube.com — 3회, 39분\n8. github.com — 2회, 13분\n9. bbc.co.uk — 1회, 11분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 2시간 27분\n2. daum.net — 1시간 5분\n3. youtube.com — 39분\n4. wikipedia.org — 33분\n5. stackoverflow.com — 32분\n6. google.com — 30분\n7. coupang.com — 14분\n8. github.com — 13분\n9. bbc.co.uk — 11분\n\n시간대별 방문 수:\n0시 3 · 1시 6 · 2시 1 · 3시 1 · 4시 2 · 5시 1 · 6시 3 · 7시 2 · 8시 1 · 9시 2 · 10시 3 · 11시 4 · 12시 1 · 13시 2 · 14시 0 · 15시 3 · 16시 4 · 17시 3 · 18시 2 · 19시 0 · 20시 2 · 21시 2 · 22시 2 · 23시 0\n\n요일별 방문 수:\n월 8 · 화 8 · 수 8 · 목 6 · 금 7 · 토 8 · 일 5\n\n브라우징 세션: 47회, 평균 9분, 가장 긴 세션 42분\n\n자주 검색한 검색어:\n- how to cook rice (5회)\n- 맛집 추천 강남 (3회)\n- electron webcontentsview (3회)\n- rust vs go (2회)\n- kotlin coroutine flow (2회)\n- 크로뮴 브라우저 만들기 (2회)\n- bts 신곡 (1회)\n- 서울 날씨 (1회)\n- 파이썬 리스트 정렬 (1회)\n\n검색어에 자주 나온 단어:\ncook(5), rice(5), electron(3), webcontentsview(3), 강남(3), 맛집(3), coroutine(2), flow(2), go(2), kotlin(2), rust(2), 만들기(2), 브라우저(2), 크로뮴(2), bts(1), 날씨(1), 리스트(1), 서울(1), 신곡(1), 정렬(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 9곳\n\n많이 본 페이지:\n- 네이버 뉴스 5 — naver.com (7회)\n- how to cook rice - 검색 — daum.net (4회)\n- 영상 20 — youtube.com (3회)\n- Topic 15 - Wikipedia — wikipedia.org (2회)\n- electron webcontentsview - 검색 — daum.net (2회)\n- 상품 24 — coupang.com (2회)\n- 맛집 추천 강남 - 검색 — google.com (2회)\n- rust vs go - 검색 — daum.net (1회)\n- 블로그 글 24 — naver.com (1회)\n- How to 27 — stackoverflow.com (1회)\n- How to 26 — stackoverflow.com (1회)\n- 블로그 글 5 — naver.com (1회)\n- 주제 13 - 위키백과 — wikipedia.org (1회)\n- 크로뮴 브라우저 만들기 - 검색 — google.com (1회)\n- 문서 28 — google.com (1회)",
+    "text": "기간: 2026-10-12 ~ 2026-10-19 (최근 7일, 시간대 Asia/Seoul)\n방문 53건 · 사이트 9곳 · 페이지 37개 · 검색 21건 · 활동한 날 8일 (민감한 사이트 방문 7건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 16회, 3시간 25분\n2. daum.net — 10회, 1시간 5분\n3. google.com — 8회, 31분\n4. coupang.com — 5회, 14분\n5. wikipedia.org — 4회, 33분\n6. stackoverflow.com — 4회, 32분\n7. youtube.com — 3회, 39분\n8. github.com — 2회, 13분\n9. bbc.co.uk — 1회, 11분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 3시간 25분\n2. daum.net — 1시간 5분\n3. youtube.com — 39분\n4. wikipedia.org — 33분\n5. stackoverflow.com — 32분\n6. google.com — 31분\n7. coupang.com — 14분\n8. github.com — 13분\n9. bbc.co.uk — 11분\n\n시간대별 방문 수:\n0시 3 · 1시 6 · 2시 1 · 3시 1 · 4시 2 · 5시 1 · 6시 3 · 7시 2 · 8시 1 · 9시 2 · 10시 3 · 11시 7 · 12시 1 · 13시 2 · 14시 0 · 15시 3 · 16시 4 · 17시 3 · 18시 2 · 19시 0 · 20시 2 · 21시 2 · 22시 2 · 23시 0\n\n요일별 방문 수:\n월 11 · 화 8 · 수 8 · 목 6 · 금 7 · 토 8 · 일 5\n\n브라우징 세션: 47회, 평균 9분, 가장 긴 세션 42분\n\n자주 검색한 검색어:\n- how to cook rice (5회)\n- 맛집 추천 강남 (3회)\n- electron webcontentsview (3회)\n- rust vs go (2회)\n- kotlin coroutine flow (2회)\n- 크로뮴 브라우저 만들기 (2회)\n- \u001f검색어 (1회)\n- bts 신곡 (1회)\n- 서울 날씨 (1회)\n- 파이썬 리스트 정렬 (1회)\n\n검색어에 자주 나온 단어:\ncook(5), rice(5), electron(3), webcontentsview(3), 강남(3), 맛집(3), coroutine(2), flow(2), go(2), kotlin(2), rust(2), 만들기(2), 브라우저(2), 크로뮴(2), \u001f검색어(1), bts(1), 날씨(1), 리스트(1), 서울(1), 신곡(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 9곳\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — naver.com (8회)\n- how to cook rice - 검색 — daum.net (4회)\n- 영상 20 — youtube.com (3회)\n- Topic 15 - Wikipedia — wikipedia.org (2회)\n- electron webcontentsview - 검색 — daum.net (2회)\n- 상품 24 — coupang.com (2회)\n- 맛집 추천 강남 - 검색 — google.com (2회)\n- 앞뒤에 BOM이 있는 제목 — naver.com (1회)\n- rust vs go - 검색 — daum.net (1회)\n- 블로그 글 24 — naver.com (1회)\n- How to 27 — stackoverflow.com (1회)\n- How to 26 — stackoverflow.com (1회)\n- 블로그 글 5 — naver.com (1회)\n- 주제 13 - 위키백과 — wikipedia.org (1회)\n- 크로뮴 브라우저 만들기 - 검색 — google.com (1회)",
     "truncated": false
    }
   },
@@ -8147,7 +8236,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "Period: 2026-10-12 to 2026-10-19 (last 7 days, time zone Asia/Seoul)\n50 visits · 9 sites · 35 pages · 20 searches · 8 active days (7 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 14 visits, 2 h 27 min\n2. daum.net — 10 visits, 1 h 5 min\n3. google.com — 7 visits, 30 min\n4. coupang.com — 5 visits, 14 min\n5. wikipedia.org — 4 visits, 33 min\n6. stackoverflow.com — 4 visits, 32 min\n7. youtube.com — 3 visits, 39 min\n8. github.com — 2 visits, 13 min\n9. bbc.co.uk — 1 visit, 11 min\n\nSites with the most time spent:\n1. naver.com — 2 h 27 min\n2. daum.net — 1 h 5 min\n3. youtube.com — 39 min\n4. wikipedia.org — 33 min\n5. stackoverflow.com — 32 min\n6. google.com — 30 min\n7. coupang.com — 14 min\n8. github.com — 13 min\n9. bbc.co.uk — 11 min\n\nVisits by hour of day:\n0h 3 · 1h 6 · 2h 1 · 3h 1 · 4h 2 · 5h 1 · 6h 3 · 7h 2 · 8h 1 · 9h 2 · 10h 3 · 11h 4 · 12h 1 · 13h 2 · 14h 0 · 15h 3 · 16h 4 · 17h 3 · 18h 2 · 19h 0 · 20h 2 · 21h 2 · 22h 2 · 23h 0\n\nVisits by weekday:\nMon 8 · Tue 8 · Wed 8 · Thu 6 · Fri 7 · Sat 8 · Sun 5\n\nBrowsing sessions: 47, average 9 min, longest 42 min\n\n0 new sites · 9 returning sites",
+    "text": "Period: 2026-10-12 to 2026-10-19 (last 7 days, time zone Asia/Seoul)\n53 visits · 9 sites · 37 pages · 21 searches · 8 active days (7 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 16 visits, 3 h 25 min\n2. daum.net — 10 visits, 1 h 5 min\n3. google.com — 8 visits, 31 min\n4. coupang.com — 5 visits, 14 min\n5. wikipedia.org — 4 visits, 33 min\n6. stackoverflow.com — 4 visits, 32 min\n7. youtube.com — 3 visits, 39 min\n8. github.com — 2 visits, 13 min\n9. bbc.co.uk — 1 visit, 11 min\n\nSites with the most time spent:\n1. naver.com — 3 h 25 min\n2. daum.net — 1 h 5 min\n3. youtube.com — 39 min\n4. wikipedia.org — 33 min\n5. stackoverflow.com — 32 min\n6. google.com — 31 min\n7. coupang.com — 14 min\n8. github.com — 13 min\n9. bbc.co.uk — 11 min\n\nVisits by hour of day:\n0h 3 · 1h 6 · 2h 1 · 3h 1 · 4h 2 · 5h 1 · 6h 3 · 7h 2 · 8h 1 · 9h 2 · 10h 3 · 11h 7 · 12h 1 · 13h 2 · 14h 0 · 15h 3 · 16h 4 · 17h 3 · 18h 2 · 19h 0 · 20h 2 · 21h 2 · 22h 2 · 23h 0\n\nVisits by weekday:\nMon 11 · Tue 8 · Wed 8 · Thu 6 · Fri 7 · Sat 8 · Sun 5\n\nBrowsing sessions: 47, average 9 min, longest 42 min\n\n0 new sites · 9 returning sites",
     "truncated": false
    }
   },
@@ -8164,7 +8253,7 @@
     "charLimit": 1500
    },
    "out": {
-    "text": "기간: 2026-10-12 ~ 2026-10-19 (최근 7일, 시간대 Asia/Seoul)\n방문 50건 · 사이트 9곳 · 페이지 35개 · 검색 20건 · 활동한 날 8일 (민감한 사이트 방문 7건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 14회, 2시간 27분\n2. daum.net — 10회, 1시간 5분\n3. google.com — 7회, 30분\n4. coupang.com — 5회, 14분\n5. wikipedia.org — 4회, 33분\n6. stackoverflow.com — 4회, 32분\n7. youtube.com — 3회, 39분\n8. github.com — 2회, 13분\n9. bbc.co.uk — 1회, 11분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 2시간 27분\n2. daum.net — 1시간 5분\n3. youtube.com — 39분\n4. wikipedia.org — 33분\n5. stackoverflow.com — 32분\n6. google.com — 30분\n7. coupang.com — 14분\n8. github.com — 13분\n9. bbc.co.uk — 11분\n\n시간대별 방문 수:\n0시 3 · 1시 6 · 2시 1 · 3시 1 · 4시 2 · 5시 1 · 6시 3 · 7시 2 · 8시 1 · 9시 2 · 10시 3 · 11시 4 · 12시 1 · 13시 2 · 14시 0 · 15시 3 · 16시 4 · 17시 3 · 18시 2 · 19시 0 · 20시 2 · 21시 2 · 22시 2 · 23시 0\n\n요일별 방문 수:\n월 8 · 화 8 · 수 8 · 목 6 · 금 7 · 토 8 · 일 5\n\n브라우징 세션: 47회, 평균 9분, 가장 긴 세션 42분\n\n자주 검색한 검색어:\n- how to cook rice (5회)\n- 맛집 추천 강남 (3회)\n- electron webcontentsview (3회)\n- rust vs go (2회)\n- kotlin coroutine flow (2회)\n- 크로뮴 브라우저 만들기 (2회)\n- bts 신곡 (1회)\n- 서울 날씨 (1회)\n- 파이썬 리스트 정렬 (1회)\n\n검색어에 자주 나온 단어:\ncook(5), rice(5), electron(3), webcontentsview(3), 강남(3), 맛집(3), coroutine(2), flow(2), go(2), kotlin(2), rust(2), 만들기(2), 브라우저(2), 크로뮴(2), bts(1), 날씨(1), 리스트(1), 서울(1), 신곡(1), 정렬(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 9곳\n\n최근 본 페이지:\n- 2026-10-19 11:13 rust vs go - 검색 — https://www.google.com/search?q=rust%20vs%20go\n- 2026-10-19 05:11 네이버 뉴스 5 — https://news.naver.com/main/read\n… (글자 수 제한으로 나머지는 생략했습니다)",
+    "text": "기간: 2026-10-12 ~ 2026-10-19 (최근 7일, 시간대 Asia/Seoul)\n방문 53건 · 사이트 9곳 · 페이지 37개 · 검색 21건 · 활동한 날 8일 (민감한 사이트 방문 7건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 16회, 3시간 25분\n2. daum.net — 10회, 1시간 5분\n3. google.com — 8회, 31분\n4. coupang.com — 5회, 14분\n5. wikipedia.org — 4회, 33분\n6. stackoverflow.com — 4회, 32분\n7. youtube.com — 3회, 39분\n8. github.com — 2회, 13분\n9. bbc.co.uk — 1회, 11분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 3시간 25분\n2. daum.net — 1시간 5분\n3. youtube.com — 39분\n4. wikipedia.org — 33분\n5. stackoverflow.com — 32분\n6. google.com — 31분\n7. coupang.com — 14분\n8. github.com — 13분\n9. bbc.co.uk — 11분\n\n시간대별 방문 수:\n0시 3 · 1시 6 · 2시 1 · 3시 1 · 4시 2 · 5시 1 · 6시 3 · 7시 2 · 8시 1 · 9시 2 · 10시 3 · 11시 7 · 12시 1 · 13시 2 · 14시 0 · 15시 3 · 16시 4 · 17시 3 · 18시 2 · 19시 0 · 20시 2 · 21시 2 · 22시 2 · 23시 0\n\n요일별 방문 수:\n월 11 · 화 8 · 수 8 · 목 6 · 금 7 · 토 8 · 일 5\n\n브라우징 세션: 47회, 평균 9분, 가장 긴 세션 42분\n\n자주 검색한 검색어:\n- how to cook rice (5회)\n- 맛집 추천 강남 (3회)\n- electron webcontentsview (3회)\n- rust vs go (2회)\n- kotlin coroutine flow (2회)\n- 크로뮴 브라우저 만들기 (2회)\n- \u001f검색어 (1회)\n- bts 신곡 (1회)\n- 서울 날씨 (1회)\n- 파이썬 리스트 정렬 (1회)\n\n검색어에 자주 나온 단어:\ncook(5), rice(5), electron(3), webcontentsview(3), 강남(3), 맛집(3), coroutine(2), flow(2), go(2), kotlin(2), rust(2), 만들기(2), 브라우저(2), 크로뮴(2), \u001f검색어(1), bts(1), 날씨(1), 리스트(1), 서울(1), 신곡(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 9곳\n\n최근 본 페이지:\n- 2026-10-19 11:16 검색어 - Google 검색 — https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4\n… (글자 수 제한으로 나머지는 생략했습니다)",
     "truncated": true
    }
   },
@@ -8181,7 +8270,7 @@
     "charLimit": 400
    },
    "out": {
-    "text": "Period: 2026-10-12 to 2026-10-19 (last 7 days, time zone Asia/Seoul)\n50 visits · 9 sites · 35 pages · 20 searches · 8 active days (7 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 14 visits, 2 h 27 min\n2. daum.net — 10 visits, 1 h 5 min\n3. google.com — 7 visits, 30 min\n4. coupang.com — 5 visits, 14 min\n… (the rest was left out to stay within the length limit)",
+    "text": "Period: 2026-10-12 to 2026-10-19 (last 7 days, time zone Asia/Seoul)\n53 visits · 9 sites · 37 pages · 21 searches · 8 active days (7 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 16 visits, 3 h 25 min\n2. daum.net — 10 visits, 1 h 5 min\n3. google.com — 8 visits, 31 min\n4. coupang.com — 5 visits, 14 min\n… (the rest was left out to stay within the length limit)",
     "truncated": true
    }
   },
@@ -8198,7 +8287,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "기간: 2026-09-19 ~ 2026-10-19 (최근 30일, 시간대 Asia/Seoul)\n방문 202건 · 사이트 8곳 · 페이지 89개 · 검색 79건 · 활동한 날 31일 (민감한 사이트 방문 57건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 58회, 8시간 57분\n2. google.com — 36회, 4시간 50분\n3. daum.net — 26회, 2시간 20분\n4. wikipedia.org — 24회, 2시간 42분\n5. youtube.com — 19회, 2시간 57분\n6. stackoverflow.com — 15회, 1시간 46분\n7. github.com — 13회, 2시간 8분\n8. bbc.co.uk — 11회, 1시간 25분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 8시간 57분\n2. google.com — 4시간 50분\n3. youtube.com — 2시간 57분\n4. wikipedia.org — 2시간 42분\n5. daum.net — 2시간 20분\n6. github.com — 2시간 8분\n7. stackoverflow.com — 1시간 46분\n8. bbc.co.uk — 1시간 25분\n\n시간대별 방문 수:\n0시 9 · 1시 15 · 2시 7 · 3시 3 · 4시 11 · 5시 9 · 6시 10 · 7시 6 · 8시 6 · 9시 7 · 10시 9 · 11시 11 · 12시 7 · 13시 8 · 14시 6 · 15시 10 · 16시 13 · 17시 11 · 18시 5 · 19시 5 · 20시 10 · 21시 8 · 22시 10 · 23시 6\n\n요일별 방문 수:\n월 32 · 화 25 · 수 29 · 목 23 · 금 26 · 토 36 · 일 31\n\n브라우징 세션: 190회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (11회)\n- how to cook rice (10회)\n- bts 신곡 (9회)\n- electron webcontentsview (9회)\n- kotlin coroutine flow (8회)\n- rust vs go (7회)\n- 맛집 추천 강남 (7회)\n- 파이썬 리스트 정렬 (7회)\n- 크로뮴 브라우저 만들기 (6회)\n- 환율 (5회)\n\n검색어에 자주 나온 단어:\n날씨(11), 서울(11), cook(10), rice(10), bts(9), electron(9), webcontentsview(9), 신곡(9), coroutine(8), flow(8), kotlin(8), go(7), rust(7), 강남(7), 리스트(7), 맛집(7), 정렬(7), 파이썬(7), 만들기(6), 브라우저(6)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 8곳\n\n많이 본 페이지:\n- 네이버 뉴스 5 — naver.com (20회)\n- 영상 20 — youtube.com (19회)\n- 문서 28 — google.com (9회)\n- how to cook rice - 검색 — daum.net (6회)\n- 서울 날씨 - 검색 — daum.net (6회)\n- kotlin coroutine flow - 검색 — google.com (4회)\n- BTS 신곡 - 검색 — google.com (4회)\n- electron webcontentsview - 검색 — daum.net (4회)\n- 파이썬 리스트 정렬 - 검색 — naver.com (3회)\n- BBC News 2 — bbc.co.uk (3회)\n- electron webcontentsview - 검색 — google.com (3회)\n- rust vs go - 검색 — naver.com (3회)\n- kotlin coroutine flow - 검색 — naver.com (3회)\n- BTS 신곡 - 검색 — naver.com (3회)\n- 파이썬 리스트 정렬 - 검색 — google.com (3회)",
+    "text": "기간: 2026-09-19 ~ 2026-10-19 (최근 30일, 시간대 Asia/Seoul)\n방문 205건 · 사이트 8곳 · 페이지 91개 · 검색 80건 · 활동한 날 31일 (민감한 사이트 방문 57건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 60회, 9시간 55분\n2. google.com — 37회, 4시간 51분\n3. daum.net — 26회, 2시간 20분\n4. wikipedia.org — 24회, 2시간 42분\n5. youtube.com — 19회, 2시간 57분\n6. stackoverflow.com — 15회, 1시간 46분\n7. github.com — 13회, 2시간 8분\n8. bbc.co.uk — 11회, 1시간 25분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 9시간 55분\n2. google.com — 4시간 51분\n3. youtube.com — 2시간 57분\n4. wikipedia.org — 2시간 42분\n5. daum.net — 2시간 20분\n6. github.com — 2시간 8분\n7. stackoverflow.com — 1시간 46분\n8. bbc.co.uk — 1시간 25분\n\n시간대별 방문 수:\n0시 9 · 1시 15 · 2시 7 · 3시 3 · 4시 11 · 5시 9 · 6시 10 · 7시 6 · 8시 6 · 9시 7 · 10시 9 · 11시 14 · 12시 7 · 13시 8 · 14시 6 · 15시 10 · 16시 13 · 17시 11 · 18시 5 · 19시 5 · 20시 10 · 21시 8 · 22시 10 · 23시 6\n\n요일별 방문 수:\n월 35 · 화 25 · 수 29 · 목 23 · 금 26 · 토 36 · 일 31\n\n브라우징 세션: 190회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (11회)\n- how to cook rice (10회)\n- bts 신곡 (9회)\n- electron webcontentsview (9회)\n- kotlin coroutine flow (8회)\n- rust vs go (7회)\n- 맛집 추천 강남 (7회)\n- 파이썬 리스트 정렬 (7회)\n- 크로뮴 브라우저 만들기 (6회)\n- 환율 (5회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(11), 서울(11), cook(10), rice(10), bts(9), electron(9), webcontentsview(9), 신곡(9), coroutine(8), flow(8), kotlin(8), go(7), rust(7), 강남(7), 리스트(7), 맛집(7), 정렬(7), 파이썬(7), 만들기(6), 브라우저(6)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 8곳\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — naver.com (21회)\n- 영상 20 — youtube.com (19회)\n- 문서 28 — google.com (9회)\n- how to cook rice - 검색 — daum.net (6회)\n- 서울 날씨 - 검색 — daum.net (6회)\n- kotlin coroutine flow - 검색 — google.com (4회)\n- BTS 신곡 - 검색 — google.com (4회)\n- electron webcontentsview - 검색 — daum.net (4회)\n- 파이썬 리스트 정렬 - 검색 — naver.com (3회)\n- BBC News 2 — bbc.co.uk (3회)\n- electron webcontentsview - 검색 — google.com (3회)\n- rust vs go - 검색 — naver.com (3회)\n- kotlin coroutine flow - 검색 — naver.com (3회)\n- BTS 신곡 - 검색 — naver.com (3회)\n- 파이썬 리스트 정렬 - 검색 — google.com (3회)",
     "truncated": false
    }
   },
@@ -8215,7 +8304,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "Period: 2026-09-19 to 2026-10-19 (last 30 days, time zone Asia/Seoul)\n202 visits · 8 sites · 89 pages · 79 searches · 31 active days (57 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 58 visits, 8 h 57 min\n2. google.com — 36 visits, 4 h 50 min\n3. daum.net — 26 visits, 2 h 20 min\n4. wikipedia.org — 24 visits, 2 h 42 min\n5. youtube.com — 19 visits, 2 h 57 min\n6. stackoverflow.com — 15 visits, 1 h 46 min\n7. github.com — 13 visits, 2 h 8 min\n8. bbc.co.uk — 11 visits, 1 h 25 min\n\nSites with the most time spent:\n1. naver.com — 8 h 57 min\n2. google.com — 4 h 50 min\n3. youtube.com — 2 h 57 min\n4. wikipedia.org — 2 h 42 min\n5. daum.net — 2 h 20 min\n6. github.com — 2 h 8 min\n7. stackoverflow.com — 1 h 46 min\n8. bbc.co.uk — 1 h 25 min\n\nVisits by hour of day:\n0h 9 · 1h 15 · 2h 7 · 3h 3 · 4h 11 · 5h 9 · 6h 10 · 7h 6 · 8h 6 · 9h 7 · 10h 9 · 11h 11 · 12h 7 · 13h 8 · 14h 6 · 15h 10 · 16h 13 · 17h 11 · 18h 5 · 19h 5 · 20h 10 · 21h 8 · 22h 10 · 23h 6\n\nVisits by weekday:\nMon 32 · Tue 25 · Wed 29 · Thu 23 · Fri 26 · Sat 36 · Sun 31\n\nBrowsing sessions: 190, average 9 min, longest 49 min\n\n0 new sites · 8 returning sites",
+    "text": "Period: 2026-09-19 to 2026-10-19 (last 30 days, time zone Asia/Seoul)\n205 visits · 8 sites · 91 pages · 80 searches · 31 active days (57 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 60 visits, 9 h 55 min\n2. google.com — 37 visits, 4 h 51 min\n3. daum.net — 26 visits, 2 h 20 min\n4. wikipedia.org — 24 visits, 2 h 42 min\n5. youtube.com — 19 visits, 2 h 57 min\n6. stackoverflow.com — 15 visits, 1 h 46 min\n7. github.com — 13 visits, 2 h 8 min\n8. bbc.co.uk — 11 visits, 1 h 25 min\n\nSites with the most time spent:\n1. naver.com — 9 h 55 min\n2. google.com — 4 h 51 min\n3. youtube.com — 2 h 57 min\n4. wikipedia.org — 2 h 42 min\n5. daum.net — 2 h 20 min\n6. github.com — 2 h 8 min\n7. stackoverflow.com — 1 h 46 min\n8. bbc.co.uk — 1 h 25 min\n\nVisits by hour of day:\n0h 9 · 1h 15 · 2h 7 · 3h 3 · 4h 11 · 5h 9 · 6h 10 · 7h 6 · 8h 6 · 9h 7 · 10h 9 · 11h 14 · 12h 7 · 13h 8 · 14h 6 · 15h 10 · 16h 13 · 17h 11 · 18h 5 · 19h 5 · 20h 10 · 21h 8 · 22h 10 · 23h 6\n\nVisits by weekday:\nMon 35 · Tue 25 · Wed 29 · Thu 23 · Fri 26 · Sat 36 · Sun 31\n\nBrowsing sessions: 190, average 9 min, longest 49 min\n\n0 new sites · 8 returning sites",
     "truncated": false
    }
   },
@@ -8232,7 +8321,7 @@
     "charLimit": 1500
    },
    "out": {
-    "text": "기간: 2026-09-19 ~ 2026-10-19 (최근 30일, 시간대 Asia/Seoul)\n방문 202건 · 사이트 8곳 · 페이지 89개 · 검색 79건 · 활동한 날 31일 (민감한 사이트 방문 57건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 58회, 8시간 57분\n2. google.com — 36회, 4시간 50분\n3. daum.net — 26회, 2시간 20분\n4. wikipedia.org — 24회, 2시간 42분\n5. youtube.com — 19회, 2시간 57분\n6. stackoverflow.com — 15회, 1시간 46분\n7. github.com — 13회, 2시간 8분\n8. bbc.co.uk — 11회, 1시간 25분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 8시간 57분\n2. google.com — 4시간 50분\n3. youtube.com — 2시간 57분\n4. wikipedia.org — 2시간 42분\n5. daum.net — 2시간 20분\n6. github.com — 2시간 8분\n7. stackoverflow.com — 1시간 46분\n8. bbc.co.uk — 1시간 25분\n\n시간대별 방문 수:\n0시 9 · 1시 15 · 2시 7 · 3시 3 · 4시 11 · 5시 9 · 6시 10 · 7시 6 · 8시 6 · 9시 7 · 10시 9 · 11시 11 · 12시 7 · 13시 8 · 14시 6 · 15시 10 · 16시 13 · 17시 11 · 18시 5 · 19시 5 · 20시 10 · 21시 8 · 22시 10 · 23시 6\n\n요일별 방문 수:\n월 32 · 화 25 · 수 29 · 목 23 · 금 26 · 토 36 · 일 31\n\n브라우징 세션: 190회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (11회)\n- how to cook rice (10회)\n- bts 신곡 (9회)\n- electron webcontentsview (9회)\n- kotlin coroutine flow (8회)\n- rust vs go (7회)\n- 맛집 추천 강남 (7회)\n- 파이썬 리스트 정렬 (7회)\n- 크로뮴 브라우저 만들기 (6회)\n- 환율 (5회)\n\n검색어에 자주 나온 단어:\n날씨(11), 서울(11), cook(10), rice(10), bts(9), electron(9), webcontentsview(9), 신곡(9), coroutine(8), flow(8), kotlin(8), go(7), rust(7), 강남(7), 리스트(7), 맛집(7), 정렬(7), 파이썬(7), 만들기(6), 브라우저(6)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 8곳\n\n최근 본 페이지:\n- 2026-10-19 11:13 rust vs go - 검색 — https://www.google.com/search?q=rust%20vs%20go\n… (글자 수 제한으로 나머지는 생략했습니다)",
+    "text": "기간: 2026-09-19 ~ 2026-10-19 (최근 30일, 시간대 Asia/Seoul)\n방문 205건 · 사이트 8곳 · 페이지 91개 · 검색 80건 · 활동한 날 31일 (민감한 사이트 방문 57건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 60회, 9시간 55분\n2. google.com — 37회, 4시간 51분\n3. daum.net — 26회, 2시간 20분\n4. wikipedia.org — 24회, 2시간 42분\n5. youtube.com — 19회, 2시간 57분\n6. stackoverflow.com — 15회, 1시간 46분\n7. github.com — 13회, 2시간 8분\n8. bbc.co.uk — 11회, 1시간 25분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 9시간 55분\n2. google.com — 4시간 51분\n3. youtube.com — 2시간 57분\n4. wikipedia.org — 2시간 42분\n5. daum.net — 2시간 20분\n6. github.com — 2시간 8분\n7. stackoverflow.com — 1시간 46분\n8. bbc.co.uk — 1시간 25분\n\n시간대별 방문 수:\n0시 9 · 1시 15 · 2시 7 · 3시 3 · 4시 11 · 5시 9 · 6시 10 · 7시 6 · 8시 6 · 9시 7 · 10시 9 · 11시 14 · 12시 7 · 13시 8 · 14시 6 · 15시 10 · 16시 13 · 17시 11 · 18시 5 · 19시 5 · 20시 10 · 21시 8 · 22시 10 · 23시 6\n\n요일별 방문 수:\n월 35 · 화 25 · 수 29 · 목 23 · 금 26 · 토 36 · 일 31\n\n브라우징 세션: 190회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (11회)\n- how to cook rice (10회)\n- bts 신곡 (9회)\n- electron webcontentsview (9회)\n- kotlin coroutine flow (8회)\n- rust vs go (7회)\n- 맛집 추천 강남 (7회)\n- 파이썬 리스트 정렬 (7회)\n- 크로뮴 브라우저 만들기 (6회)\n- 환율 (5회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(11), 서울(11), cook(10), rice(10), bts(9), electron(9), webcontentsview(9), 신곡(9), coroutine(8), flow(8), kotlin(8), go(7), rust(7), 강남(7), 리스트(7), 맛집(7), 정렬(7), 파이썬(7), 만들기(6), 브라우저(6)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 8곳\n\n최근 본 페이지:\n- 2026-10-19 11:16 검색어 - Google 검색 — https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4\n… (글자 수 제한으로 나머지는 생략했습니다)",
     "truncated": true
    }
   },
@@ -8249,7 +8338,7 @@
     "charLimit": 400
    },
    "out": {
-    "text": "Period: 2026-09-19 to 2026-10-19 (last 30 days, time zone Asia/Seoul)\n202 visits · 8 sites · 89 pages · 79 searches · 31 active days (57 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 58 visits, 8 h 57 min\n2. google.com — 36 visits, 4 h 50 min\n3. daum.net — 26 visits, 2 h 20 min\n… (the rest was left out to stay within the length limit)",
+    "text": "Period: 2026-09-19 to 2026-10-19 (last 30 days, time zone Asia/Seoul)\n205 visits · 8 sites · 91 pages · 80 searches · 31 active days (57 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 60 visits, 9 h 55 min\n2. google.com — 37 visits, 4 h 51 min\n3. daum.net — 26 visits, 2 h 20 min\n… (the rest was left out to stay within the length limit)",
     "truncated": true
    }
   },
@@ -8266,7 +8355,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "기간: 2026-07-20 ~ 2026-10-18 (최근 90일, 시간대 America/New_York)\n방문 516건 · 사이트 11곳 · 페이지 171개 · 검색 157건 · 활동한 날 60일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 121회, 18시간 5분\n2. google.com — 103회, 14시간 53분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. kbstar.com — 28회, 3시간 5분\n9. github.com — 24회, 4시간 1분\n10. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 18시간 5분\n2. google.com — 14시간 53분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. localhost — 3시간 52분\n9. bbc.co.uk — 3시간 13분\n10. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 24 · 1시 21 · 2시 25 · 3시 26 · 4시 29 · 5시 23 · 6시 12 · 7시 22 · 8시 16 · 9시 20 · 10시 22 · 11시 19 · 12시 26 · 13시 23 · 14시 21 · 15시 20 · 16시 19 · 17시 28 · 18시 15 · 19시 17 · 20시 19 · 21시 23 · 22시 29 · 23시 17\n\n요일별 방문 수:\n월 61 · 화 78 · 수 63 · 목 82 · 금 74 · 토 77 · 일 81\n\n브라우징 세션: 474회, 평균 10분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n처음 방문한 사이트 11곳 · 다시 방문한 사이트 0곳\n\n많이 본 페이지:\n- 네이버 뉴스 5 — naver.com (38회)\n- 영상 20 — youtube.com (32회)\n- Inbox (18) — google.com (28회)\n- KB국민은행 — kbstar.com (28회)\n- 문서 28 — google.com (27회)\n- 서울 날씨 - 검색 — daum.net (12회)\n- how to cook rice - 검색 — daum.net (9회)\n- how to cook rice - 검색 — google.com (7회)\n- electron webcontentsview - 검색 — naver.com (7회)\n- 서울 날씨 - 검색 — naver.com (7회)\n- 환율 - 검색 — naver.com (7회)\n- electron webcontentsview - 검색 — daum.net (7회)\n- kotlin coroutine flow - 검색 — google.com (6회)\n- how to cook rice - 검색 — naver.com (6회)\n- 맛집 추천 강남 - 검색 — naver.com (6회)",
+    "text": "기간: 2026-07-20 ~ 2026-10-18 (최근 90일, 시간대 America/New_York)\n방문 519건 · 사이트 11곳 · 페이지 173개 · 검색 158건 · 활동한 날 60일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 123회, 19시간 3분\n2. google.com — 104회, 14시간 54분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. kbstar.com — 28회, 3시간 5분\n9. github.com — 24회, 4시간 1분\n10. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 19시간 3분\n2. google.com — 14시간 54분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. localhost — 3시간 52분\n9. bbc.co.uk — 3시간 13분\n10. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 24 · 1시 21 · 2시 25 · 3시 26 · 4시 29 · 5시 23 · 6시 12 · 7시 22 · 8시 16 · 9시 20 · 10시 22 · 11시 19 · 12시 26 · 13시 23 · 14시 21 · 15시 20 · 16시 19 · 17시 28 · 18시 15 · 19시 17 · 20시 19 · 21시 23 · 22시 32 · 23시 17\n\n요일별 방문 수:\n월 61 · 화 78 · 수 63 · 목 82 · 금 74 · 토 77 · 일 84\n\n브라우징 세션: 474회, 평균 10분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n처음 방문한 사이트 11곳 · 다시 방문한 사이트 0곳\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — naver.com (39회)\n- 영상 20 — youtube.com (32회)\n- Inbox (18) — google.com (28회)\n- KB국민은행 — kbstar.com (28회)\n- 문서 28 — google.com (27회)\n- 서울 날씨 - 검색 — daum.net (12회)\n- how to cook rice - 검색 — daum.net (9회)\n- how to cook rice - 검색 — google.com (7회)\n- electron webcontentsview - 검색 — naver.com (7회)\n- 서울 날씨 - 검색 — naver.com (7회)\n- 환율 - 검색 — naver.com (7회)\n- electron webcontentsview - 검색 — daum.net (7회)\n- kotlin coroutine flow - 검색 — google.com (6회)\n- how to cook rice - 검색 — naver.com (6회)\n- 맛집 추천 강남 - 검색 — naver.com (6회)",
     "truncated": false
    }
   },
@@ -8283,7 +8372,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "Period: 2026-07-20 to 2026-10-18 (last 90 days, time zone America/New_York)\n516 visits · 11 sites · 171 pages · 157 searches · 60 active days\n\nMost visited sites (by visits):\n1. naver.com — 121 visits, 18 h 5 min\n2. google.com — 103 visits, 14 h 53 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n5. stackoverflow.com — 32 visits, 4 h 32 min\n6. youtube.com — 32 visits, 4 h 16 min\n7. coupang.com — 28 visits, 3 h 13 min\n8. kbstar.com — 28 visits, 3 h 5 min\n9. github.com — 24 visits, 4 h 1 min\n10. bbc.co.uk — 23 visits, 3 h 13 min\n\nSites with the most time spent:\n1. naver.com — 18 h 5 min\n2. google.com — 14 h 53 min\n3. wikipedia.org — 6 h 45 min\n4. daum.net — 5 h 15 min\n5. stackoverflow.com — 4 h 32 min\n6. youtube.com — 4 h 16 min\n7. github.com — 4 h 1 min\n8. localhost — 3 h 52 min\n9. bbc.co.uk — 3 h 13 min\n10. coupang.com — 3 h 13 min\n\nVisits by hour of day:\n0h 24 · 1h 21 · 2h 25 · 3h 26 · 4h 29 · 5h 23 · 6h 12 · 7h 22 · 8h 16 · 9h 20 · 10h 22 · 11h 19 · 12h 26 · 13h 23 · 14h 21 · 15h 20 · 16h 19 · 17h 28 · 18h 15 · 19h 17 · 20h 19 · 21h 23 · 22h 29 · 23h 17\n\nVisits by weekday:\nMon 61 · Tue 78 · Wed 63 · Thu 82 · Fri 74 · Sat 77 · Sun 81\n\nBrowsing sessions: 474, average 10 min, longest 49 min\n\n11 new sites · 0 returning sites",
+    "text": "Period: 2026-07-20 to 2026-10-18 (last 90 days, time zone America/New_York)\n519 visits · 11 sites · 173 pages · 158 searches · 60 active days\n\nMost visited sites (by visits):\n1. naver.com — 123 visits, 19 h 3 min\n2. google.com — 104 visits, 14 h 54 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n5. stackoverflow.com — 32 visits, 4 h 32 min\n6. youtube.com — 32 visits, 4 h 16 min\n7. coupang.com — 28 visits, 3 h 13 min\n8. kbstar.com — 28 visits, 3 h 5 min\n9. github.com — 24 visits, 4 h 1 min\n10. bbc.co.uk — 23 visits, 3 h 13 min\n\nSites with the most time spent:\n1. naver.com — 19 h 3 min\n2. google.com — 14 h 54 min\n3. wikipedia.org — 6 h 45 min\n4. daum.net — 5 h 15 min\n5. stackoverflow.com — 4 h 32 min\n6. youtube.com — 4 h 16 min\n7. github.com — 4 h 1 min\n8. localhost — 3 h 52 min\n9. bbc.co.uk — 3 h 13 min\n10. coupang.com — 3 h 13 min\n\nVisits by hour of day:\n0h 24 · 1h 21 · 2h 25 · 3h 26 · 4h 29 · 5h 23 · 6h 12 · 7h 22 · 8h 16 · 9h 20 · 10h 22 · 11h 19 · 12h 26 · 13h 23 · 14h 21 · 15h 20 · 16h 19 · 17h 28 · 18h 15 · 19h 17 · 20h 19 · 21h 23 · 22h 32 · 23h 17\n\nVisits by weekday:\nMon 61 · Tue 78 · Wed 63 · Thu 82 · Fri 74 · Sat 77 · Sun 84\n\nBrowsing sessions: 474, average 10 min, longest 49 min\n\n11 new sites · 0 returning sites",
     "truncated": false
    }
   },
@@ -8300,7 +8389,7 @@
     "charLimit": 1500
    },
    "out": {
-    "text": "기간: 2026-07-20 ~ 2026-10-18 (최근 90일, 시간대 America/New_York)\n방문 516건 · 사이트 11곳 · 페이지 171개 · 검색 157건 · 활동한 날 60일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 121회, 18시간 5분\n2. google.com — 103회, 14시간 53분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. kbstar.com — 28회, 3시간 5분\n9. github.com — 24회, 4시간 1분\n10. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 18시간 5분\n2. google.com — 14시간 53분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. localhost — 3시간 52분\n9. bbc.co.uk — 3시간 13분\n10. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 24 · 1시 21 · 2시 25 · 3시 26 · 4시 29 · 5시 23 · 6시 12 · 7시 22 · 8시 16 · 9시 20 · 10시 22 · 11시 19 · 12시 26 · 13시 23 · 14시 21 · 15시 20 · 16시 19 · 17시 28 · 18시 15 · 19시 17 · 20시 19 · 21시 23 · 22시 29 · 23시 17\n\n요일별 방문 수:\n월 61 · 화 78 · 수 63 · 목 82 · 금 74 · 토 77 · 일 81\n\n브라우징 세션: 474회, 평균 10분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n… (글자 수 제한으로 나머지는 생략했습니다)",
+    "text": "기간: 2026-07-20 ~ 2026-10-18 (최근 90일, 시간대 America/New_York)\n방문 519건 · 사이트 11곳 · 페이지 173개 · 검색 158건 · 활동한 날 60일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 123회, 19시간 3분\n2. google.com — 104회, 14시간 54분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. kbstar.com — 28회, 3시간 5분\n9. github.com — 24회, 4시간 1분\n10. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 19시간 3분\n2. google.com — 14시간 54분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. localhost — 3시간 52분\n9. bbc.co.uk — 3시간 13분\n10. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 24 · 1시 21 · 2시 25 · 3시 26 · 4시 29 · 5시 23 · 6시 12 · 7시 22 · 8시 16 · 9시 20 · 10시 22 · 11시 19 · 12시 26 · 13시 23 · 14시 21 · 15시 20 · 16시 19 · 17시 28 · 18시 15 · 19시 17 · 20시 19 · 21시 23 · 22시 32 · 23시 17\n\n요일별 방문 수:\n월 61 · 화 78 · 수 63 · 목 82 · 금 74 · 토 77 · 일 84\n\n브라우징 세션: 474회, 평균 10분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n… (글자 수 제한으로 나머지는 생략했습니다)",
     "truncated": true
    }
   },
@@ -8317,7 +8406,7 @@
     "charLimit": 400
    },
    "out": {
-    "text": "Period: 2026-07-20 to 2026-10-18 (last 90 days, time zone America/New_York)\n516 visits · 11 sites · 171 pages · 157 searches · 60 active days\n\nMost visited sites (by visits):\n1. naver.com — 121 visits, 18 h 5 min\n2. google.com — 103 visits, 14 h 53 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n… (the rest was left out to stay within the length limit)",
+    "text": "Period: 2026-07-20 to 2026-10-18 (last 90 days, time zone America/New_York)\n519 visits · 11 sites · 173 pages · 158 searches · 60 active days\n\nMost visited sites (by visits):\n1. naver.com — 123 visits, 19 h 3 min\n2. google.com — 104 visits, 14 h 54 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n… (the rest was left out to stay within the length limit)",
     "truncated": true
    }
   },
@@ -8334,7 +8423,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "기간: 2026-08-20 ~ 2026-10-19 (전체 기간, 시간대 Europe/London)\n방문 438건 · 사이트 9곳 · 페이지 153개 · 검색 157건 · 활동한 날 61일 (민감한 사이트 방문 78건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 121회, 18시간 5분\n2. google.com — 75회, 10시간 47분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. github.com — 24회, 4시간 1분\n9. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 18시간 5분\n2. google.com — 10시간 47분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. bbc.co.uk — 3시간 13분\n9. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 14 · 1시 15 · 2시 20 · 3시 22 · 4시 14 · 5시 22 · 6시 16 · 7시 22 · 8시 20 · 9시 26 · 10시 21 · 11시 10 · 12시 21 · 13시 12 · 14시 15 · 15시 18 · 16시 17 · 17시 26 · 18시 16 · 19시 17 · 20시 19 · 21시 17 · 22시 24 · 23시 14\n\n요일별 방문 수:\n월 51 · 화 67 · 수 55 · 목 72 · 금 61 · 토 71 · 일 61\n\n브라우징 세션: 410회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n많이 본 페이지:\n- 네이버 뉴스 5 — naver.com (38회)\n- 영상 20 — youtube.com (32회)\n- 문서 28 — google.com (27회)\n- 서울 날씨 - 검색 — daum.net (12회)\n- how to cook rice - 검색 — daum.net (9회)\n- how to cook rice - 검색 — google.com (7회)\n- electron webcontentsview - 검색 — naver.com (7회)\n- 서울 날씨 - 검색 — naver.com (7회)\n- 환율 - 검색 — naver.com (7회)\n- electron webcontentsview - 검색 — daum.net (7회)\n- kotlin coroutine flow - 검색 — google.com (6회)\n- how to cook rice - 검색 — naver.com (6회)\n- 맛집 추천 강남 - 검색 — naver.com (6회)\n- kotlin coroutine flow - 검색 — naver.com (5회)\n- rust vs go - 검색 — daum.net (5회)",
+    "text": "기간: 2026-08-20 ~ 2026-10-19 (전체 기간, 시간대 Europe/London)\n방문 441건 · 사이트 9곳 · 페이지 155개 · 검색 158건 · 활동한 날 61일 (민감한 사이트 방문 78건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 123회, 19시간 3분\n2. google.com — 76회, 10시간 48분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. github.com — 24회, 4시간 1분\n9. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 19시간 3분\n2. google.com — 10시간 48분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. bbc.co.uk — 3시간 13분\n9. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 14 · 1시 15 · 2시 20 · 3시 25 · 4시 14 · 5시 22 · 6시 16 · 7시 22 · 8시 20 · 9시 26 · 10시 21 · 11시 10 · 12시 21 · 13시 12 · 14시 15 · 15시 18 · 16시 17 · 17시 26 · 18시 16 · 19시 17 · 20시 19 · 21시 17 · 22시 24 · 23시 14\n\n요일별 방문 수:\n월 54 · 화 67 · 수 55 · 목 72 · 금 61 · 토 71 · 일 61\n\n브라우징 세션: 410회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — naver.com (39회)\n- 영상 20 — youtube.com (32회)\n- 문서 28 — google.com (27회)\n- 서울 날씨 - 검색 — daum.net (12회)\n- how to cook rice - 검색 — daum.net (9회)\n- how to cook rice - 검색 — google.com (7회)\n- electron webcontentsview - 검색 — naver.com (7회)\n- 서울 날씨 - 검색 — naver.com (7회)\n- 환율 - 검색 — naver.com (7회)\n- electron webcontentsview - 검색 — daum.net (7회)\n- kotlin coroutine flow - 검색 — google.com (6회)\n- how to cook rice - 검색 — naver.com (6회)\n- 맛집 추천 강남 - 검색 — naver.com (6회)\n- kotlin coroutine flow - 검색 — naver.com (5회)\n- rust vs go - 검색 — daum.net (5회)",
     "truncated": false
    }
   },
@@ -8351,7 +8440,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "Period: 2026-08-20 to 2026-10-19 (all time, time zone Europe/London)\n438 visits · 9 sites · 153 pages · 157 searches · 61 active days (78 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 121 visits, 18 h 5 min\n2. google.com — 75 visits, 10 h 47 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n5. stackoverflow.com — 32 visits, 4 h 32 min\n6. youtube.com — 32 visits, 4 h 16 min\n7. coupang.com — 28 visits, 3 h 13 min\n8. github.com — 24 visits, 4 h 1 min\n9. bbc.co.uk — 23 visits, 3 h 13 min\n\nSites with the most time spent:\n1. naver.com — 18 h 5 min\n2. google.com — 10 h 47 min\n3. wikipedia.org — 6 h 45 min\n4. daum.net — 5 h 15 min\n5. stackoverflow.com — 4 h 32 min\n6. youtube.com — 4 h 16 min\n7. github.com — 4 h 1 min\n8. bbc.co.uk — 3 h 13 min\n9. coupang.com — 3 h 13 min\n\nVisits by hour of day:\n0h 14 · 1h 15 · 2h 20 · 3h 22 · 4h 14 · 5h 22 · 6h 16 · 7h 22 · 8h 20 · 9h 26 · 10h 21 · 11h 10 · 12h 21 · 13h 12 · 14h 15 · 15h 18 · 16h 17 · 17h 26 · 18h 16 · 19h 17 · 20h 19 · 21h 17 · 22h 24 · 23h 14\n\nVisits by weekday:\nMon 51 · Tue 67 · Wed 55 · Thu 72 · Fri 61 · Sat 71 · Sun 61\n\nBrowsing sessions: 410, average 9 min, longest 49 min",
+    "text": "Period: 2026-08-20 to 2026-10-19 (all time, time zone Europe/London)\n441 visits · 9 sites · 155 pages · 158 searches · 61 active days (78 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 123 visits, 19 h 3 min\n2. google.com — 76 visits, 10 h 48 min\n3. daum.net — 53 visits, 5 h 15 min\n4. wikipedia.org — 50 visits, 6 h 45 min\n5. stackoverflow.com — 32 visits, 4 h 32 min\n6. youtube.com — 32 visits, 4 h 16 min\n7. coupang.com — 28 visits, 3 h 13 min\n8. github.com — 24 visits, 4 h 1 min\n9. bbc.co.uk — 23 visits, 3 h 13 min\n\nSites with the most time spent:\n1. naver.com — 19 h 3 min\n2. google.com — 10 h 48 min\n3. wikipedia.org — 6 h 45 min\n4. daum.net — 5 h 15 min\n5. stackoverflow.com — 4 h 32 min\n6. youtube.com — 4 h 16 min\n7. github.com — 4 h 1 min\n8. bbc.co.uk — 3 h 13 min\n9. coupang.com — 3 h 13 min\n\nVisits by hour of day:\n0h 14 · 1h 15 · 2h 20 · 3h 25 · 4h 14 · 5h 22 · 6h 16 · 7h 22 · 8h 20 · 9h 26 · 10h 21 · 11h 10 · 12h 21 · 13h 12 · 14h 15 · 15h 18 · 16h 17 · 17h 26 · 18h 16 · 19h 17 · 20h 19 · 21h 17 · 22h 24 · 23h 14\n\nVisits by weekday:\nMon 54 · Tue 67 · Wed 55 · Thu 72 · Fri 61 · Sat 71 · Sun 61\n\nBrowsing sessions: 410, average 9 min, longest 49 min",
     "truncated": false
    }
   },
@@ -8368,7 +8457,7 @@
     "charLimit": 1500
    },
    "out": {
-    "text": "기간: 2026-08-20 ~ 2026-10-19 (전체 기간, 시간대 Europe/London)\n방문 438건 · 사이트 9곳 · 페이지 153개 · 검색 157건 · 활동한 날 61일 (민감한 사이트 방문 78건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 121회, 18시간 5분\n2. google.com — 75회, 10시간 47분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. github.com — 24회, 4시간 1분\n9. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 18시간 5분\n2. google.com — 10시간 47분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. bbc.co.uk — 3시간 13분\n9. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 14 · 1시 15 · 2시 20 · 3시 22 · 4시 14 · 5시 22 · 6시 16 · 7시 22 · 8시 20 · 9시 26 · 10시 21 · 11시 10 · 12시 21 · 13시 12 · 14시 15 · 15시 18 · 16시 17 · 17시 26 · 18시 16 · 19시 17 · 20시 19 · 21시 17 · 22시 24 · 23시 14\n\n요일별 방문 수:\n월 51 · 화 67 · 수 55 · 목 72 · 금 61 · 토 71 · 일 61\n\n브라우징 세션: 410회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n최근 본 페이지:\n… (글자 수 제한으로 나머지는 생략했습니다)",
+    "text": "기간: 2026-08-20 ~ 2026-10-19 (전체 기간, 시간대 Europe/London)\n방문 441건 · 사이트 9곳 · 페이지 155개 · 검색 158건 · 활동한 날 61일 (민감한 사이트 방문 78건 제외)\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 123회, 19시간 3분\n2. google.com — 76회, 10시간 48분\n3. daum.net — 53회, 5시간 15분\n4. wikipedia.org — 50회, 6시간 45분\n5. stackoverflow.com — 32회, 4시간 32분\n6. youtube.com — 32회, 4시간 16분\n7. coupang.com — 28회, 3시간 13분\n8. github.com — 24회, 4시간 1분\n9. bbc.co.uk — 23회, 3시간 13분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 19시간 3분\n2. google.com — 10시간 48분\n3. wikipedia.org — 6시간 45분\n4. daum.net — 5시간 15분\n5. stackoverflow.com — 4시간 32분\n6. youtube.com — 4시간 16분\n7. github.com — 4시간 1분\n8. bbc.co.uk — 3시간 13분\n9. coupang.com — 3시간 13분\n\n시간대별 방문 수:\n0시 14 · 1시 15 · 2시 20 · 3시 25 · 4시 14 · 5시 22 · 6시 16 · 7시 22 · 8시 20 · 9시 26 · 10시 21 · 11시 10 · 12시 21 · 13시 12 · 14시 15 · 15시 18 · 16시 17 · 17시 26 · 18시 16 · 19시 17 · 20시 19 · 21시 17 · 22시 24 · 23시 14\n\n요일별 방문 수:\n월 54 · 화 67 · 수 55 · 목 72 · 금 61 · 토 71 · 일 61\n\n브라우징 세션: 410회, 평균 9분, 가장 긴 세션 49분\n\n자주 검색한 검색어:\n- 서울 날씨 (23회)\n- how to cook rice (22회)\n- electron webcontentsview (18회)\n- kotlin coroutine flow (16회)\n- rust vs go (14회)\n- 맛집 추천 강남 (14회)\n- bts 신곡 (13회)\n- 크로뮴 브라우저 만들기 (13회)\n- 환율 (13회)\n- 파이썬 리스트 정렬 (11회)\n- \u001f검색어 (1회)\n\n검색어에 자주 나온 단어:\n날씨(23), 서울(23), cook(22), rice(22), electron(18), webcontentsview(18), coroutine(16), flow(16), kotlin(16), go(14), rust(14), 강남(14), 맛집(14), bts(13), 만들기(13), 브라우저(13), 신곡(13), 크로뮴(13), 환율(13), 리스트(11)\n\n최근 본 페이지:\n… (글자 수 제한으로 나머지는 생략했습니다)",
     "truncated": true
    }
   },
@@ -8385,7 +8474,7 @@
     "charLimit": 400
    },
    "out": {
-    "text": "Period: 2026-08-20 to 2026-10-19 (all time, time zone Europe/London)\n438 visits · 9 sites · 153 pages · 157 searches · 61 active days (78 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 121 visits, 18 h 5 min\n2. google.com — 75 visits, 10 h 47 min\n3. daum.net — 53 visits, 5 h 15 min\n… (the rest was left out to stay within the length limit)",
+    "text": "Period: 2026-08-20 to 2026-10-19 (all time, time zone Europe/London)\n441 visits · 9 sites · 155 pages · 158 searches · 61 active days (78 visits to sensitive sites removed)\n\nMost visited sites (by visits):\n1. naver.com — 123 visits, 19 h 3 min\n2. google.com — 76 visits, 10 h 48 min\n3. daum.net — 53 visits, 5 h 15 min\n… (the rest was left out to stay within the length limit)",
     "truncated": true
    }
   },
@@ -8402,7 +8491,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "기간: 2026-10-19 ~ 2026-10-19 (오늘, 시간대 Asia/Seoul)\n방문 5건 · 사이트 3곳 · 페이지 5개 · 검색 3건 · 활동한 날 1일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 2회, 17분\n2. google.com — 2회, 1분\n3. stackoverflow.com — 1회, 15분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 17분\n2. stackoverflow.com — 15분\n3. google.com — 1분\n\n시간대별 방문 수:\n0시 2 · 1시 1 · 2시 0 · 3시 0 · 4시 0 · 5시 1 · 6시 0 · 7시 0 · 8시 0 · 9시 0 · 10시 0 · 11시 1 · 12시 0 · 13시 0 · 14시 0 · 15시 0 · 16시 0 · 17시 0 · 18시 0 · 19시 0 · 20시 0 · 21시 0 · 22시 0 · 23시 0\n\n요일별 방문 수:\n월 5 · 화 0 · 수 0 · 목 0 · 금 0 · 토 0 · 일 0\n\n브라우징 세션: 4회, 평균 12분, 가장 긴 세션 20분\n\n자주 검색한 검색어:\n- rust vs go (1회)\n- how to cook rice (1회)\n- 맛집 추천 강남 (1회)\n\n검색어에 자주 나온 단어:\ncook(1), go(1), rice(1), rust(1), 강남(1), 맛집(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 3곳\n\n많이 본 페이지:\n- How to 26 — stackoverflow.com (1회)\n- 네이버 뉴스 5 — naver.com (1회)\n- how to cook rice - 검색 — naver.com (1회)\n- rust vs go - 검색 — google.com (1회)\n- 맛집 추천 강남 - 검색 — google.com (1회)",
+    "text": "기간: 2026-10-19 ~ 2026-10-19 (오늘, 시간대 Asia/Seoul)\n방문 8건 · 사이트 3곳 · 페이지 7개 · 검색 4건 · 활동한 날 1일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 4회, 1시간 15분\n2. google.com — 3회, 2분\n3. stackoverflow.com — 1회, 15분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 1시간 15분\n2. stackoverflow.com — 15분\n3. google.com — 2분\n\n시간대별 방문 수:\n0시 2 · 1시 1 · 2시 0 · 3시 0 · 4시 0 · 5시 1 · 6시 0 · 7시 0 · 8시 0 · 9시 0 · 10시 0 · 11시 4 · 12시 0 · 13시 0 · 14시 0 · 15시 0 · 16시 0 · 17시 0 · 18시 0 · 19시 0 · 20시 0 · 21시 0 · 22시 0 · 23시 0\n\n요일별 방문 수:\n월 8 · 화 0 · 수 0 · 목 0 · 금 0 · 토 0 · 일 0\n\n브라우징 세션: 4회, 평균 13분, 가장 긴 세션 20분\n\n자주 검색한 검색어:\n- \u001f검색어 (1회)\n- rust vs go (1회)\n- how to cook rice (1회)\n- 맛집 추천 강남 (1회)\n\n검색어에 자주 나온 단어:\n\u001f검색어(1), cook(1), go(1), rice(1), rust(1), 강남(1), 맛집(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 3곳\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — naver.com (2회)\n- 앞뒤에 BOM이 있는 제목 — naver.com (1회)\n- How to 26 — stackoverflow.com (1회)\n- how to cook rice - 검색 — naver.com (1회)\n- 검색어 - Google 검색 — google.com (1회)\n- rust vs go - 검색 — google.com (1회)\n- 맛집 추천 강남 - 검색 — google.com (1회)",
     "truncated": false
    }
   },
@@ -8419,7 +8508,7 @@
     "charLimit": 12000
    },
    "out": {
-    "text": "Period: 2026-10-19 to 2026-10-19 (today, time zone Asia/Seoul)\n5 visits · 3 sites · 5 pages · 3 searches · 1 active days\n\nMost visited sites (by visits):\n1. naver.com — 2 visits, 17 min\n2. google.com — 2 visits, 1 min\n3. stackoverflow.com — 1 visit, 15 min\n\nSites with the most time spent:\n1. naver.com — 17 min\n2. stackoverflow.com — 15 min\n3. google.com — 1 min\n\nVisits by hour of day:\n0h 2 · 1h 1 · 2h 0 · 3h 0 · 4h 0 · 5h 1 · 6h 0 · 7h 0 · 8h 0 · 9h 0 · 10h 0 · 11h 1 · 12h 0 · 13h 0 · 14h 0 · 15h 0 · 16h 0 · 17h 0 · 18h 0 · 19h 0 · 20h 0 · 21h 0 · 22h 0 · 23h 0\n\nVisits by weekday:\nMon 5 · Tue 0 · Wed 0 · Thu 0 · Fri 0 · Sat 0 · Sun 0\n\nBrowsing sessions: 4, average 12 min, longest 20 min\n\n0 new sites · 3 returning sites",
+    "text": "Period: 2026-10-19 to 2026-10-19 (today, time zone Asia/Seoul)\n8 visits · 3 sites · 7 pages · 4 searches · 1 active days\n\nMost visited sites (by visits):\n1. naver.com — 4 visits, 1 h 15 min\n2. google.com — 3 visits, 2 min\n3. stackoverflow.com — 1 visit, 15 min\n\nSites with the most time spent:\n1. naver.com — 1 h 15 min\n2. stackoverflow.com — 15 min\n3. google.com — 2 min\n\nVisits by hour of day:\n0h 2 · 1h 1 · 2h 0 · 3h 0 · 4h 0 · 5h 1 · 6h 0 · 7h 0 · 8h 0 · 9h 0 · 10h 0 · 11h 4 · 12h 0 · 13h 0 · 14h 0 · 15h 0 · 16h 0 · 17h 0 · 18h 0 · 19h 0 · 20h 0 · 21h 0 · 22h 0 · 23h 0\n\nVisits by weekday:\nMon 8 · Tue 0 · Wed 0 · Thu 0 · Fri 0 · Sat 0 · Sun 0\n\nBrowsing sessions: 4, average 13 min, longest 20 min\n\n0 new sites · 3 returning sites",
     "truncated": false
    }
   },
@@ -8436,7 +8525,7 @@
     "charLimit": 1500
    },
    "out": {
-    "text": "기간: 2026-10-19 ~ 2026-10-19 (오늘, 시간대 Asia/Seoul)\n방문 5건 · 사이트 3곳 · 페이지 5개 · 검색 3건 · 활동한 날 1일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 2회, 17분\n2. google.com — 2회, 1분\n3. stackoverflow.com — 1회, 15분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 17분\n2. stackoverflow.com — 15분\n3. google.com — 1분\n\n시간대별 방문 수:\n0시 2 · 1시 1 · 2시 0 · 3시 0 · 4시 0 · 5시 1 · 6시 0 · 7시 0 · 8시 0 · 9시 0 · 10시 0 · 11시 1 · 12시 0 · 13시 0 · 14시 0 · 15시 0 · 16시 0 · 17시 0 · 18시 0 · 19시 0 · 20시 0 · 21시 0 · 22시 0 · 23시 0\n\n요일별 방문 수:\n월 5 · 화 0 · 수 0 · 목 0 · 금 0 · 토 0 · 일 0\n\n브라우징 세션: 4회, 평균 12분, 가장 긴 세션 20분\n\n자주 검색한 검색어:\n- rust vs go (1회)\n- how to cook rice (1회)\n- 맛집 추천 강남 (1회)\n\n검색어에 자주 나온 단어:\ncook(1), go(1), rice(1), rust(1), 강남(1), 맛집(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 3곳\n\n최근 본 페이지:\n- 2026-10-19 11:13 rust vs go - 검색 — https://www.google.com/search?q=rust%20vs%20go\n- 2026-10-19 05:11 네이버 뉴스 5 — https://news.naver.com/main/read\n- 2026-10-19 01:22 How to 26 — https://stackoverflow.com/questions/26/how-to\n- 2026-10-19 00:38 how to cook rice - 검색 — https://search.naver.com/search.naver?query=how%20to%20cook%20rice\n- 2026-10-19 00:23 맛집 추천 강남 - 검색 — https://www.google.com/search?q=%EB%A7%9B%EC%A7%91%20%EC%B6%94%EC%B2%9C%20%EA%B0%95%EB%82%A8\n\n많이 본 페이지:\n- How to 26 — https://stackoverflow.com/questions/26/how-to (1회)\n- 네이버 뉴스 5 — https://news.naver.com/main/read (1회)\n- how to cook rice - 검색 — https://search.naver.com/search.naver?query=how%20to%20cook%20rice (1회)\n… (글자 수 제한으로 나머지는 생략했습니다)",
+    "text": "기간: 2026-10-19 ~ 2026-10-19 (오늘, 시간대 Asia/Seoul)\n방문 8건 · 사이트 3곳 · 페이지 7개 · 검색 4건 · 활동한 날 1일\n\n자주 방문한 사이트 (방문 수 기준):\n1. naver.com — 4회, 1시간 15분\n2. google.com — 3회, 2분\n3. stackoverflow.com — 1회, 15분\n\n오래 머문 사이트 (머문 시간 기준):\n1. naver.com — 1시간 15분\n2. stackoverflow.com — 15분\n3. google.com — 2분\n\n시간대별 방문 수:\n0시 2 · 1시 1 · 2시 0 · 3시 0 · 4시 0 · 5시 1 · 6시 0 · 7시 0 · 8시 0 · 9시 0 · 10시 0 · 11시 4 · 12시 0 · 13시 0 · 14시 0 · 15시 0 · 16시 0 · 17시 0 · 18시 0 · 19시 0 · 20시 0 · 21시 0 · 22시 0 · 23시 0\n\n요일별 방문 수:\n월 8 · 화 0 · 수 0 · 목 0 · 금 0 · 토 0 · 일 0\n\n브라우징 세션: 4회, 평균 13분, 가장 긴 세션 20분\n\n자주 검색한 검색어:\n- \u001f검색어 (1회)\n- rust vs go (1회)\n- how to cook rice (1회)\n- 맛집 추천 강남 (1회)\n\n검색어에 자주 나온 단어:\n\u001f검색어(1), cook(1), go(1), rice(1), rust(1), 강남(1), 맛집(1)\n\n처음 방문한 사이트 0곳 · 다시 방문한 사이트 3곳\n\n최근 본 페이지:\n- 2026-10-19 11:16 검색어 - Google 검색 — https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4\n- 2026-10-19 11:15 \u001f단위 구분자로 감싼 제목\u001f — https://news.naver.com/main/read\n- 2026-10-19 11:14 앞뒤에 BOM이 있는 제목 — https://blog.naver.com/bom/22001\n- 2026-10-19 11:13 rust vs go - 검색 — https://www.google.com/search?q=rust%20vs%20go\n- 2026-10-19 01:22 How to 26 — https://stackoverflow.com/questions/26/how-to\n- 2026-10-19 00:38 how to cook rice - 검색 — https://search.naver.com/search.naver?query=how%20to%20cook%20rice\n- 2026-10-19 00:23 맛집 추천 강남 - 검색 — https://www.google.com/search?q=%EB%A7%9B%EC%A7%91%20%EC%B6%94%EC%B2%9C%20%EA%B0%95%EB%82%A8\n\n많이 본 페이지:\n- \u001f단위 구분자로 감싼 제목\u001f — https://news.naver.com/main/read (2회)\n… (글자 수 제한으로 나머지는 생략했습니다)",
     "truncated": true
    }
   },
@@ -8453,7 +8542,7 @@
     "charLimit": 400
    },
    "out": {
-    "text": "Period: 2026-10-19 to 2026-10-19 (today, time zone Asia/Seoul)\n5 visits · 3 sites · 5 pages · 3 searches · 1 active days\n\nMost visited sites (by visits):\n1. naver.com — 2 visits, 17 min\n2. google.com — 2 visits, 1 min\n3. stackoverflow.com — 1 visit, 15 min\n\nSites with the most time spent:\n1. naver.com — 17 min\n2. stackoverflow.com — 15 min\n… (the rest was left out to stay within the length limit)",
+    "text": "Period: 2026-10-19 to 2026-10-19 (today, time zone Asia/Seoul)\n8 visits · 3 sites · 7 pages · 4 searches · 1 active days\n\nMost visited sites (by visits):\n1. naver.com — 4 visits, 1 h 15 min\n2. google.com — 3 visits, 2 min\n3. stackoverflow.com — 1 visit, 15 min\n\nSites with the most time spent:\n1. naver.com — 1 h 15 min\n… (the rest was left out to stay within the length limit)",
     "truncated": true
    }
   }

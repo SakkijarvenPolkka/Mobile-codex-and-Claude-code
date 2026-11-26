@@ -61,4 +61,17 @@ class MainActivityTest {
             assertEquals("", activity.browser.active!!.url)
         }
     }
+
+    /** With more tabs than are saved, the ones around the tab on screen are kept, and it is still the one shown. */
+    @Test
+    fun theTabsAroundTheOneShownAreSaved() {
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity -> for (i in 1..54) activity.browser.newTab("https://example.com/$i") }
+            scenario.recreate()
+            scenario.onActivity { activity ->
+                assertEquals(50, activity.browser.tabs.size)
+                assertEquals("https://example.com/54", activity.browser.active!!.url)
+            }
+        }
+    }
 }

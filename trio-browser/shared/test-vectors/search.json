@@ -6,7 +6,9 @@
     { "engineId": "daum", "query": "  trim me ", "out": "https://search.daum.net/search?q=trim%20me" },
     { "engineId": "bing", "query": "c++", "out": "https://www.bing.com/search?q=c%2B%2B" },
     { "engineId": "duckduckgo", "query": "x", "out": "https://duckduckgo.com/?q=x" },
-    { "engineId": "unknown", "query": "x", "out": "https://www.google.com/search?q=x" }
+    { "engineId": "unknown", "query": "x", "out": "https://www.google.com/search?q=x" },
+    { "engineId": "google", "query": "\uFEFFabc", "out": "https://www.google.com/search?q=abc" },
+    { "engineId": "google", "query": "\u001Fabc ", "out": "https://www.google.com/search?q=%1Fabc" }
   ],
   "extract": [
     { "url": "https://www.google.com/search?q=%EC%84%9C%EC%9A%B8+%EB%82%A0%EC%94%A8&oq=x", "out": { "engineId": "google", "name": "Google", "query": "서울 날씨" } },
@@ -33,12 +35,15 @@
     { "url": "ftp://www.google.com/search?q=x", "out": null },
     { "url": "not a url", "out": null },
     { "url": "https://www.google.com/search?q=%20%20spaced%20%20%20out%20", "out": { "engineId": "google", "name": "Google", "query": "spaced out" } },
-    { "url": "https://www.google.com/search?q=%E3%80%80%EC%84%9C%EC%9A%B8%E3%80%80%EB%82%A0%EC%94%A8%E3%80%80", "out": { "engineId": "google", "name": "Google", "query": "서울 날씨" } }
+    { "url": "https://www.google.com/search?q=%E3%80%80%EC%84%9C%EC%9A%B8%E3%80%80%EB%82%A0%EC%94%A8%E3%80%80", "out": { "engineId": "google", "name": "Google", "query": "서울 날씨" } },
+    { "url": "https://www.google.com/search?q=%1Fabc", "out": { "engineId": "google", "name": "Google", "query": "\u001Fabc" } },
+    { "url": "https://www.google.com/search?q=%EF%BB%BFabc%E2%80%83", "out": { "engineId": "google", "name": "Google", "query": "abc" } }
   ],
   "suggestions": [
     { "format": "opensearch", "json": ["q", ["a", " b ", "", 3]], "out": ["a", "b"] },
     { "format": "naver", "json": { "query": ["q"], "items": [[["x"], ["y"]]] }, "out": ["x", "y"] },
     { "format": null, "json": ["q", ["a"]], "out": [] },
-    { "format": "opensearch", "json": { "bad": true }, "out": [] }
+    { "format": "opensearch", "json": { "bad": true }, "out": [] },
+    { "format": "opensearch", "json": ["q", ["\uFEFFa", "\u001Fb", "\uFEFF", " c\u3000"]], "out": ["a", "\u001Fb", "c"] }
   ]
 }

@@ -607,4 +607,19 @@ class AgentHubTest {
         shadowOf(wv).downloadListener.onDownloadStart("https://claude.ai/files/report.pdf", "UA", "attachment; filename=report.pdf", "application/pdf", 10)
         assertEquals(app.getString(R.string.notice_download, "report.pdf"), ShadowToast.getTextOfLatestToast())
     }
+
+    /** A newer question replaces one still waiting for the page: only it goes in, and the older one never surfaces later. */
+    @Test
+    fun aNewerQuestionReplacesOneStillWaiting() {
+        signInClaude()
+        hub.ask("claude", "first question")
+        hub.ask("claude", "second question")
+        idle()
+        loaded("claude", "https://claude.ai/new")
+        val claude = hub.agent("claude")
+        answerInsertCheck(hub.webViewFor(claude), ok = true)
+        idle(AgentHub.LOAD_TIMEOUT_MS + AgentHub.INSERT_TIMEOUT_MS + 6_000)
+        assertFalse(claude.busy)
+        assertNull("nothing went to the clipboard", clipboardText())
+    }
 }

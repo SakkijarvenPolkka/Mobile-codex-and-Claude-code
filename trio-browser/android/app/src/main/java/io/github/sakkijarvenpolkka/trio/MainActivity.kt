@@ -65,12 +65,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        // Addresses only (no page state), within the size a saved state may have.
-        val urls = browser.tabs.take(MAX_SAVED_TABS).map { tab ->
+        // Addresses only (no page state), within the size a saved state may have: at most MAX_SAVED_TABS tabs
+        // around the one on screen.
+        val tabs = browser.tabs.toList()
+        val from = (browser.activeIndex - MAX_SAVED_TABS / 2).coerceIn(0, maxOf(0, tabs.size - MAX_SAVED_TABS))
+        val urls = tabs.drop(from).take(MAX_SAVED_TABS).map { tab ->
             (tab.deferredUrl ?: tab.url).takeIf { (it.startsWith("http://") || it.startsWith("https://")) && it.length <= MAX_SAVED_URL }.orEmpty()
         }
         outState.putStringArrayList(STATE_TABS, ArrayList(urls))
-        outState.putInt(STATE_ACTIVE, browser.activeIndex.coerceIn(0, maxOf(0, urls.size - 1)))
+        outState.putInt(STATE_ACTIVE, (browser.activeIndex - from).coerceIn(0, maxOf(0, urls.size - 1)))
     }
 
     private fun intentUrl(intent: Intent?): String? {

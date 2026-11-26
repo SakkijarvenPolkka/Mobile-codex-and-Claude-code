@@ -71,6 +71,11 @@ function corpus() {
     const durationMs = r() < 0.15 ? null : Math.floor(r() * 20 * 60 * 1000);
     visits.push({ id, url, title, time: t, durationMs, transition, fromVisitId: id > 1 && r() < 0.5 ? id - 1 : null });
   }
+  // Whitespace exactly as JavaScript sees it: titles wrapped in U+FEFF (whitespace) or U+001F (not), and a
+  // query that starts with U+001F. Long stays put them at the top of every list.
+  visits.push({ id: 601, url: 'https://blog.naver.com/bom/22001', title: '\uFEFF앞뒤에 BOM이 있는 제목\uFEFF', time: t + 60000, durationMs: 29 * 60 * 1000, transition: 'link', fromVisitId: null });
+  visits.push({ id: 602, url: 'https://news.naver.com/main/read?oid=0us', title: '\u001F단위 구분자로 감싼 제목\u001F', time: t + 120000, durationMs: 29 * 60 * 1000, transition: 'link', fromVisitId: null });
+  visits.push({ id: 603, url: 'https://www.google.com/search?q=%1F%EA%B2%80%EC%83%89%EC%96%B4', title: '검색어 - Google 검색', time: t + 180000, durationMs: 60000, transition: 'search', fromVisitId: null });
   return { visits, now: t + 3600 * 1000 };
 }
 

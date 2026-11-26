@@ -151,6 +151,7 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         tab.pendingTransition = transition
         tab.deferredUrl = null
         tab.error = null
+        tab.crashed = false
         tab.url = url
         tab.mainUrl = url
         tab.webView.loadUrl(url)
@@ -186,14 +187,25 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         if (newTab || tab == null) newTab(url, transition = transition) else load(tab, url, transition)
     }
 
-    fun back() = active?.webView?.takeIf { it.canGoBack() }?.goBack()
+    /** An error is shown over the page that is still there (its load never arrived, e.g. a refused certificate). */
+    val errorOverPage: Boolean get() = active?.let { it.error != null && !it.crashed && !sameUrl(it.errorUrl, it.webView.url) } == true
+
+    fun back() {
+        val tab = active ?: return
+        // Back closes such an error and shows the page under it, instead of skipping that page.
+        if (errorOverPage) {
+            tab.error = null
+            return
+        }
+        tab.webView.takeIf { it.canGoBack() }?.goBack()
+    }
     fun forward() = active?.webView?.takeIf { it.canGoForward() }?.goForward()
 
     fun reload() {
         val tab = active ?: return
         if (tab.error != null || tab.deferredUrl != null) {
-            tab.crashed = false
-            load(tab, tab.deferredUrl ?: tab.url, "reload")
+            // The address that failed, which is not always the page under the error.
+            load(tab, tab.deferredUrl ?: tab.errorUrl ?: tab.url, "reload")
         } else {
             tab.pendingTransition = "reload"
             tab.webView.reload()
@@ -298,13 +310,14 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
                 return false
             }
             // Other apps open from the page itself or from a tap, never from an embedded frame (an ad) on its own.
-            if (request.isForMainFrame || request.hasGesture()) openExternal(tab, url)
+            if (request.isForMainFrame || request.hasGesture()) openExternal(tab, url, request.isForMainFrame)
             return true
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             // Another page (back, forward, a link): the error shown for the one that failed no longer applies.
-            if (tab.error != null && !sameUrl(url, tab.errorUrl)) tab.error = null
+            clearErrorUnlessFor(url)
+            tab.sslFailedUrl = null
             tab.mainUrl = url
             tab.url = url
             tab.favicon = favicon
@@ -312,7 +325,7 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         }
 
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            if (tab.error != null && !sameUrl(url, tab.errorUrl)) tab.error = null
+            clearErrorUnlessFor(url)
             tab.url = url
             tab.refreshNav()
             recordVisit(tab, url, isReload)
@@ -320,7 +333,24 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
             if (tab == active) onContextChanged?.invoke()
         }
 
+        private fun clearErrorUnlessFor(url: String) {
+            if (tab.error != null && !sameUrl(url, tab.errorUrl)) {
+                tab.error = null
+                tab.crashed = false
+            }
+        }
+
         override fun onPageFinished(view: WebView, url: String) {
+            // A refused certificate cancels the load; WebView then reports only this finish for it.
+            if (sameUrl(url, tab.sslFailedUrl)) {
+                tab.sslFailedUrl = null
+                tab.error = "SSL"
+                tab.errorUrl = url
+            }
+            // A load that ended without a page (no content, a download, cancelled): the address shown is again
+            // the page that is there, not the one that never came.
+            val committed = view.url
+            if (!sameUrl(url, committed) && !sameUrl(tab.url, committed)) tab.url = committed?.takeUnless { it == "about:blank" }.orEmpty()
             tab.refreshNav()
             view.title?.takeIf { it.isNotBlank() && it != url }?.let { tab.title = it }
         }
@@ -334,10 +364,13 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) {
             handler.cancel()
-            // Only the page itself: a picture or script with a bad certificate is just left out.
+            // Only the page itself: a picture or script with a bad certificate is just left out. A page load
+            // WebView did not ask about first (a form sent, back and forward) is caught in onPageFinished.
             if (sameUrl(error.url, tab.mainUrl)) {
                 tab.error = "SSL"
                 tab.errorUrl = error.url
+            } else {
+                tab.sslFailedUrl = error.url
             }
         }
 
@@ -383,10 +416,19 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
 
     private fun sameUrl(a: String?, b: String?): Boolean = a != null && b != null && a.substringBefore('#').trimEnd('/') == b.substringBefore('#').trimEnd('/')
 
-    private fun openExternal(tab: Tab, url: String) {
+    private fun openExternal(tab: Tab, url: String, mainFrame: Boolean) {
         val intent = runCatching {
             if (url.startsWith("intent:")) Intent.parseUri(url, Intent.URI_INTENT_SCHEME) else Intent(Intent.ACTION_VIEW, Uri.parse(url))
         }.getOrNull() ?: return
+        // A web address in intent form, or one aimed at Trio itself, stays in this tab (as in Chrome) instead
+        // of opening Trio again, which a page could repeat into endless new tabs.
+        val data = intent.dataString
+        val web = data != null && (data.startsWith("https://") || data.startsWith("http://"))
+        if (web && (intent.`package` == null || intent.`package` == context.packageName)) {
+            if (mainFrame) navigateFromPage(tab, data!!)
+            return
+        }
+        if (intent.`package` == context.packageName) return
         intent.addCategory(Intent.CATEGORY_BROWSABLE)
         intent.component = null
         intent.selector = null
@@ -394,18 +436,29 @@ class BrowserModel(private val context: Context, private val app: TrioApp) {
         try {
             context.startActivity(intent)
         } catch (e: ActivityNotFoundException) {
-            // As in Chrome: the page's own fallback address, else the app's page in the store.
+            // As in Chrome: the page's own fallback address (for the page itself, not a frame in it), else the
+            // app's page in the store.
             val fallback = runCatching { intent.getStringExtra("browser_fallback_url") }.getOrNull()
-                ?.takeIf { it.startsWith("https://") || it.startsWith("http://") }
+                ?.takeIf { mainFrame && (it.startsWith("https://") || it.startsWith("http://")) }
             val pkg = intent.`package`
             when {
-                fallback != null -> load(tab, fallback, "link")
+                fallback != null -> navigateFromPage(tab, fallback)
                 pkg != null && openStore(pkg) -> Unit
                 else -> toast(context.getString(R.string.notice_no_app))
             }
         } catch (e: RuntimeException) {
             toast(context.getString(R.string.notice_no_app))
         }
+    }
+
+    /**
+     * Goes to [url] on the page's behalf: unlike a typed address, the address bar changes only when the page
+     * arrives, so a load that never does (no content, a download) cannot show its address over this page.
+     */
+    private fun navigateFromPage(tab: Tab, url: String) {
+        tab.pendingTransition = "link"
+        tab.mainUrl = url
+        tab.webView.loadUrl(url)
     }
 
     private fun openStore(pkg: String): Boolean = runCatching {

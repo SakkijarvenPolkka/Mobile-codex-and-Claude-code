@@ -23,6 +23,9 @@ class Tab(val id: Long, val webView: WebView) {
     var error by mutableStateOf<String?>(null)
     /** The address that failed with [error]. */
     var errorUrl: String? = null
+
+    /** A main-frame address whose certificate was refused; shown as an error if that load ends without a page. */
+    var sslFailedUrl: String? = null
     var crashed by mutableStateOf(false)
 
     /** Transition to record for the next committed navigation ("typed", "search", …). */

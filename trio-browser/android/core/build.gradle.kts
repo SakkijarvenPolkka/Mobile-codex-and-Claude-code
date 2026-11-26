@@ -24,5 +24,12 @@ dependencies {
 }
 
 tasks.test {
-    systemProperty("trio.shared", rootDir.resolve("../shared").absolutePath)
+    // The tests read these at run time (vectors, golden outputs, the app's regular expressions), so a change
+    // there alone must run them again instead of reusing an up-to-date or cached result.
+    val shared = rootDir.resolve("../shared")
+    val appSources = rootDir.resolve("app/src/main/java")
+    inputs.dir(shared).withPropertyName("shared").withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.dir(appSources).withPropertyName("appSources").withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("trio.shared", shared.absolutePath)
+    systemProperty("trio.app", appSources.absolutePath)
 }
