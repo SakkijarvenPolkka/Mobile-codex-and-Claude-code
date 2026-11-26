@@ -64,6 +64,7 @@ import io.github.sakkijarvenpolkka.trio.R
 import io.github.sakkijarvenpolkka.trio.TrioApp
 import io.github.sakkijarvenpolkka.trio.agents.Agent
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
+import io.github.sakkijarvenpolkka.trio.agents.HistoryForm
 import io.github.sakkijarvenpolkka.trio.browser.BrowserModel
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -273,7 +274,9 @@ private fun PanelBody(app: TrioApp, hub: AgentHub, a: Agent, browser: BrowserMod
                 Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.lock, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(6.dp))
-                    Text(stringResource(R.string.signing_in_on, runCatching { android.net.Uri.parse(a.url).host.orEmpty() }.getOrDefault("")), fontSize = 12.sp, modifier = Modifier.weight(1f).testTag("signin-bar"))
+                    val host = runCatching { android.net.Uri.parse(a.url).host.orEmpty() }.getOrDefault("")
+                    // No page yet (or it stopped): no host to name.
+                    Text(if (host.isEmpty()) stringResource(R.string.state_signing_in) else stringResource(R.string.signing_in_on, host), fontSize = 12.sp, modifier = Modifier.weight(1f).testTag("signin-bar"))
                     TextButton(onClick = { hub.cancelSignIn(a.provider.id) }) { Text(stringResource(R.string.cancel)) }
                 }
             } else QuickActions(app, hub, a, browser)
@@ -390,10 +393,13 @@ private fun HistoryPanel(hub: AgentHub) {
     var toAll by remember { mutableStateOf(false) }
     // The text shown was built for this form (Send waits until it is).
     val upToDate = hub.historyPreviewForm == f
+    // The form last asked for, built or not (the first build may not have arrived yet).
+    val asked = remember { mutableStateOf<HistoryForm?>(null) }
     LaunchedEffect(f) {
         // Each letter typed into the question changes the form: rebuild once typing pauses. Other changes
         // (range, kind, what to include) rebuild at once. Both off the main thread.
-        val typing = hub.historyPreviewForm?.copy(question = f.question) == f
+        val typing = (asked.value ?: hub.historyPreviewForm)?.copy(question = f.question) == f
+        asked.value = f
         if (typing) delay(300)
         hub.refreshHistoryPreview()
     }
