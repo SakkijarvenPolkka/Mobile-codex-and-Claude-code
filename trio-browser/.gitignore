@@ -20,3 +20,4 @@ android/.kotlin/
 
 # OS
 .DS_Store
+dist/

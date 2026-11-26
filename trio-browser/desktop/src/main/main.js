@@ -83,7 +83,8 @@ async function start() {
         return w ? w.requestPermission(origin, kind) : Promise.resolve('deny');
       },
     });
-    ses.setUserAgent(app.userAgentFallback);
+    // Pages (including the providers' sign-in pages) follow the browser's UI language.
+    ses.setUserAgent(app.userAgentFallback, ctx.locale() === 'ko' ? 'ko-KR,ko,en-US,en' : 'en-US,en');
     ctx.downloads.attach(ses);
   };
 
@@ -101,6 +102,10 @@ async function start() {
   }
 
   settings.on('change', (_s, key) => {
+    if (key.startsWith('general.language')) {
+      const langs = ctx.locale() === 'ko' ? 'ko-KR,ko,en-US,en' : 'en-US,en';
+      session.defaultSession.setUserAgent(app.userAgentFallback, langs);
+    }
     if (key.startsWith('general.language') || key.startsWith('general.theme')) {
       const boot = ctx.boot();
       for (const surface of /** @type {const} */ (['chrome', 'agent', 'dock', 'pages'])) for (const wc of contentsOf(surface)) emit(wc, surface, 'boot', boot);

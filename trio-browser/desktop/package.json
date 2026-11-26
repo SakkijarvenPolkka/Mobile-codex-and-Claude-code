@@ -11,7 +11,9 @@
     "typecheck": "tsc -p jsconfig.json && tsc -p src/renderer/jsconfig.json",
     "test": "npm run test:unit && npm run test:e2e",
     "test:unit": "node --test --test-reporter=dot \"test/unit/**/*.test.js\"",
-    "test:e2e": "node scripts/run-e2e.js"
+    "test:e2e": "node scripts/run-e2e.js",
+    "dist:linux": "electron-builder --linux AppImage tar.gz",
+    "dist:dir": "electron-builder --dir"
   },
   "devDependencies": {
     "electron": "45.5.0",
@@ -25,6 +27,71 @@
   "peerDependenciesMeta": {
     "playwright": {
       "optional": true
+    }
+  },
+  "author": {
+    "name": "Trio contributors"
+  },
+  "homepage": "https://github.com/SakkijarvenPolkka/Mobile-codex-and-Claude-code",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SakkijarvenPolkka/Mobile-codex-and-Claude-code.git"
+  },
+  "desktopName": "trio.desktop",
+  "build": {
+    "appId": "io.github.sakkijarvenpolkka.trio",
+    "productName": "Trio",
+    "executableName": "trio",
+    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
+    "publish": null,
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "!src/types/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../shared",
+        "to": "shared",
+        "filter": [
+          "**/*",
+          "!test-vectors/**"
+        ]
+      }
+    ],
+    "asar": true,
+    "linux": {
+      "target": [
+        "AppImage",
+        "tar.gz"
+      ],
+      "category": "Network",
+      "icon": "build/icon.png",
+      "syncDesktopName": true,
+      "synopsis": "Chromium browser with floating Claude, Gemini and ChatGPT agents"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
     }
   }
 }
