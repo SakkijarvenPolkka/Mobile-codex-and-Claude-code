@@ -59,6 +59,8 @@ class AgentHubTest {
         idle()
         val claude = hub.agent("claude")
         assertEquals("signedIn", claude.state)
+        assertNull("nothing loads until the panel opens", claude.webView)
+        hub.show("claude")
         assertEquals("https://claude.ai/new", shadowOf(hub.webViewFor(claude)).lastLoadedUrl)
         assertEquals("signedOut", hub.agent("gemini").state)
     }

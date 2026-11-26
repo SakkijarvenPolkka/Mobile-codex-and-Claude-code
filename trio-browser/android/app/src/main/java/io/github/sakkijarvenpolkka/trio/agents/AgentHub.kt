@@ -133,7 +133,8 @@ class AgentHub(private val context: Context, private val app: TrioApp, private v
             }
         }
         if (now == "signedIn" && before != "signedIn") {
-            if (a.urlKind != "app") loadProvider(a, a.provider.appUrl)
+            // Load the chat app only for the panel on screen; other agents load when opened.
+            if (openId == a.provider.id && a.urlKind != "app") loadProvider(a, a.provider.appUrl)
             a.pending?.let { run ->
                 a.pending = null
                 a.pendingLabel = null
