@@ -52,6 +52,18 @@ class PanelGeometryTest {
         assertEquals(1400f, b.resized(0f, 3000f, 1080f, 2000f, minW, minH).h)
     }
 
+    /** Opened while the keyboard is up, a panel the user never sized is full size once the keyboard goes down. */
+    @Test
+    fun anUnchosenPanelFollowsTheSpace() {
+        val withKeyboard = panelFor(null, null, null, null, 1080f, 900f).fit(1080f, 900f, minW, minH)
+        val after = panelFor(null, null, null, null, 1080f, 2000f).fit(1080f, 2000f, minW, minH)
+        assertEquals(900f, withKeyboard.h)
+        assertEquals(1240f, after.h)
+        // Moved while the keyboard was up: the place sticks, the size still follows the space.
+        val moved = withKeyboard.moved(0f, -100f, 1080f, 900f, minW, minH)
+        assertEquals(1240f, panelFor(moved.x, moved.y, null, null, 1080f, 2000f).fit(1080f, 2000f, minW, minH).h)
+    }
+
     @Test
     fun theBubbleStaysOnScreen() {
         assertEquals(0f to 0f, fitBubble(500f, 900f, -10f, -10f))

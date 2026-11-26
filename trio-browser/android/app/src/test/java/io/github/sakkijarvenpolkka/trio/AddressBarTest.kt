@@ -1,11 +1,13 @@
 package io.github.sakkijarvenpolkka.trio
 
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performImeAction
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
@@ -98,6 +100,21 @@ class AddressBarTest {
         rule.onNodeWithTag("panel-close").performClick()
         rule.waitForIdle()
         assertEquals("the panel's own button got the tap", null, rule.activity.hub.openId)
+    }
+
+    /** A panel moved to the top does not cover the address bar while it is being edited. */
+    @Test
+    fun editingTheAddressKeepsThePanelBelowTheBar() {
+        rule.runOnUiThread { rule.activity.hub.show("claude") }
+        rule.waitForIdle()
+        rule.onNodeWithTag("agent-panel").performTouchInput { swipe(Offset(width / 2f, 30f), Offset(width / 2f, -3000f)) }
+        rule.waitForIdle()
+        assertEquals(0f, rule.onNodeWithTag("agent-panel").fetchSemanticsNode().boundsInRoot.top, 1f)
+        address().performSemanticsAction(SemanticsActions.RequestFocus)
+        rule.waitForIdle()
+        val bar = address().fetchSemanticsNode().boundsInRoot
+        val panel = rule.onNodeWithTag("agent-panel").fetchSemanticsNode().boundsInRoot
+        assertTrue("panel top ${panel.top} is below the address field ${bar.bottom}", panel.top >= bar.bottom)
     }
 
     /** Resizing the panel in a window smaller than its minimum size (split screen, landscape) must not crash. */

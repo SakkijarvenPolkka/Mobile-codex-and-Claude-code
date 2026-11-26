@@ -82,7 +82,7 @@ class Agent(val provider: ProviderConfig) {
     var busy by mutableStateOf(false)
     var notice by mutableStateOf<String?>(null)
 
-    /** A sign-in window shown in the panel, and the address it is on. */
+    /** A sign-in window shown in the panel, and the address of the page it shows ("" until one is there). */
     var popup by mutableStateOf<WebView?>(null)
     var popupUrl by mutableStateOf("")
     var webView: WebView? = null
@@ -139,6 +139,10 @@ class AgentHub(
     var preview by mutableStateOf<Preview?>(null)
     var historyOpen by mutableStateOf(false)
     var historyPreview by mutableStateOf<Preview?>(null)
+
+    /** The form [historyPreview] was built for; while it differs from [historyForm], the text is out of date. */
+    var historyPreviewForm by mutableStateOf<HistoryForm?>(null)
+        private set
     var historyForm by mutableStateOf(HistoryForm())
     var lastUsed = agents.first().provider.id
     private var previewSeq by mutableIntStateOf(1)
@@ -385,6 +389,7 @@ class AgentHub(
         Tab.configure(context, popup)
         popup.webViewClient = PopupClient(a, nested)
         popup.webChromeClient = PopupChrome(a)
+        popup.setDownloadListener { url, userAgent, disposition, mime, _ -> browser.download(url, userAgent, disposition, mime) }
         a.popupCandidates.add(popup)
         transport.webView = popup
         resultMsg.sendToTarget()
@@ -410,7 +415,9 @@ class AgentHub(
             kind == "auth" || (state == "signingIn" && kind != "app") -> {
                 val old = a.popup
                 a.popup = view
-                a.popupUrl = url
+                // Labelled by the page it actually shows, once one is there (doUpdateVisitedHistory), never by
+                // the address it was asked to load: that load may be stopped and the window filled by script.
+                a.popupUrl = ""
                 if (old != null && old !== view) old.dispose()
                 return true
             }
@@ -442,15 +449,12 @@ class AgentHub(
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-            if (!route(view, url)) {
-                view.stopLoading()
-                return
-            }
-            if (view === a.popup && url != "about:blank") a.popupUrl = url
+            if (!route(view, url)) view.stopLoading()
         }
 
+        /** Every page the window commits, about:blank included, is what its address row shows. */
         override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-            if (view === a.popup && url != "about:blank") a.popupUrl = url
+            if (view === a.popup) a.popupUrl = url
         }
 
         override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: android.net.http.SslError) = handler.cancel()
@@ -896,8 +900,12 @@ class AgentHub(
         val f = historyForm
         val built = withContext(Dispatchers.Default) { runCatching { buildHistoryPreview(f) } }
         if (historyForm != f) return
-        built.onSuccess { historyPreview = it.copy(id = previewSeq++) }.onFailure {
+        built.onSuccess {
+            historyPreview = it.copy(id = previewSeq++)
+            historyPreviewForm = f
+        }.onFailure {
             historyPreview = null
+            historyPreviewForm = null
             open?.let { a -> notice(a, context.getString(R.string.notice_history_failed)) }
         }
     }

@@ -17,6 +17,8 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.sakkijarvenpolkka.trio.agents.AgentHub
 import io.github.sakkijarvenpolkka.trio.browser.BrowserModel
 import io.github.sakkijarvenpolkka.trio.agents.HistoryForm
+import io.github.sakkijarvenpolkka.trio.ui.PopupLabel
+import io.github.sakkijarvenpolkka.trio.ui.popupLabel
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -486,7 +488,10 @@ class AgentHubTest {
         val signIn = openWindow(chrome, wv)
         assertFalse(shadowOf(signIn).webViewClient.shouldOverrideUrlLoading(signIn, request("https://accounts.google.com/o/oauth2/v2/auth")))
         assertSame(signIn, claude.popup)
+        assertEquals("no address until a page is there", "", claude.popupUrl)
+        shadowOf(signIn).webViewClient.doUpdateVisitedHistory(signIn, "https://accounts.google.com/o/oauth2/v2/auth", false)
         assertEquals("https://accounts.google.com/o/oauth2/v2/auth", claude.popupUrl)
+        assertNotNull("downloads in the window are handled", shadowOf(signIn).downloadListener)
         // Once shown, it may go anywhere a sign-in goes; a window it opens becomes a tab.
         assertFalse(shadowOf(signIn).webViewClient.shouldOverrideUrlLoading(signIn, request("https://claude.ai/api/auth/callback")))
         val nested = openWindow(shadowOf(signIn).webChromeClient!!, signIn)
@@ -494,6 +499,23 @@ class AgentHubTest {
         idle()
         assertEquals("https://policies.google.com/privacy", browser.active?.url)
         assertSame(signIn, claude.popup)
+    }
+
+    /** A window shown under a sign-in address cannot keep that address once its page is replaced by a blank one. */
+    @Test
+    fun aSignInWindowsAddressFollowsThePageItShows() {
+        hub.signIn("claude")
+        val claude = hub.agent("claude")
+        val wv = hub.webViewFor(claude)
+        val signIn = openWindow(shadowOf(wv).webChromeClient!!, wv)
+        val client = shadowOf(signIn).webViewClient
+        assertFalse(client.shouldOverrideUrlLoading(signIn, request("https://accounts.google.com/v3/signin/identifier")))
+        client.doUpdateVisitedHistory(signIn, "https://accounts.google.com/v3/signin/identifier", false)
+        assertEquals(PopupLabel("accounts.google.com", true), popupLabel(claude.popupUrl))
+        client.doUpdateVisitedHistory(signIn, "about:blank", false)
+        assertEquals(PopupLabel("about:blank", false), popupLabel(claude.popupUrl))
+        assertEquals(PopupLabel("about:blank", false), popupLabel(""))
+        assertEquals(PopupLabel("http://127.0.0.1:8080", false), popupLabel("http://127.0.0.1:8080/claude/login"))
     }
 
     @Test
@@ -566,8 +588,10 @@ class AgentHubTest {
         runBlocking { hub.refreshHistoryPreview() }
         val first = hub.historyPreview
         assertNotNull(first)
+        assertEquals("built for the current options", hub.historyForm, hub.historyPreviewForm)
         assertTrue(first!!.text, first.text.contains("naver.com"))
         hub.historyForm = HistoryForm(range = "30d", kind = "custom", question = "무엇을 많이 읽었지?")
+        assertTrue("out of date until rebuilt (Send waits)", hub.historyForm != hub.historyPreviewForm)
         runBlocking { hub.refreshHistoryPreview() }
         assertTrue(hub.historyPreview!!.text.contains("무엇을 많이 읽었지?"))
         assertTrue(hub.historyPreview!!.id != first.id)

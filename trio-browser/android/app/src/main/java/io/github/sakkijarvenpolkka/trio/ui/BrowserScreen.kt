@@ -150,7 +150,12 @@ fun BrowserScreen(app: TrioApp, browser: BrowserModel, hub: AgentHub) {
         }
 
         if (app.settings.bubbleVisible) AgentBubble(app, hub)
-        hub.open?.let { AgentPanel(app, hub, it, browser) }
+        hub.open?.let { agent ->
+            // While the address bar is being edited (keyboard up), the panel stays below it instead of over it.
+            Box(Modifier.padding(top = if (address.focused) with(density) { addressHeight.toDp() } else 0.dp)) {
+                AgentPanel(app, hub, agent, browser)
+            }
+        }
 
         // The suggestions, with their "Ask …" rows, float over the page and over the agent bubble and panel.
         val suggesting = address.suggesting

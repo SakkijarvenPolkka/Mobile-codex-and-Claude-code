@@ -56,6 +56,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -92,6 +93,25 @@ internal data class PanelBox(val x: Float, val y: Float, val w: Float, val h: Fl
         val room = maxOf(maxH, 0f) - f.y
         return f.copy(w = f.w + dw, h = (f.h + dh).coerceIn(minOf(minH, room), room)).fit(maxW, maxH, minW, minH)
     }
+}
+
+/**
+ * The panel the user has (or has not yet) chosen: each part they never set follows the current space,
+ * so a panel opened while the keyboard is up is full size once it goes down.
+ */
+internal fun panelFor(x: Float?, y: Float?, w: Float?, h: Float?, maxW: Float, maxH: Float): PanelBox =
+    PanelBox(x ?: maxW * 0.03f, y ?: maxH * 0.34f, w ?: maxW * 0.94f, h ?: maxH * 0.62f)
+
+/** What a panel window's address row says, as desktop's originLabel: the host (with the scheme unless https), else about:blank. */
+internal data class PopupLabel(val text: String, val secure: Boolean)
+
+internal fun popupLabel(url: String): PopupLabel {
+    val uri = runCatching { android.net.Uri.parse(url) }.getOrNull()
+    val scheme = uri?.scheme?.lowercase()
+    val host = uri?.host.orEmpty()
+    if ((scheme != "http" && scheme != "https") || host.isEmpty()) return PopupLabel("about:blank", false)
+    val hostPort = if (uri!!.port != -1) "$host:${uri.port}" else host
+    return if (scheme == "https") PopupLabel(hostPort, true) else PopupLabel("http://$hostPort", false)
 }
 
 /** The bubble's place, kept inside [maxX] × [maxY] (both may be 0 in a tiny window). */
@@ -162,9 +182,12 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
         val maxH = with(density) { maxHeight.toPx() }
         val minW = with(density) { 260.dp.toPx() }
         val minH = with(density) { 300.dp.toPx() }
-        // What the user chose; shown fitted into the space there is now.
-        var box by remember { mutableStateOf(PanelBox(maxW * 0.03f, maxH * 0.34f, maxW * 0.94f, maxH * 0.62f)) }
-        val shown = box.fit(maxW, maxH, minW, minH)
+        // What the user chose (null: not chosen, follows the space); shown fitted into the space there is now.
+        var cx by remember { mutableStateOf<Float?>(null) }
+        var cy by remember { mutableStateOf<Float?>(null) }
+        var cw by remember { mutableStateOf<Float?>(null) }
+        var ch by remember { mutableStateOf<Float?>(null) }
+        val shown = panelFor(cx, cy, cw, ch, maxW, maxH).fit(maxW, maxH, minW, minH)
         // Read by the drag handlers, which outlive this composition's bounds.
         val bounds by rememberUpdatedState(floatArrayOf(maxW, maxH, minW, minH))
         Surface(
@@ -182,7 +205,10 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
                         detectDragGestures { change, drag ->
                             change.consume()
                             val (bw, bh, mw, mh) = bounds
-                            box = box.fit(bw, bh, mw, mh).moved(drag.x, drag.y, bw, bh, mw, mh)
+                            // Moving sets the place only; the size stays what it was (or keeps following the space).
+                            val m = panelFor(cx, cy, cw, ch, bw, bh).fit(bw, bh, mw, mh).moved(drag.x, drag.y, bw, bh, mw, mh)
+                            cx = m.x
+                            cy = m.y
                         }
                     })
                     PanelBody(app, hub, agent, browser)
@@ -192,7 +218,9 @@ fun AgentPanel(app: TrioApp, hub: AgentHub, agent: Agent, browser: BrowserModel)
                         detectDragGestures { change, drag ->
                             change.consume()
                             val (bw, bh, mw, mh) = bounds
-                            box = box.fit(bw, bh, mw, mh).resized(drag.x, drag.y, bw, bh, mw, mh)
+                            val r = panelFor(cx, cy, cw, ch, bw, bh).fit(bw, bh, mw, mh).resized(drag.x, drag.y, bw, bh, mw, mh)
+                            cw = r.w
+                            ch = r.h
                         }
                     }.testTag("panel-resize"),
                     contentAlignment = Alignment.Center,
@@ -255,9 +283,11 @@ private fun PanelBody(app: TrioApp, hub: AgentHub, a: Agent, browser: BrowserMod
                     popup != null -> Column(Modifier.fillMaxSize()) {
                         // A window opened by the provider: its address is always shown, so it cannot pose as another site.
                         Row(Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceContainer).padding(start = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(if (a.popupUrl.startsWith("https://")) Icons.lock else Icons.search, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val label = popupLabel(a.popupUrl)
+                            Icon(if (label.secure) Icons.lock else Icons.search, null, Modifier.size(14.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(6.dp))
-                            Text(runCatching { android.net.Uri.parse(a.popupUrl).host.orEmpty() }.getOrDefault(""), fontSize = 12.sp, maxLines = 1, modifier = Modifier.weight(1f).testTag("popup-host"))
+                            // The end of a host (its registrable domain) is the part that must stay visible.
+                            Text(label.text, fontSize = 12.sp, maxLines = 1, softWrap = false, overflow = TextOverflow.StartEllipsis, modifier = Modifier.weight(1f).testTag("popup-host"))
                             IconButton(onClick = { hub.closePopup(a) }, modifier = Modifier.testTag("popup-close")) { Icon(Icons.close, stringResource(R.string.close)) }
                         }
                         WebViewHost(popup, Modifier.fillMaxSize())
@@ -358,9 +388,13 @@ private fun HistoryPanel(hub: AgentHub) {
     val f = hub.historyForm
     var text by remember(hub.historyPreview?.id) { mutableStateOf(hub.historyPreview?.text.orEmpty()) }
     var toAll by remember { mutableStateOf(false) }
+    // The text shown was built for this form (Send waits until it is).
+    val upToDate = hub.historyPreviewForm == f
     LaunchedEffect(f) {
-        // Each letter typed into the question changes the form: rebuild once typing pauses, off the main thread.
-        if (hub.historyPreview != null) delay(300)
+        // Each letter typed into the question changes the form: rebuild once typing pauses. Other changes
+        // (range, kind, what to include) rebuild at once. Both off the main thread.
+        val typing = hub.historyPreviewForm?.copy(question = f.question) == f
+        if (typing) delay(300)
         hub.refreshHistoryPreview()
     }
     Column(Modifier.fillMaxSize().padding(12.dp).testTag("history-panel")) {
@@ -394,7 +428,7 @@ private fun HistoryPanel(hub: AgentHub) {
             OutlinedButton(onClick = { hub.historyOpen = false }) { Text(stringResource(R.string.close)) }
             Spacer(Modifier.width(8.dp))
             val needsQuestion = f.kind == "find" || f.kind == "custom"
-            Button(onClick = { hub.sendHistory(text, toAll) }, enabled = text.isNotBlank() && (!needsQuestion || f.question.isNotBlank()), modifier = Modifier.testTag("history-send")) { Text(stringResource(R.string.preview_confirm)) }
+            Button(onClick = { hub.sendHistory(text, toAll) }, enabled = upToDate && text.isNotBlank() && (!needsQuestion || f.question.isNotBlank()), modifier = Modifier.testTag("history-send")) { Text(stringResource(R.string.preview_confirm)) }
         }
         Text(stringResource(R.string.history_foot), fontSize = 11.sp, color = MaterialTheme.colorScheme.outline)
     }
